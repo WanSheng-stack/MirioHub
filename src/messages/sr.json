@@ -1,0 +1,70 @@
+{
+  "app": {
+    "name": "MirioHub",
+    "hall": "Usputni prevoz i pomoć",
+    "profile": "Profil",
+    "publish": "Objavi",
+    "mustRead": "Obavezno pročitaj",
+    "mustReadClose": "Razumem"
+  },
+  "hall": {
+    "title": "Usputna pomoć (grad i međugrad)",
+    "subtitle": "Jedan tok: potražnja i ponuda. Isti grad je dozvoljen za lokalne zadatke.",
+    "empty": "Još nema objava.",
+    "sameCity": "U istom gradu",
+    "taskNotes": "Napomene zadatka",
+    "translate": "Prevedi",
+    "translating": "Prevođenje…",
+    "cached": "Iz keša"
+  },
+  "order": {
+    "open": "Otvoreno",
+    "matched": "Dogovoreno",
+    "cancelled": "Otkazano",
+    "reveal": "Prikaži kontakt",
+    "freeHint": "Besplatno otključavanje u javnom testu",
+    "needLogin": "Prijavite se da vidite kontakt.",
+    "confirmMatch": "Potvrdi međusobni izbor",
+    "disclaimer": "MirioHub ne snosi apsolutno nikakvu odgovornost. Proverite na licu mesta. Ako podaci ne odgovaraju, otkažite bez posledica.",
+    "noFault": "Otkaz bez odgovornosti",
+    "ownOrder": "Ovo je vaša objava.",
+    "from": "Od",
+    "to": "Do"
+  },
+  "profile": {
+    "title": "Profil",
+    "email": "Email",
+    "password": "Lozinka",
+    "signIn": "Prijava",
+    "signUp": "Registracija",
+    "signOut": "Odjava",
+    "fullName": "Pravo ime",
+    "phone": "Telefon (samo preko RPC)",
+    "plate": "Tablice",
+    "vehicle": "Model vozila",
+    "facebook": "Facebook",
+    "viber": "Viber",
+    "save": "Sačuvaj",
+    "saved": "Sačuvano",
+    "quota": "Preostali besplatni pregledi",
+    "premium": "Premium"
+  },
+  "publish": {
+    "title": "Nova objava",
+    "role": "Uloga",
+    "demand": "Potražnja",
+    "provider": "Ponuda",
+    "heading": "Naslov",
+    "description": "Opis",
+    "taskNotes": "Napomene zadatka / usputne stanice",
+    "fromCity": "Grad polaska / mesto usluge",
+    "toCity": "Grad dolaska (isti za lokalni zadatak)",
+    "submit": "Objavi"
+  },
+  "paywall": {
+    "title": "Premium potrebna",
+    "body": "Javni test je zatvoren. Prenesite na račun ili aktivirajte nalog.",
+    "bank": "Bankovni transfer / IPS QR",
+    "close": "Zatvori"
+  }
+}

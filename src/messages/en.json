@@ -1,0 +1,70 @@
+{
+  "app": {
+    "name": "MirioHub",
+    "hall": "Rides & errands",
+    "profile": "Profile",
+    "publish": "Post",
+    "mustRead": "Must read",
+    "mustReadClose": "I understand"
+  },
+  "hall": {
+    "title": "Mutual-aid hall (city & intercity)",
+    "subtitle": "One mixed feed: help wanted and provider posts. Same city is allowed for local errands.",
+    "empty": "No posts yet.",
+    "sameCity": "Same city",
+    "taskNotes": "Task notes",
+    "translate": "Translate",
+    "translating": "Translating…",
+    "cached": "Cached"
+  },
+  "order": {
+    "open": "Open",
+    "matched": "Matched",
+    "cancelled": "Cancelled",
+    "reveal": "Show contact",
+    "freeHint": "Free unlock during public beta",
+    "needLogin": "Sign in to view contact.",
+    "confirmMatch": "Confirm mutual match",
+    "disclaimer": "MirioHub accepts absolutely no liability. Verify in person. If details do not match, cancel with no fault.",
+    "noFault": "No-fault cancel",
+    "ownOrder": "This is your post.",
+    "from": "From",
+    "to": "To"
+  },
+  "profile": {
+    "title": "Profile",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "signOut": "Sign out",
+    "fullName": "Legal name",
+    "phone": "Phone (returned only via RPC)",
+    "plate": "License plate",
+    "vehicle": "Vehicle model",
+    "facebook": "Facebook",
+    "viber": "Viber",
+    "save": "Save",
+    "saved": "Saved",
+    "quota": "Free views left",
+    "premium": "Premium"
+  },
+  "publish": {
+    "title": "New post",
+    "role": "Role",
+    "demand": "Help wanted",
+    "provider": "Provider post",
+    "heading": "Title",
+    "description": "Description",
+    "taskNotes": "Task notes / stops",
+    "fromCity": "From city / service place",
+    "toCity": "To city (same name for local errands)",
+    "submit": "Publish"
+  },
+  "paywall": {
+    "title": "Premium required",
+    "body": "The public-beta campaign is off. Transfer via local bank or activate your account.",
+    "bank": "Bank transfer / IPS QR",
+    "close": "Close"
+  }
+}

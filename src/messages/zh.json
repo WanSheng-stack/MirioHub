@@ -1,0 +1,70 @@
+{
+  "app": {
+    "name": "MirioHub",
+    "hall": "顺路捎带",
+    "profile": "个人中心",
+    "publish": "发布",
+    "mustRead": "务必必读",
+    "mustReadClose": "我已了解"
+  },
+  "hall": {
+    "title": "全能城际与同城众包互助大厅",
+    "subtitle": "统一混合流：求助单与接单人。同城跑腿可将出发与到达填为同一城市。",
+    "empty": "暂无互助单。",
+    "sameCity": "同城",
+    "taskNotes": "任务备注",
+    "translate": "翻译",
+    "translating": "翻译中…",
+    "cached": "已缓存"
+  },
+  "order": {
+    "open": "进行中",
+    "matched": "已互选",
+    "cancelled": "已撤销",
+    "reveal": "查看联系方式",
+    "freeHint": "公测期免费解锁",
+    "needLogin": "请先登录再查看联系方式。",
+    "confirmMatch": "确认互选",
+    "disclaimer": "平台绝对免责。请现场核对身份与物品；信息不符可无责撤销、无伤取消。",
+    "noFault": "无责撤销",
+    "ownOrder": "这是你发布的单。",
+    "from": "从",
+    "to": "到"
+  },
+  "profile": {
+    "title": "个人中心",
+    "email": "邮箱",
+    "password": "密码",
+    "signIn": "登录",
+    "signUp": "注册",
+    "signOut": "退出",
+    "fullName": "真实姓名",
+    "phone": "联系电话（仅经安全 RPC 返回给他人）",
+    "plate": "车牌",
+    "vehicle": "车型",
+    "facebook": "Facebook",
+    "viber": "Viber",
+    "save": "保存",
+    "saved": "已保存",
+    "quota": "剩余免费查看次数",
+    "premium": "会员"
+  },
+  "publish": {
+    "title": "发布互助单",
+    "role": "角色",
+    "demand": "顺路求助单",
+    "provider": "顺路接单人",
+    "heading": "标题",
+    "description": "描述",
+    "taskNotes": "任务/行程备注（经停、买药、喂猫等）",
+    "fromCity": "出发城市 / 服务地点",
+    "toCity": "到达城市（同城可填相同）",
+    "submit": "发布"
+  },
+  "paywall": {
+    "title": "需要开通会员",
+    "body": "全网免费公测已关闭。额度用尽且非会员时，服务器不会返回电话。",
+    "bank": "银行转账 / IPS 二维码",
+    "close": "关闭"
+  }
+}

@@ -33,6 +33,10 @@
   },
   "profile": {
     "title": "Profil",
+    "welcome": "Prijavite se da otključate kontakte i objavite vožnje",
+    "continueWithGoogle": "Nastavi sa Google nalogom",
+    "googleLoading": "Preusmeravanje…",
+    "orDivider": "Ili",
     "email": "Email",
     "password": "Lozinka",
     "signIn": "Prijava",

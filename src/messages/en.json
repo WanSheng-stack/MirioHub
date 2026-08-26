@@ -33,6 +33,10 @@
   },
   "profile": {
     "title": "Profile",
+    "welcome": "Sign in to unlock contacts and post rides",
+    "continueWithGoogle": "Continue with Google",
+    "googleLoading": "Redirecting…",
+    "orDivider": "Or",
     "email": "Email",
     "password": "Password",
     "signIn": "Sign in",

@@ -33,6 +33,10 @@
   },
   "profile": {
     "title": "个人中心",
+    "welcome": "登录后即可查看联系方式并发布互助单",
+    "continueWithGoogle": "使用 Google 登录",
+    "googleLoading": "正在跳转…",
+    "orDivider": "或",
     "email": "邮箱",
     "password": "密码",
     "signIn": "登录",

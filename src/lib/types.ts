@@ -42,6 +42,48 @@ export type Order = {
   created_at: string;
 };
 
+/** P2 marketplace post — Demand (left) / Provider (right) mirror hall */
+export type PostType = "demand" | "provider";
+export type PostCategory = "deliver" | "buy" | "onsite" | "errand" | "travel";
+export type PostScope = "near" | "city" | "intercity" | "cross_border";
+export type PostStatus = "draft" | "active" | "completed" | "canceled";
+export type CapacityType = "backpack" | "suitcase" | "trunk";
+export type TransportMode =
+  | "walking"
+  | "scooter"
+  | "bicycle"
+  | "motorbike"
+  | "subway"
+  | "bus"
+  | "train"
+  | "flight"
+  | "car"
+  | "van";
+
+export type Post = {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string;
+  status: PostStatus;
+  locale: "zh" | "en" | "sr";
+  post_type: PostType;
+  category: PostCategory;
+  scope: PostScope;
+  origin_address: string;
+  destination_address: string;
+  /** GeoJSON Point from PostGIS, or null until pinned */
+  origin_gps: unknown | null;
+  destination_gps: unknown | null;
+  capacity_type: CapacityType | null;
+  transport_mode: TransportMode | null;
+  escort_seats: number;
+  fee_amount: number | null;
+  estimated_item_cost: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MatchRow = {
   id: string;
   order_id: string;

@@ -9,13 +9,52 @@
   },
   "hall": {
     "title": "全能城际与同城众包互助大厅",
-    "subtitle": "统一混合流：求助单与接单人。同城跑腿可将出发与到达填为同一城市。",
+    "subtitle": "统一混合流：需求与供应帖按时间排列 — 覆盖附近、同城、跨城与跨境。",
     "empty": "暂无互助单。",
+    "legendDemand": "需求",
+    "legendProvider": "供应",
     "sameCity": "同城",
     "taskNotes": "任务备注",
     "translate": "翻译",
     "translating": "翻译中…",
-    "cached": "已缓存"
+    "cached": "已缓存",
+    "fee": "酬劳/分摊",
+    "itemCost": "预估垫付",
+    "escortSeats": "押货座位",
+    "postType": {
+      "demand": "需求",
+      "provider": "供应"
+    },
+    "category": {
+      "deliver": "代送",
+      "buy": "代购",
+      "onsite": "到府",
+      "errand": "代办",
+      "travel": "结伴旅行"
+    },
+    "scope": {
+      "near": "附近",
+      "city": "同城",
+      "intercity": "跨城",
+      "cross_border": "跨境"
+    },
+    "capacity": {
+      "backpack": "背包",
+      "suitcase": "行李箱",
+      "trunk": "后备箱"
+    },
+    "transport": {
+      "walking": "步行",
+      "scooter": "滑板车",
+      "bicycle": "自行车",
+      "motorbike": "摩托车",
+      "subway": "地铁",
+      "bus": "公交",
+      "train": "火车",
+      "flight": "飞机",
+      "car": "汽车",
+      "van": "面包车"
+    }
   },
   "order": {
     "open": "进行中",
@@ -55,15 +94,21 @@
   },
   "publish": {
     "title": "发布互助单",
-    "role": "角色",
-    "demand": "顺路求助单",
-    "provider": "顺路接单人",
+    "postType": "帖子类型",
+    "category": "类目",
+    "scope": "范围",
     "heading": "标题",
     "description": "描述",
-    "taskNotes": "任务/行程备注（经停、买药、喂猫等）",
-    "fromCity": "出发城市 / 服务地点",
-    "toCity": "到达城市（同城可填相同）",
-    "submit": "发布"
+    "originAddress": "出发 / 起点地址",
+    "destinationAddress": "到达 / 终点地址",
+    "capacityType": "容积",
+    "transportMode": "交通方式",
+    "escortSeats": "押货座位",
+    "feeAmount": "酬劳 / 油费分摊",
+    "estimatedItemCost": "预估垫付（代购）",
+    "optional": "可选",
+    "submit": "发布",
+    "submitting": "发布中…"
   },
   "paywall": {
     "title": "需要开通会员",

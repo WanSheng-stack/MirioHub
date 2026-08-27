@@ -9,13 +9,52 @@
   },
   "hall": {
     "title": "Mutual-aid hall (city & intercity)",
-    "subtitle": "One mixed feed: help wanted and provider posts. Same city is allowed for local errands.",
+    "subtitle": "One mixed feed for Demand and Provider posts — near, city, intercity, and cross-border.",
     "empty": "No posts yet.",
+    "legendDemand": "Demand",
+    "legendProvider": "Provider",
     "sameCity": "Same city",
     "taskNotes": "Task notes",
     "translate": "Translate",
     "translating": "Translating…",
-    "cached": "Cached"
+    "cached": "Cached",
+    "fee": "Fee",
+    "itemCost": "Est. item cost",
+    "escortSeats": "Escort seats",
+    "postType": {
+      "demand": "Demand",
+      "provider": "Provider"
+    },
+    "category": {
+      "deliver": "Deliver",
+      "buy": "Buy for me",
+      "onsite": "On-site",
+      "errand": "Errand",
+      "travel": "Travel buddy"
+    },
+    "scope": {
+      "near": "Nearby",
+      "city": "Same city",
+      "intercity": "Intercity",
+      "cross_border": "Cross-border"
+    },
+    "capacity": {
+      "backpack": "Backpack",
+      "suitcase": "Suitcase",
+      "trunk": "Trunk"
+    },
+    "transport": {
+      "walking": "Walking",
+      "scooter": "Scooter",
+      "bicycle": "Bicycle",
+      "motorbike": "Motorbike",
+      "subway": "Subway",
+      "bus": "Bus",
+      "train": "Train",
+      "flight": "Flight",
+      "car": "Car",
+      "van": "Van"
+    }
   },
   "order": {
     "open": "Open",
@@ -55,15 +94,21 @@
   },
   "publish": {
     "title": "New post",
-    "role": "Role",
-    "demand": "Help wanted",
-    "provider": "Provider post",
+    "postType": "Post type",
+    "category": "Category",
+    "scope": "Scope",
     "heading": "Title",
     "description": "Description",
-    "taskNotes": "Task notes / stops",
-    "fromCity": "From city / service place",
-    "toCity": "To city (same name for local errands)",
-    "submit": "Publish"
+    "originAddress": "Origin address",
+    "destinationAddress": "Destination address",
+    "capacityType": "Capacity",
+    "transportMode": "Transport",
+    "escortSeats": "Escort seats",
+    "feeAmount": "Fee / fuel share",
+    "estimatedItemCost": "Estimated item cost (buy)",
+    "optional": "Optional",
+    "submit": "Publish",
+    "submitting": "Publishing…"
   },
   "paywall": {
     "title": "Premium required",

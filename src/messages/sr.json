@@ -9,13 +9,52 @@
   },
   "hall": {
     "title": "Usputna pomoć (grad i međugrad)",
-    "subtitle": "Jedan tok: potražnja i ponuda. Isti grad je dozvoljen za lokalne zadatke.",
+    "subtitle": "Jedan mešoviti tok: potražnja i ponuda — blizu, grad, međugrad i preko granice.",
     "empty": "Još nema objava.",
+    "legendDemand": "Potražnja",
+    "legendProvider": "Ponuda",
     "sameCity": "U istom gradu",
     "taskNotes": "Napomene zadatka",
     "translate": "Prevedi",
     "translating": "Prevođenje…",
-    "cached": "Iz keša"
+    "cached": "Iz keša",
+    "fee": "Naknada",
+    "itemCost": "Proc. cena robe",
+    "escortSeats": "Mesta za pratnju",
+    "postType": {
+      "demand": "Potražnja",
+      "provider": "Ponuda"
+    },
+    "category": {
+      "deliver": "Dostava",
+      "buy": "Kupovina",
+      "onsite": "Na licu mesta",
+      "errand": "Obaveza",
+      "travel": "Putovanje"
+    },
+    "scope": {
+      "near": "U blizini",
+      "city": "U gradu",
+      "intercity": "Međugrad",
+      "cross_border": "Preko granice"
+    },
+    "capacity": {
+      "backpack": "Ranac",
+      "suitcase": "Kofer",
+      "trunk": "Gepek"
+    },
+    "transport": {
+      "walking": "Peške",
+      "scooter": "Trottinet",
+      "bicycle": "Bicikl",
+      "motorbike": "Motor",
+      "subway": "Metro",
+      "bus": "Autobus",
+      "train": "Voz",
+      "flight": "Avion",
+      "car": "Auto",
+      "van": "Kombi"
+    }
   },
   "order": {
     "open": "Otvoreno",
@@ -55,15 +94,21 @@
   },
   "publish": {
     "title": "Nova objava",
-    "role": "Uloga",
-    "demand": "Potražnja",
-    "provider": "Ponuda",
+    "postType": "Tip objave",
+    "category": "Kategorija",
+    "scope": "Opseg",
     "heading": "Naslov",
     "description": "Opis",
-    "taskNotes": "Napomene zadatka / usputne stanice",
-    "fromCity": "Grad polaska / mesto usluge",
-    "toCity": "Grad dolaska (isti za lokalni zadatak)",
-    "submit": "Objavi"
+    "originAddress": "Adresa polaska",
+    "destinationAddress": "Adresa dolaska",
+    "capacityType": "Kapacitet",
+    "transportMode": "Prevoz",
+    "escortSeats": "Mesta za pratnju",
+    "feeAmount": "Naknada / deo goriva",
+    "estimatedItemCost": "Proc. cena robe (kupovina)",
+    "optional": "Opciono",
+    "submit": "Objavi",
+    "submitting": "Objavljivanje…"
   },
   "paywall": {
     "title": "Premium potrebna",

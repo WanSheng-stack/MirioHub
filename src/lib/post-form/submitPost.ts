@@ -21,12 +21,24 @@ async function upsertPhoneHistory(
     .from("phone_history")
     .select("id")
     .eq("normalized_phone", normalizedPhone)
+    .eq("user_id", userId)
     .maybeSingle();
-  if (existing?.id) return existing.id as number;
+
+  if (existing?.id) {
+    await supabase
+      .from("phone_history")
+      .update({ last_post_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    return existing.id as number;
+  }
 
   const { data: inserted, error } = await supabase
     .from("phone_history")
-    .insert({ user_id: userId, normalized_phone: normalizedPhone })
+    .insert({
+      user_id: userId,
+      normalized_phone: normalizedPhone,
+      last_post_at: new Date().toISOString(),
+    })
     .select("id")
     .single();
   if (error || !inserted) return 0;
@@ -36,19 +48,25 @@ async function upsertPhoneHistory(
 async function upsertPlateHistory(
   supabase: SupabaseClient,
   userId: string,
-  normalizedPlate: string,
+  normalizedLicensePlate: string,
 ): Promise<number | null> {
-  if (!normalizedPlate) return null;
+  if (!normalizedLicensePlate) return null;
+
   const { data: existing } = await supabase
     .from("plate_history")
     .select("id")
-    .eq("normalized_plate", normalizedPlate)
+    .eq("normalized_license_plate", normalizedLicensePlate)
+    .eq("user_id", userId)
     .maybeSingle();
+
   if (existing?.id) return existing.id as number;
 
   const { data: inserted, error } = await supabase
     .from("plate_history")
-    .insert({ user_id: userId, normalized_plate: normalizedPlate })
+    .insert({
+      user_id: userId,
+      normalized_license_plate: normalizedLicensePlate,
+    })
     .select("id")
     .single();
   if (error || !inserted) return null;
@@ -66,8 +84,8 @@ async function gatherDemandMetrics(
   const { data: rows } = await supabase
     .from("posts")
     .select("user_id, normalized_phone, status, departure_date, departure_time_window")
-    .neq("status", "completed")
-    .neq("status", "canceled");
+    .not("status", "eq", "completed")
+    .not("status", "eq", "canceled");
 
   const inWindow = (rows ?? []).filter((r) => {
     if (!r.departure_date || !r.departure_time_window) return false;
@@ -94,20 +112,22 @@ async function gatherSupplyMetrics(
 ) {
   const { data: history } = await supabase
     .from("phone_history")
-    .select("user_id, created_at")
+    .select("user_id, last_post_at, created_at")
     .eq("normalized_phone", normalizedPhone)
     .neq("user_id", userId)
-    .order("created_at", { ascending: false })
+    .order("last_post_at", { ascending: false })
     .limit(1);
 
   let is_phone_historically_reused = false;
   let last_post_time_delta_months = 999;
   if (history && history.length > 0) {
     is_phone_historically_reused = true;
-    const last = new Date(history[0].created_at as string);
-    const months =
-      (Date.now() - last.getTime()) / (1000 * 60 * 60 * 24 * 30);
-    last_post_time_delta_months = Math.floor(months);
+    const last = new Date(
+      (history[0].last_post_at as string) ?? (history[0].created_at as string),
+    );
+    last_post_time_delta_months = Math.floor(
+      (Date.now() - last.getTime()) / (1000 * 60 * 60 * 24 * 30),
+    );
   }
 
   const { count } = await supabase
@@ -132,23 +152,18 @@ export async function submitPost(
   formState: PostFormState,
   isPremium: boolean,
 ): Promise<SubmitPostResult> {
-  const phoneId = await upsertPhoneHistory(
-    supabase,
-    userId,
-    normalizePhonePlaceholder(formState),
-  );
-  const plateId = formState.raw_license_plate.trim()
-    ? await upsertPlateHistory(
-        supabase,
-        userId,
-        formState.raw_license_plate.replace(/[^a-zA-Z0-9]/g, "").toUpperCase(),
-      )
-    : null;
-
-  const built = buildPayloadFromForm(formState, phoneId, plateId);
+  const built = buildPayloadFromForm(formState, 0, null);
   if (!built.ok) return { ok: false, errorKey: built.errorKey };
 
   const { payload } = built;
+
+  const phoneId = await upsertPhoneHistory(supabase, userId, payload.normalized_phone);
+  payload.phone_id = phoneId;
+
+  const plateId = payload.normalized_license_plate
+    ? await upsertPlateHistory(supabase, userId, payload.normalized_license_plate)
+    : null;
+  payload.plate_id = plateId;
 
   if (payload.post_type === "demand") {
     const metrics = await gatherDemandMetrics(
@@ -242,11 +257,4 @@ export async function submitPost(
     return { ok: false, errorKey: "error.submit_failed" };
   }
   return { ok: true, postId: data.id as string };
-}
-
-function normalizePhonePlaceholder(state: PostFormState): string {
-  const country = state.dial_code.replace(/\D/g, "");
-  let local = state.raw_phone_local.replace(/\s+/g, "").trim();
-  if (local.startsWith("0")) local = local.slice(1);
-  return `${country}${local}`;
 }

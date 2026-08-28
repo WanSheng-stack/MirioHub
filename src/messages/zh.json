@@ -105,11 +105,14 @@
     "active_cargo_limit_reached": "该车辆/手机号在当前时段活跃货运单已达上限。",
     "bank_verification_required": "需完成银行对公认证后才能承接更多货运单。",
     "passenger_limit_exceeded": "全车总人数（含司机）不能超过 5 人。",
-    "non_member_limit_exceeded": "非会员活跃供应帖已达上限（最多 3 条）。"
+    "non_member_limit_exceeded": "非会员活跃供应帖已达上限（最多 3 条）。",
+    "route_distance_failed": "无法估算路线里程，请检查地址后重试。",
+    "route_not_compatible": "该需求起终点不在您的顺路路线方向上。"
   },
   "success": {
     "posted": "发布成功。",
-    "matched": "接单成功。"
+    "matched": "接单成功。",
+    "match_compatible": "路线与容量匹配。"
   },
   "credit": {
     "totalRate": "总完单率: {rate}%",
@@ -162,6 +165,8 @@
     "title": "全能城际与同城众包互助大厅",
     "subtitle": "统一混合流：需求与供应帖按时间排列 — 覆盖附近、同城、跨城与跨境。",
     "empty": "暂无互助单。",
+    "envMissing": "请复制 `.env.example` 为 `.env.local` 并填入 Supabase 配置，然后在 Supabase 控制台执行迁移 SQL。",
+    "routeMatchCount": "{count} 条顺路匹配",
     "legendDemand": "需求",
     "legendProvider": "供应",
     "sameCity": "同城",
@@ -294,7 +299,9 @@
     "heading": "标题",
     "description": "描述",
     "submit": "发布",
-    "submitting": "发布中…"
+    "submitting": "发布中…",
+    "estimatedKms": "预估路线里程：{kms} km",
+    "kmsCalculating": "正在计算路线里程…"
   },
   "paywall": {
     "title": "需要开通会员",

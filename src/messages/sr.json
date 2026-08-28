@@ -105,11 +105,14 @@
     "active_cargo_limit_reached": "Dostignut limit aktivnih teretnih naloga.",
     "bank_verification_required": "Potrebna bankovna verifikacija za više teretnih naloga.",
     "passenger_limit_exceeded": "Ukupno putnika (uključujući vozača) ne sme preći 5.",
-    "non_member_limit_exceeded": "Limit aktivnih ponuda za ne-članove (max 3)."
+    "non_member_limit_exceeded": "Limit aktivnih ponuda za ne-članove (max 3).",
+    "route_distance_failed": "Nije moguće proceniti rastojanje rute. Proverite adrese.",
+    "route_not_compatible": "Potražnja nije na vašoj ruti u ispravnom smeru."
   },
   "success": {
     "posted": "Uspešno objavljeno.",
-    "matched": "Uspešno prihvaćeno."
+    "matched": "Uspešno prihvaćeno.",
+    "match_compatible": "Ruta i kapacitet su kompatibilni."
   },
   "credit": {
     "totalRate": "Ukupna stopa završetka: {rate}%",
@@ -162,6 +165,8 @@
     "title": "Usputna pomoć (grad i međugrad)",
     "subtitle": "Jedan mešoviti tok: potražnja i ponuda — blizu, grad, međugrad i preko granice.",
     "empty": "Još nema objava.",
+    "envMissing": "Kopirajte `.env.example` u `.env.local`, dodajte Supabase URL i anon ključ, zatim pokrenite SQL migracije.",
+    "routeMatchCount": "{count} kompatibilnih ruta",
     "legendDemand": "Potražnja",
     "legendProvider": "Ponuda",
     "sameCity": "U istom gradu",
@@ -294,7 +299,9 @@
     "heading": "Naslov",
     "description": "Opis",
     "submit": "Objavi",
-    "submitting": "Objavljivanje…"
+    "submitting": "Objavljivanje…",
+    "estimatedKms": "Procena rute: {kms} km",
+    "kmsCalculating": "Računanje rute…"
   },
   "paywall": {
     "title": "Premium potrebna",

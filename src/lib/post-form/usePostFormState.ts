@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useReducer } from "react";
 import { calculateFinalFee } from "@/lib/post-fee";
+import { useRouteKmsEstimation } from "@/lib/post-form/useRouteKmsEstimation";
 import type {
   DeliveryMode,
   ItemCondition,
@@ -57,6 +58,8 @@ export type PostFormState = {
   count_xlarge: number;
   bump_fee: number;
   estimated_kms: number;
+  kms_loading: boolean;
+  kms_error_key: string | null;
   title: string;
   description: string;
   reference_photo_required: boolean;
@@ -112,7 +115,9 @@ export const initialFormState: PostFormState = {
   count_large: 0,
   count_xlarge: 0,
   bump_fee: 0,
-  estimated_kms: 20,
+  estimated_kms: 0,
+  kms_loading: false,
+  kms_error_key: null as string | null,
   title: "",
   description: "",
   reference_photo_required: false,
@@ -143,17 +148,13 @@ function reducer(state: PostFormState, action: Action): PostFormState {
     case "SET_SHARE_MODE": {
       const share_mode = action.share_mode;
       if (share_mode === "private") {
-        const locked =
-          state.category === "travel" ? 4 : state.escort_seats >= 1 ? 4 : state.escort_seats;
         return {
           ...state,
           share_mode,
-          escort_seats: state.category === "deliver" && state.escort_seats >= 1 ? 4 : state.escort_seats,
           max_companions: state.category === "travel" ? 4 : state.max_companions,
+          escort_seats:
+            state.category === "deliver" && state.escort_seats >= 1 ? 4 : state.escort_seats,
           show_private_buyout_notice: true,
-          ...(state.category === "travel" ? { max_companions: 4 } : {}),
-          ...(state.category === "deliver" && state.escort_seats >= 1 ? { escort_seats: 4 } : {}),
-          ...(locked === 4 ? {} : {}),
         };
       }
       return { ...state, share_mode, show_private_buyout_notice: false };
@@ -183,6 +184,16 @@ export function usePostFormState() {
   const setField = useCallback(<K extends keyof PostFormState>(field: K, value: PostFormState[K]) => {
     dispatch({ type: "SET_FIELD", field, value });
   }, []);
+
+  const setKmsLoading = useCallback((loading: boolean) => {
+    setField("kms_loading", loading);
+  }, [setField]);
+
+  const setKmsError = useCallback((errorKey: string | null) => {
+    setField("kms_error_key", errorKey);
+  }, [setField]);
+
+  useRouteKmsEstimation({ state, setField, setKmsLoading, setKmsError });
 
   const setPostType = useCallback((post_type: PostType) => {
     dispatch({ type: "SET_POST_TYPE", post_type });
@@ -277,13 +288,20 @@ export function usePostFormState() {
     else p.escort_seats = null;
     if (visibility.showMaxCompanions) p.max_companions = state.max_companions;
     else p.max_companions = null;
+    if (state.category === "travel") {
+      p.escort_seats =
+        state.share_mode === "private" ? 4 : state.max_companions;
+    }
     return p;
   }, [state, visibility]);
 
   const computedFee = useMemo(() => {
     if (!visibility.route || state.post_type !== "demand") return null;
+    if (state.estimated_kms <= 0) return null;
     return calculateFinalFee(state.estimated_kms, draftPayload as PostPayload);
   }, [draftPayload, state.estimated_kms, state.post_type, visibility.route]);
+
+  const feeReady = state.estimated_kms > 0 && !state.kms_loading && !state.kms_error_key;
 
   const luggageUnits = useMemo(() => totalLuggageUnits(state), [state]);
 
@@ -304,6 +322,7 @@ export function usePostFormState() {
     visibility,
     draftPayload,
     computedFee,
+    feeReady,
     luggageUnits,
     showPassengerScene,
   };

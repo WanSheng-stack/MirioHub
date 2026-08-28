@@ -7,7 +7,6 @@ import { PaywallModal } from "@/components/paywall/PaywallModal";
 import { VerificationShield } from "@/components/post/VerificationShield";
 import { AutoMeltDialog } from "@/components/post/AutoMeltDialog";
 import { runProviderMatchIntercept } from "@/lib/post-form/providerMatch";
-import { totalLuggageUnits } from "@/lib/post-payload";
 import type { MatchRow, Post, RevealResult, SystemConfig } from "@/lib/types";
 
 type Props = {
@@ -80,14 +79,6 @@ export function PostActions({ post, userId, campaign, config, match }: Props) {
 
       const normPhone = (me?.phone ?? "").replace(/\D/g, "");
       const normPlate = (me?.plate ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      const newUnits = totalLuggageUnits({
-        count_small: post.count_small ?? 0,
-        count_medium: post.count_medium ?? 0,
-        count_large: post.count_large ?? 0,
-        count_xlarge: post.count_xlarge ?? 0,
-      });
-      const newPassengers = (post.escort_seats ?? 0) + (post.max_companions ?? 0);
-
       const intercept = await runProviderMatchIntercept(
         supabase,
         userId,
@@ -95,8 +86,6 @@ export function PostActions({ post, userId, campaign, config, match }: Props) {
         normPhone,
         normPlate || null,
         Boolean(me?.is_bank_verified),
-        newPassengers,
-        newUnits,
       );
 
       if (!intercept.ok) {

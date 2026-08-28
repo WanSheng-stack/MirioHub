@@ -231,12 +231,28 @@ export function LuggageCounters({ form }: Props) {
 
 export function FeeDisplay({ form }: Props) {
   const t = useTranslations();
-  const { state, setField, computedFee, visibility } = form;
+  const { state, setField, computedFee, visibility, feeReady } = form;
 
   if (!visibility.showFeeDemand) return null;
 
   return (
     <section className="space-y-3 rounded-xl bg-zinc-50 p-4 ring-1 ring-zinc-200">
+      {state.kms_loading ? (
+        <p className="text-sm text-zinc-500">{t("publish.kmsCalculating")}</p>
+      ) : null}
+
+      {state.kms_error_key ? (
+        <p className="text-sm text-red-600">
+          {(t as (key: string) => string)(state.kms_error_key)}
+        </p>
+      ) : null}
+
+      {feeReady && state.estimated_kms > 0 ? (
+        <p className="text-xs text-zinc-500">
+          {t("publish.estimatedKms", { kms: state.estimated_kms.toFixed(1) })}
+        </p>
+      ) : null}
+
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">{t("publish.bumpFee")}</legend>
         <div className="flex flex-wrap gap-2">

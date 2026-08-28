@@ -81,11 +81,20 @@ export function buildPayloadFromForm(
       return { ok: false, errorKey: "error.address_required" };
     }
     if (state.post_type === "provider") {
-      const wps = state.waypoints.map((w) => w.trim()).filter(Boolean);
-      payload.waypoints = wps.length ? wps : null;
+      const intermediate = state.waypoints.map((w) => w.trim()).filter(Boolean);
+      payload.waypoints = [
+        payload.origin_address as string,
+        ...intermediate,
+        payload.destination_address as string,
+      ];
       payload.provider_name = state.provider_name.trim() || null;
       payload.vehicle_brand = state.vehicle_brand.trim() || null;
       payload.vehicle_color = state.vehicle_color.trim() || null;
+    }
+    if (state.post_type === "demand") {
+      if (state.estimated_kms <= 0) {
+        return { ok: false, errorKey: "error.route_distance_failed" };
+      }
     }
     if (state.post_type === "demand" && state.category === "deliver") {
       payload.delivery_mode = state.delivery_mode;

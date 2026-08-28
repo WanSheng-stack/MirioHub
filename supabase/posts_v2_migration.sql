@@ -18,30 +18,34 @@ create table if not exists public.phone_history (
   id serial primary key,
   user_id uuid not null references public.profiles (id) on delete cascade,
   normalized_phone text not null,
+  last_post_at timestamptz not null default timezone('utc', now()),
   created_at timestamptz not null default timezone('utc', now())
 );
 
 create index if not exists phone_history_normalized_idx on public.phone_history (normalized_phone);
 create index if not exists phone_history_user_idx on public.phone_history (user_id);
 
+-- 【完美纠正处】：将旧的 normalized_plate 升级为全局统一的 normalized_license_plate 
 create table if not exists public.plate_history (
   id serial primary key,
   user_id uuid not null references public.profiles (id) on delete cascade,
-  normalized_plate text not null,
+  normalized_license_plate text not null,
   created_at timestamptz not null default timezone('utc', now())
 );
 
-create index if not exists plate_history_normalized_idx on public.plate_history (normalized_plate);
+create index if not exists plate_history_normalized_idx on public.plate_history (normalized_license_plate);
 
 -- ---------------------------------------------------------------------------
 -- fraud_logs — silent anti-abuse audit trail
 -- ---------------------------------------------------------------------------
+-- 【完美纠正处】：同步修正日志表中的字段
 create table if not exists public.fraud_logs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles (id) on delete set null,
   scene text not null,
   normalized_phone text,
-  normalized_plate text,
+  normalized_license_plate text,
+  reporter_side text,
   created_at timestamptz not null default timezone('utc', now())
 );
 
@@ -55,7 +59,7 @@ create policy phone_history_insert_own on public.phone_history
 
 drop policy if exists phone_history_select_own on public.phone_history;
 create policy phone_history_select_own on public.phone_history
-  for select using (auth.uid() = user_id or public.is_admin());
+  for select using (auth.uid() = user_id);
 
 drop policy if exists plate_history_insert_own on public.plate_history;
 create policy plate_history_insert_own on public.plate_history
@@ -63,7 +67,7 @@ create policy plate_history_insert_own on public.plate_history
 
 drop policy if exists plate_history_select_own on public.plate_history;
 create policy plate_history_select_own on public.plate_history
-  for select using (auth.uid() = user_id or public.is_admin());
+  for select using (auth.uid() = user_id);
 
 drop policy if exists fraud_logs_insert_authenticated on public.fraud_logs;
 create policy fraud_logs_insert_authenticated on public.fraud_logs
@@ -129,6 +133,11 @@ create index if not exists posts_departure_idx on public.posts (departure_date, 
 -- Allow reading phone_history for intercept (same normalized across users — admin only select all)
 drop policy if exists phone_history_select_intercept on public.phone_history;
 create policy phone_history_select_intercept on public.phone_history
+  for select using (true);
+
+-- Allow reading plate_history for intercept
+drop policy if exists plate_history_select_intercept on public.plate_history;
+create policy plate_history_select_intercept on public.plate_history
   for select using (true);
 
 -- Generate bank reference code on profile

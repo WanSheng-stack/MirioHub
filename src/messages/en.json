@@ -105,11 +105,14 @@
     "active_cargo_limit_reached": "Active cargo order limit reached for this vehicle/phone.",
     "bank_verification_required": "Bank verification required to accept more cargo orders.",
     "passenger_limit_exceeded": "Total passengers (including driver) cannot exceed 5.",
-    "non_member_limit_exceeded": "Non-member active supply post limit reached (max 3)."
+    "non_member_limit_exceeded": "Non-member active supply post limit reached (max 3).",
+    "route_distance_failed": "Could not estimate route distance. Check addresses and try again.",
+    "route_not_compatible": "This trip does not pass through your route in the correct direction."
   },
   "success": {
     "posted": "Published successfully.",
-    "matched": "Match accepted."
+    "matched": "Match accepted.",
+    "match_compatible": "Route and capacity compatible."
   },
   "credit": {
     "totalRate": "Overall completion rate: {rate}%",
@@ -162,6 +165,8 @@
     "title": "Mutual-aid hall (city & intercity)",
     "subtitle": "One mixed feed for Demand and Provider posts — near, city, intercity, and cross-border.",
     "empty": "No posts yet.",
+    "envMissing": "Copy `.env.example` to `.env.local`, add Supabase URL and anon key, then run SQL migrations in the Supabase dashboard.",
+    "routeMatchCount": "{count} compatible route match(es)",
     "legendDemand": "Demand",
     "legendProvider": "Provider",
     "sameCity": "Same city",
@@ -294,7 +299,9 @@
     "heading": "Title",
     "description": "Description",
     "submit": "Publish",
-    "submitting": "Publishing…"
+    "submitting": "Publishing…",
+    "estimatedKms": "Estimated route distance: {kms} km",
+    "kmsCalculating": "Calculating route distance…"
   },
   "paywall": {
     "title": "Premium required",

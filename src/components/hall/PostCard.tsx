@@ -11,6 +11,8 @@ import {
   postTypeTagClass,
 } from "@/lib/posts";
 import { CreditDashboard, type CreditStats } from "@/components/credit/CreditDashboard";
+import type { RouteMatchInfo } from "@/lib/hall-route-match";
+import { resolveDriverOrderedRoute } from "@/lib/post-route-match";
 import type { AppLocale } from "@/i18n/routing";
 import type { Post } from "@/lib/types";
 
@@ -18,6 +20,7 @@ type Props = {
   post: Post;
   authorName?: string | null;
   creditStats?: CreditStats | null;
+  routeMatch?: RouteMatchInfo | null;
   /** Enable translate control (detail page) */
   showTranslate?: boolean;
   /** When false, render without wrapping Link (already on detail) */
@@ -28,6 +31,7 @@ export function PostCard({
   post,
   authorName,
   creditStats,
+  routeMatch,
   showTranslate = false,
   linkToDetail = true,
 }: Props) {
@@ -74,6 +78,13 @@ export function PostCard({
     }
   }
 
+  const tRoot = useTranslations();
+  const routeAxis =
+    post.post_type === "provider" &&
+    (post.category === "deliver" || post.category === "travel")
+      ? resolveDriverOrderedRoute(post)
+      : null;
+
   const body = (
     <>
       <div className={postMetaRowClass(post.post_type)}>
@@ -103,6 +114,25 @@ export function PostCard({
         </span>
         {post.destination_address || "—"}
       </p>
+
+      {routeAxis && routeAxis.length > 2 ? (
+        <p className="mt-1 text-xs text-zinc-500">
+          {routeAxis.join(" → ")}
+        </p>
+      ) : null}
+
+      {routeMatch ? (
+        <div className="mt-2 space-y-1">
+          <span className="inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-800">
+            {t("routeMatchCount", { count: routeMatch.matchedCount })}
+          </span>
+          {routeMatch.showSpaceWarning ? (
+            <p className="animate-pulse text-xs text-amber-700">
+              {tRoot("ui.space_overload_warning")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {authorName ? (
         <p className="mt-0.5 text-xs text-zinc-500">{authorName}</p>

@@ -1,4 +1,8 @@
-import { useTranslations } from "next-intl";
+"use client";
+
+import { useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import {
   CAPACITY_EMOJI,
   postCardAlignClass,
@@ -6,20 +10,72 @@ import {
   postMetaRowClass,
   postTypeTagClass,
 } from "@/lib/posts";
+import { CreditDashboard, type CreditStats } from "@/components/credit/CreditDashboard";
+import type { AppLocale } from "@/i18n/routing";
 import type { Post } from "@/lib/types";
 
 type Props = {
   post: Post;
   authorName?: string | null;
+  creditStats?: CreditStats | null;
+  /** Enable translate control (detail page) */
+  showTranslate?: boolean;
+  /** When false, render without wrapping Link (already on detail) */
+  linkToDetail?: boolean;
 };
 
-export function PostCard({ post, authorName }: Props) {
+export function PostCard({
+  post,
+  authorName,
+  creditStats,
+  showTranslate = false,
+  linkToDetail = true,
+}: Props) {
   const t = useTranslations("hall");
+  const locale = useLocale() as AppLocale;
+  const [text, setText] = useState(post.description);
+  const [busy, setBusy] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
 
-  return (
-    <article
-      className={`${postCardAlignClass(post.post_type)} ${postCardShellClass(post.post_type)} px-4 py-3.5`}
-    >
+  const cached = useMemo(() => {
+    const map = post.translations ?? {};
+    return map[locale];
+  }, [post.translations, locale]);
+
+  async function translate() {
+    if (cached) {
+      setText(cached);
+      setFromCache(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId: post.id,
+          locale,
+          sourceLocale: post.locale,
+          text: post.description,
+        }),
+      });
+      const json = (await res.json()) as {
+        ok: boolean;
+        text?: string;
+        cached?: boolean;
+      };
+      if (json.ok && json.text) {
+        setText(json.text);
+        setFromCache(Boolean(json.cached));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const body = (
+    <>
       <div className={postMetaRowClass(post.post_type)}>
         <span
           className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${postTypeTagClass(post.post_type)}`}
@@ -34,9 +90,11 @@ export function PostCard({ post, authorName }: Props) {
         </span>
       </div>
 
-      <h2 className="mt-2 text-base font-semibold tracking-tight text-zinc-950">
-        {post.title}
-      </h2>
+      {post.title ? (
+        <h2 className="mt-2 text-base font-semibold tracking-tight text-zinc-950">
+          {post.title}
+        </h2>
+      ) : null}
 
       <p className="mt-1 text-sm text-zinc-600">
         {post.origin_address || "—"}
@@ -50,9 +108,15 @@ export function PostCard({ post, authorName }: Props) {
         <p className="mt-0.5 text-xs text-zinc-500">{authorName}</p>
       ) : null}
 
-      {post.description ? (
+      {post.post_type === "provider" && creditStats ? (
+        <div className="mt-2">
+          <CreditDashboard stats={creditStats} compact />
+        </div>
+      ) : null}
+
+      {text ? (
         <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-zinc-800">
-          {post.description}
+          {text}
         </p>
       ) : null}
 
@@ -81,6 +145,32 @@ export function PostCard({ post, authorName }: Props) {
           </span>
         ) : null}
       </div>
+    </>
+  );
+
+  return (
+    <article
+      className={`${postCardAlignClass(post.post_type)} ${postCardShellClass(post.post_type)} px-4 py-3.5`}
+    >
+      {linkToDetail ? (
+        <Link href={`/posts/${post.id}`} className="block">
+          {body}
+        </Link>
+      ) : (
+        body
+      )}
+
+      {showTranslate && post.description ? (
+        <button
+          type="button"
+          onClick={() => void translate()}
+          disabled={busy}
+          className="mt-3 text-sm text-blue-700"
+        >
+          🌐 {busy ? t("translating") : t("translate")}
+          {fromCache ? ` · ${t("cached")}` : ""}
+        </button>
+      ) : null}
     </article>
   );
 }

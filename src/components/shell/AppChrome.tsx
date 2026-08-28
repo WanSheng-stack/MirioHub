@@ -16,14 +16,14 @@ export function AppHeader() {
           {t("name")}
         </Link>
         <nav className="flex items-center gap-4 text-sm">
-          <Link href="/publish" className="text-zinc-600 hover:text-zinc-950">
+          <Link href="/posts/new" className="text-zinc-600 hover:text-zinc-950">
             {t("publish")}
           </Link>
           <Link
             href="/profile"
             className="rounded-full bg-zinc-900 px-3 py-1.5 font-medium text-white"
           >
-            {t("profile")}
+            {t("account")}
           </Link>
           <div className="flex gap-1">
             {routing.locales.map((code) => (
@@ -68,7 +68,7 @@ export function MobileTabBar() {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-zinc-200 bg-white md:hidden">
       {item("/", t("hall"))}
-      {item("/profile", t("profile"))}
+      {item("/profile", t("account"))}
     </nav>
   );
 }
@@ -82,7 +82,7 @@ export function MobileTopBar() {
     <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 md:hidden">
       <span className="font-semibold">{t("name")}</span>
       <div className="flex items-center gap-2">
-        <Link href="/publish" className="text-sm text-zinc-600">
+        <Link href="/posts/new" className="text-sm text-zinc-600">
           {t("publish")}
         </Link>
         {routing.locales.map((code) => (

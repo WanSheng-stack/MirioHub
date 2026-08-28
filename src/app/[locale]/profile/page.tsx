@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
-import type { Profile } from "@/lib/types";
+import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
 function GoogleIcon() {
@@ -29,16 +29,36 @@ function GoogleIcon() {
   );
 }
 
+function bankRefFromUuid(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  }
+  return String(hash % 1000000).padStart(6, "0");
+}
+
+type ExtendedProfile = Profile & {
+  is_bank_verified?: boolean;
+  bank_reference_code?: string | null;
+};
+
 export default function ProfilePage() {
-  const t = useTranslations("profile");
+  const t = useTranslations("account");
   const tApp = useTranslations("app");
+  const tErr = useTranslations("error");
   const locale = useLocale();
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<ExtendedProfile | null>(null);
+  const [config, setConfig] = useState<SystemConfig | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
+
+  const bankRef = useMemo(
+    () => profile?.bank_reference_code ?? (user ? bankRefFromUuid(user.id) : "------"),
+    [profile?.bank_reference_code, user],
+  );
 
   useEffect(() => {
     if (!hasSupabaseEnv()) return;
@@ -47,12 +67,18 @@ export default function ProfilePage() {
       setUser(data.user);
       if (data.user) void loadProfile(data.user.id);
     });
+    void supabase
+      .from("system_configs")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle()
+      .then(({ data }) => setConfig(data as SystemConfig | null));
   }, []);
 
   async function loadProfile(id: string) {
     const supabase = createClient();
     const { data } = await supabase.from("profiles").select("*").eq("id", id).maybeSingle();
-    setProfile(data as Profile | null);
+    setProfile(data as ExtendedProfile | null);
   }
 
   async function signInWithGoogle() {
@@ -98,11 +124,11 @@ export default function ProfilePage() {
       p_viber: profile.viber,
     });
     const json = data as { ok?: boolean };
-    setMessage(json?.ok ? t("saved") : "error");
+    setMessage(json?.ok ? t("saved") : tErr("submit_failed"));
   }
 
   if (!hasSupabaseEnv()) {
-    return <p className="text-sm">缺少 Supabase 环境变量。</p>;
+    return <p className="text-sm">{tErr("missing_env")}</p>;
   }
 
   if (!user) {
@@ -191,7 +217,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <form className="space-y-3" onSubmit={(e) => void save(e)}>
+    <form className="mx-auto max-w-lg space-y-4" onSubmit={(e) => void save(e)}>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t("title")}</h1>
         <button
@@ -210,6 +236,32 @@ export default function ProfilePage() {
         {t("quota")}: {profile?.free_views_left ?? "—"} · {t("premium")}:{" "}
         {profile?.is_premium ? "✓" : "—"}
       </p>
+
+      <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4">
+        <h2 className="text-sm font-semibold">{t("bankVerifyTitle")}</h2>
+        <p className="mt-1 text-xs text-zinc-600">{t("bankVerifyHint")}</p>
+        <dl className="mt-3 space-y-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("recipient")}</dt>
+            <dd className="font-medium">{config?.bank_recipient ?? "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("accountNumber")}</dt>
+            <dd className="font-mono text-xs">{config?.bank_account ?? "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("bankReference")}</dt>
+            <dd className="font-mono text-lg font-bold tracking-widest text-zinc-900">{bankRef}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("bankVerified")}</dt>
+            <dd className={profile?.is_bank_verified ? "text-emerald-700" : "text-amber-700"}>
+              {profile?.is_bank_verified ? t("bankVerified") : t("bankNotVerified")}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
       {(
         [
           ["full_name", t("fullName")],

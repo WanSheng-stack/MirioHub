@@ -2,10 +2,161 @@
   "app": {
     "name": "MirioHub",
     "hall": "顺路捎带",
-    "profile": "个人中心",
+    "account": "账户",
     "publish": "发布",
     "mustRead": "务必必读",
     "mustReadClose": "我已了解"
+  },
+  "ui": {
+    "need_help": "我需要帮忙",
+    "passing_by": "我顺路顺手",
+    "add_waypoint": "增加计划途经点",
+    "spot_mode": "自送自提",
+    "door_mode": "楼下门口",
+    "door_mode_hint": "仅送达楼下/公寓外大门口，须自行下楼交接。",
+    "share_pool": "接受拼座",
+    "private_buyout": "独享整车空间",
+    "private_buyout_notice": "选择独享将自动买断车主所有剩余空位共4座，为您保留私密空间。此费用为平台算法预估分摊价，不具强制约束力，最终分摊金额请在线下与 Provider 进一步核对确认后再选用出发。",
+    "recommended_fee": "平台推荐分摊价：{amount} EUR",
+    "demand_disclaimer": "当前费用为平台基于独立里程生成的推荐分摊参考价。平台不介入直接收款，此价格非强制一口价，最终分摊金额请以您与车主在线下真实友好协商的结果为准。",
+    "handover_shield_alert": "🚨 平台安全合规最终提示：交接前，请必须亲眼核实车主的姓名、电话映射、车型、颜色以及【真实车牌号】是否与当前页面展示信息 100% 完全一致！不符则可拒绝订单，或要求车主当场重开正确新单，否则安全自负。",
+    "request_auto_melt": "我已安全送达，但对方拒绝提供送达码",
+    "standard_completion": "🟢 客户当面确认送达: {rate}%",
+    "auto_melt_completion": "🟡 楼下送达(客户未给码)但72h无投诉: {rate}%",
+    "space_overload_warning": "⚠️ 空间过载提示：这单货可能超出您的车型承载空间，请务必提前通过私信与对方确认清楚后再决定是否接单，免得空跑一趟。"
+  },
+  "category": {
+    "demand": {
+      "deliver": "代送包裹",
+      "buy": "帮买东西",
+      "travel": "结伴旅行",
+      "onsite": "到府互助",
+      "errand": "代办排队"
+    },
+    "provider": {
+      "deliver": "发布行程",
+      "buy": "集市卖货",
+      "travel": "结伴旅行",
+      "onsite": "技能与工具",
+      "errand": "闲置时间"
+    }
+  },
+  "country": {
+    "sr": "塞尔维亚",
+    "cn": "中国",
+    "us": "美国",
+    "uk": "英国",
+    "de": "德国",
+    "fr": "法国",
+    "it": "意大利",
+    "at": "奥地利",
+    "ch": "瑞士",
+    "hr": "克罗地亚",
+    "ba": "波黑",
+    "me": "黑山",
+    "mk": "北马其顿"
+  },
+  "unit": {
+    "pcs": "件",
+    "kg": "公斤",
+    "g": "克",
+    "l": "升",
+    "ml": "毫升",
+    "box": "盒",
+    "pack": "包",
+    "bottle": "瓶"
+  },
+  "itemCondition": {
+    "demand": {
+      "new": "必须全新",
+      "used": "接受二手/旧物"
+    },
+    "provider": {
+      "new": "全新商品",
+      "used": "二手闲置（请在描述里注明新旧）"
+    }
+  },
+  "luggage": {
+    "small": "小随身件",
+    "medium": "标准行李箱",
+    "large": "大纸箱",
+    "xlarge": "超大件",
+    "sizeGuide": "尺寸参考指南",
+    "dimSmall": "40×30×20cm",
+    "dimMedium": "55×40×23cm",
+    "dimLarge": "70×50×30cm",
+    "dimXlarge": "单边>100cm",
+    "oversizeWarning": "⚠️ 提示：未如实填写行李尺寸和数量，Provider 现场有权拒绝载运。"
+  },
+  "error": {
+    "invalid_phone": "手机号格式无效（清洗后须为 9–14 位纯数字）。",
+    "invalid_plate": "车牌号格式无效。",
+    "address_required": "请填写起点与终点地址。",
+    "service_address_required": "请填写具体服务地址。",
+    "fixed_reward_required": "请填写有效的固定酬劳金额。",
+    "item_price_required": "请填写商品价格。",
+    "reference_photo_required": "价格面议时必须上传商品参考照片。",
+    "submit_failed": "发布失败，请重试。",
+    "missing_env": "缺少 Supabase 环境变量。",
+    "not_found": "帖子不存在。",
+    "post_denied_blurred": "暂时无法发布，如有疑问请联系客服。",
+    "time_window_overlap": "同一时间段只能存在一条行程单。",
+    "match_denied_blurred": "暂时无法承接此单。",
+    "active_cargo_limit_reached": "该车辆/手机号在当前时段活跃货运单已达上限。",
+    "bank_verification_required": "需完成银行对公认证后才能承接更多货运单。",
+    "passenger_limit_exceeded": "全车总人数（含司机）不能超过 5 人。",
+    "non_member_limit_exceeded": "非会员活跃供应帖已达上限（最多 3 条）。"
+  },
+  "success": {
+    "posted": "发布成功。",
+    "matched": "接单成功。"
+  },
+  "credit": {
+    "totalRate": "总完单率: {rate}%",
+    "autoMeltExplain": "这是由于客户单方面没提供送达码，但车主已完美送达目的地且72小时无任何后续投诉的真实参考信息。",
+    "historyDrawer": "查阅「客户未给码」历史原因"
+  },
+  "autoMelt": {
+    "title": "上报送达但对方拒给码",
+    "note": "补充备注",
+    "submit": "提交并启动 72 小时倒计时",
+    "cancel": "取消",
+    "countdownHint": "已启动 72 小时自动完单倒计时，若无纠纷申诉将自动完成。",
+    "reason": {
+      "frontDesk": "客户不在现场，已托付前台",
+      "meeting": "客户开会中无法看手机",
+      "refused": "已送到楼下，客户因私人原因拒绝给码",
+      "other": "其他（见备注）"
+    }
+  },
+  "account": {
+    "title": "账户",
+    "welcome": "登录后即可查看联系方式并发布互助单",
+    "continueWithGoogle": "使用 Google 登录",
+    "googleLoading": "正在跳转…",
+    "orDivider": "或",
+    "email": "邮箱",
+    "password": "密码",
+    "signIn": "登录",
+    "signUp": "注册",
+    "signOut": "退出",
+    "fullName": "真实姓名",
+    "phone": "联系电话",
+    "plate": "车牌",
+    "vehicle": "车型",
+    "facebook": "Facebook",
+    "viber": "Viber",
+    "save": "保存",
+    "saved": "已保存",
+    "quota": "剩余免费查看次数",
+    "premium": "会员",
+    "bankVerifyTitle": "银行对公认证（100 RSD）",
+    "bankVerifyHint": "请通过手机银行转账固定 100 RSD，在付款附言（Poziv na broj）中填入下方 6 位流水号以激活认证。",
+    "bankReference": "您的附言流水号",
+    "bankVerified": "已认证",
+    "bankNotVerified": "未认证",
+    "recipient": "收款人",
+    "accountNumber": "账号"
   },
   "hall": {
     "title": "全能城际与同城众包互助大厅",
@@ -56,57 +207,92 @@
       "van": "面包车"
     }
   },
-  "order": {
-    "open": "进行中",
-    "matched": "已互选",
-    "cancelled": "已撤销",
+  "post": {
+    "status": {
+      "draft": "草稿",
+      "active": "进行中",
+      "matched": "已匹配",
+      "pending_completion": "待完单",
+      "completed": "已完成",
+      "canceled": "已取消"
+    },
     "reveal": "查看联系方式",
     "freeHint": "公测期免费解锁",
     "needLogin": "请先登录再查看联系方式。",
     "confirmMatch": "确认互选",
+    "acceptCargo": "承接货运单",
     "disclaimer": "平台绝对免责。请现场核对身份与物品；信息不符可无责撤销、无伤取消。",
     "noFault": "无责撤销",
-    "ownOrder": "这是你发布的单。",
+    "ownPost": "这是你发布的帖子。",
     "from": "从",
-    "to": "到"
-  },
-  "profile": {
-    "title": "个人中心",
-    "welcome": "登录后即可查看联系方式并发布互助单",
-    "continueWithGoogle": "使用 Google 登录",
-    "googleLoading": "正在跳转…",
-    "orDivider": "或",
-    "email": "邮箱",
-    "password": "密码",
-    "signIn": "登录",
-    "signUp": "注册",
-    "signOut": "退出",
-    "fullName": "真实姓名",
-    "phone": "联系电话（仅经安全 RPC 返回给他人）",
-    "plate": "车牌",
-    "vehicle": "车型",
-    "facebook": "Facebook",
-    "viber": "Viber",
-    "save": "保存",
-    "saved": "已保存",
-    "quota": "剩余免费查看次数",
-    "premium": "会员"
+    "to": "到",
+    "pickupCode": "取货码",
+    "deliveryCode": "送达码"
   },
   "publish": {
     "title": "发布互助单",
-    "postType": "帖子类型",
+    "section": {
+      "base": "基础信息"
+    },
     "category": "类目",
-    "scope": "范围",
+    "departureDate": "出发日期",
+    "departureTimeWindow": "出发时间窗口（15分钟）",
+    "phone": "手机号码",
+    "phonePlaceholder": "本地号码",
+    "originAddress": "起点地址",
+    "destinationAddress": "终点地址",
+    "waypointPlaceholder": "途经点 {index}",
+    "escortSeats": "押运员人数（0–4）",
+    "maxCompanions": "结伴人数（1–4）",
+    "deliveryMode": "交付模式",
+    "shareMode": "座位模式",
+    "luggage": "行李数量",
+    "bumpFee": "加急催单小费",
+    "bumpOption": {
+      "0": "默认 (+0 EUR)",
+      "2": "加速 (+2 EUR)",
+      "5": "火速 (+5 EUR)",
+      "10": "极速秒接 (+10 EUR)"
+    },
+    "providerAssets": "车主验证信息",
+    "providerName": "姓名",
+    "vehicleBrand": "汽车品牌",
+    "vehicleColor": "颜色",
+    "licensePlate": "车牌号",
+    "buySection": "物资信息",
+    "itemQuantity": "物品数量",
+    "itemUnit": "单位",
+    "itemCondition": "新旧品相",
+    "itemPrice": "金额 (EUR)",
+    "priceCalc": {
+      "unit": "物品单价",
+      "total": "物品总价"
+    },
+    "totalBudgetHint": "总预算 = {quantity} × {price} = {total} EUR",
+    "budgetType": "预算方式",
+    "purchasePrice": {
+      "range": "价格区间",
+      "negotiable": "价格面议"
+    },
+    "minBudget": "最低预算",
+    "maxBudget": "最高预算",
+    "referencePhoto": "商品参考照片（面议必填）",
+    "feeHintRange": "垫付金额 + 小费 (推荐 5.00 EUR)",
+    "feeHintNegotiable": "物料费(待议，私信确认) + 小费 (推荐 10.00 EUR)",
+    "providerCargoFee": "带货费：面议",
+    "serviceAddress": "具体服务地址",
+    "serviceTimeWindow": "期望服务时段",
+    "providerPayType": "薪酬方式",
+    "payType": {
+      "hourly": "期望时薪",
+      "fixed": "固定打包价",
+      "negotiable": "价格面议"
+    },
+    "expectedPay": "期望薪酬 (EUR)",
+    "fixedReward": "固定酬劳 (EUR)",
+    "negotiableDisplay": "前台显示：面议",
     "heading": "标题",
     "description": "描述",
-    "originAddress": "出发 / 起点地址",
-    "destinationAddress": "到达 / 终点地址",
-    "capacityType": "容积",
-    "transportMode": "交通方式",
-    "escortSeats": "押货座位",
-    "feeAmount": "酬劳 / 油费分摊",
-    "estimatedItemCost": "预估垫付（代购）",
-    "optional": "可选",
     "submit": "发布",
     "submitting": "发布中…"
   },

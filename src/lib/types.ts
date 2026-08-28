@@ -1,5 +1,3 @@
-import type { OrderRole } from "@/lib/roles";
-
 export type SystemConfig = {
   id: number;
   is_global_free_campaign: boolean;
@@ -25,28 +23,21 @@ export type Profile = {
   is_premium: boolean;
   is_admin: boolean;
   free_views_left: number;
+  is_bank_verified?: boolean;
+  bank_reference_code?: string | null;
 };
 
-export type Order = {
-  id: string;
-  author_id: string;
-  role: OrderRole;
-  title: string;
-  description: string;
-  task_notes: string;
-  from_city: string;
-  to_city: string;
-  source_locale: "sr" | "en" | "zh";
-  translations: Record<string, string> | null;
-  status: "open" | "matched" | "cancelled";
-  created_at: string;
-};
-
-/** P2 marketplace post — Demand (left) / Provider (right) mirror hall */
+/** P2 marketplace post — Demand / Provider mixed hall */
 export type PostType = "demand" | "provider";
 export type PostCategory = "deliver" | "buy" | "onsite" | "errand" | "travel";
 export type PostScope = "near" | "city" | "intercity" | "cross_border";
-export type PostStatus = "draft" | "active" | "completed" | "canceled";
+export type PostStatus =
+  | "draft"
+  | "active"
+  | "matched"
+  | "pending_completion"
+  | "completed"
+  | "canceled";
 export type CapacityType = "backpack" | "suitcase" | "trunk";
 export type TransportMode =
   | "walking"
@@ -60,6 +51,10 @@ export type TransportMode =
   | "car"
   | "van";
 
+export type DeliveryMode = "spot" | "door";
+export type ShareMode = "share" | "private";
+export type ItemUnit = "pcs" | "kg" | "g" | "l" | "ml" | "box" | "pack" | "bottle";
+
 export type Post = {
   id: string;
   user_id: string;
@@ -72,7 +67,6 @@ export type Post = {
   scope: PostScope;
   origin_address: string;
   destination_address: string;
-  /** GeoJSON Point from PostGIS, or null until pinned */
   origin_gps: unknown | null;
   destination_gps: unknown | null;
   capacity_type: CapacityType | null;
@@ -80,13 +74,40 @@ export type Post = {
   escort_seats: number;
   fee_amount: number | null;
   estimated_item_cost: number | null;
+  translations?: Record<string, string> | null;
   created_at: string;
   updated_at: string;
+  delivery_mode?: DeliveryMode | null;
+  share_mode?: ShareMode | null;
+  max_companions?: number | null;
+  item_condition?: "new" | "used" | null;
+  phone_id?: number | null;
+  raw_phone?: string | null;
+  normalized_phone?: string | null;
+  plate_id?: number | null;
+  raw_license_plate?: string | null;
+  normalized_license_plate?: string | null;
+  provider_name?: string | null;
+  vehicle_brand?: string | null;
+  vehicle_color?: string | null;
+  departure_date?: string | null;
+  departure_time_window?: string | null;
+  waypoints?: string[] | null;
+  item_quantity?: number | null;
+  item_unit?: ItemUnit | null;
+  count_small?: number;
+  count_medium?: number;
+  count_large?: number;
+  count_xlarge?: number;
+  bump_fee?: number | null;
+  service_address?: string | null;
+  completion_type?: "standard" | "auto_melt" | null;
+  completion_note?: string | null;
 };
 
 export type MatchRow = {
   id: string;
-  order_id: string;
+  post_id: string;
   demand_user_id: string;
   provider_user_id: string;
   confirmed_at: string | null;

@@ -2,10 +2,161 @@
   "app": {
     "name": "MirioHub",
     "hall": "Rides & errands",
-    "profile": "Profile",
+    "account": "Account",
     "publish": "Post",
     "mustRead": "Must read",
     "mustReadClose": "I understand"
+  },
+  "ui": {
+    "need_help": "I need help",
+    "passing_by": "Passing by",
+    "add_waypoint": "Add planned waypoint",
+    "spot_mode": "Self drop-off & pick-up",
+    "door_mode": "Building entrance",
+    "door_mode_hint": "Delivered to ground floor / apartment gate only — you must come down to hand over.",
+    "share_pool": "Open to ride-share",
+    "private_buyout": "Private full vehicle",
+    "private_buyout_notice": "Choosing private mode automatically reserves all 4 remaining seats for your privacy. This fee is an algorithmic estimate, not a binding price — please confirm the final split offline with the Provider before departure.",
+    "recommended_fee": "Platform recommended split: {amount} EUR",
+    "demand_disclaimer": "Current fee is a platform-generated mileage-based reference split. MirioHub does not collect payment directly; this is not a binding fixed price — final amounts should be agreed offline with the driver.",
+    "handover_shield_alert": "Platform safety reminder: before handover, you MUST verify the driver's name, phone, vehicle model, color, and real license plate match this page 100%. If not, refuse the order or ask them to repost correctly — safety is your responsibility.",
+    "request_auto_melt": "Delivered safely, but recipient refused delivery code",
+    "standard_completion": "Confirmed in-person delivery: {rate}%",
+    "auto_melt_completion": "Ground-floor delivery (no code) · no dispute in 72h: {rate}%",
+    "space_overload_warning": "Space overload: cargo may exceed your vehicle capacity — confirm via private message before accepting to avoid a wasted trip."
+  },
+  "category": {
+    "demand": {
+      "deliver": "Parcel delivery",
+      "buy": "Buy for me",
+      "travel": "Travel buddy",
+      "onsite": "On-site help",
+      "errand": "Queue & errands"
+    },
+    "provider": {
+      "deliver": "Post a trip",
+      "buy": "Marketplace sell",
+      "travel": "Travel buddy",
+      "onsite": "Skills & tools",
+      "errand": "Spare time"
+    }
+  },
+  "country": {
+    "sr": "Serbia",
+    "cn": "China",
+    "us": "USA",
+    "uk": "UK",
+    "de": "Germany",
+    "fr": "France",
+    "it": "Italy",
+    "at": "Austria",
+    "ch": "Switzerland",
+    "hr": "Croatia",
+    "ba": "Bosnia",
+    "me": "Montenegro",
+    "mk": "North Macedonia"
+  },
+  "unit": {
+    "pcs": "pcs",
+    "kg": "kg",
+    "g": "g",
+    "l": "L",
+    "ml": "mL",
+    "box": "box",
+    "pack": "pack",
+    "bottle": "bottle"
+  },
+  "itemCondition": {
+    "demand": {
+      "new": "Must be brand new",
+      "used": "Accept used / second-hand"
+    },
+    "provider": {
+      "new": "Brand new",
+      "used": "Used / idle (note condition in description)"
+    }
+  },
+  "luggage": {
+    "small": "Small carry-on",
+    "medium": "Standard suitcase",
+    "large": "Large box",
+    "xlarge": "Oversized",
+    "sizeGuide": "Size reference guide",
+    "dimSmall": "40×30×20 cm",
+    "dimMedium": "55×40×23 cm",
+    "dimLarge": "70×50×30 cm",
+    "dimXlarge": "Any side > 100 cm",
+    "oversizeWarning": "Warning: if luggage size/count is misstated, the Provider may refuse carriage on site."
+  },
+  "error": {
+    "invalid_phone": "Invalid phone number (9–14 digits after normalization).",
+    "invalid_plate": "Invalid license plate.",
+    "address_required": "Origin and destination are required.",
+    "service_address_required": "Service address is required.",
+    "fixed_reward_required": "Please enter a valid reward amount.",
+    "item_price_required": "Item price is required.",
+    "reference_photo_required": "Reference photo is required for negotiable pricing.",
+    "submit_failed": "Failed to publish. Please try again.",
+    "missing_env": "Missing Supabase configuration.",
+    "not_found": "Post not found.",
+    "post_denied_blurred": "Unable to publish at this time. Please contact support if you believe this is an error.",
+    "time_window_overlap": "Only one active trip allowed in the same time window.",
+    "match_denied_blurred": "Unable to accept this order at this time.",
+    "active_cargo_limit_reached": "Active cargo order limit reached for this vehicle/phone.",
+    "bank_verification_required": "Bank verification required to accept more cargo orders.",
+    "passenger_limit_exceeded": "Total passengers (including driver) cannot exceed 5.",
+    "non_member_limit_exceeded": "Non-member active supply post limit reached (max 3)."
+  },
+  "success": {
+    "posted": "Published successfully.",
+    "matched": "Match accepted."
+  },
+  "credit": {
+    "totalRate": "Overall completion rate: {rate}%",
+    "autoMeltExplain": "This reflects trips where the customer did not provide a delivery code, but the driver delivered to the destination with no dispute within 72 hours.",
+    "historyDrawer": "View auto-complete reason history"
+  },
+  "autoMelt": {
+    "title": "Report delivery without code",
+    "note": "Additional notes",
+    "submit": "Submit & start 72h countdown",
+    "cancel": "Cancel",
+    "countdownHint": "72-hour auto-complete countdown started. If no dispute is raised, the order will complete automatically.",
+    "reason": {
+      "frontDesk": "Customer not on site — left with front desk",
+      "meeting": "Customer in meeting — cannot check phone",
+      "refused": "Delivered downstairs — customer refused code for personal reasons",
+      "other": "Other (see notes)"
+    }
+  },
+  "account": {
+    "title": "Account",
+    "welcome": "Sign in to unlock contacts and post rides",
+    "continueWithGoogle": "Continue with Google",
+    "googleLoading": "Redirecting…",
+    "orDivider": "Or",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "signOut": "Sign out",
+    "fullName": "Legal name",
+    "phone": "Phone",
+    "plate": "License plate",
+    "vehicle": "Vehicle model",
+    "facebook": "Facebook",
+    "viber": "Viber",
+    "save": "Save",
+    "saved": "Saved",
+    "quota": "Free views left",
+    "premium": "Premium",
+    "bankVerifyTitle": "Bank verification (100 RSD)",
+    "bankVerifyHint": "Transfer exactly 100 RSD via mobile banking. In Poziv na broj (payment reference), enter your 6-digit code below to activate verified status.",
+    "bankReference": "Your reference code",
+    "bankVerified": "Verified",
+    "bankNotVerified": "Not verified",
+    "recipient": "Recipient",
+    "accountNumber": "Account number"
   },
   "hall": {
     "title": "Mutual-aid hall (city & intercity)",
@@ -56,57 +207,92 @@
       "van": "Van"
     }
   },
-  "order": {
-    "open": "Open",
-    "matched": "Matched",
-    "cancelled": "Cancelled",
+  "post": {
+    "status": {
+      "draft": "Draft",
+      "active": "Active",
+      "matched": "Matched",
+      "pending_completion": "Pending completion",
+      "completed": "Completed",
+      "canceled": "Canceled"
+    },
     "reveal": "Show contact",
     "freeHint": "Free unlock during public beta",
     "needLogin": "Sign in to view contact.",
     "confirmMatch": "Confirm mutual match",
+    "acceptCargo": "Accept cargo order",
     "disclaimer": "MirioHub accepts absolutely no liability. Verify in person. If details do not match, cancel with no fault.",
     "noFault": "No-fault cancel",
-    "ownOrder": "This is your post.",
+    "ownPost": "This is your post.",
     "from": "From",
-    "to": "To"
-  },
-  "profile": {
-    "title": "Profile",
-    "welcome": "Sign in to unlock contacts and post rides",
-    "continueWithGoogle": "Continue with Google",
-    "googleLoading": "Redirecting…",
-    "orDivider": "Or",
-    "email": "Email",
-    "password": "Password",
-    "signIn": "Sign in",
-    "signUp": "Sign up",
-    "signOut": "Sign out",
-    "fullName": "Legal name",
-    "phone": "Phone (returned only via RPC)",
-    "plate": "License plate",
-    "vehicle": "Vehicle model",
-    "facebook": "Facebook",
-    "viber": "Viber",
-    "save": "Save",
-    "saved": "Saved",
-    "quota": "Free views left",
-    "premium": "Premium"
+    "to": "To",
+    "pickupCode": "Pickup code",
+    "deliveryCode": "Delivery code"
   },
   "publish": {
     "title": "New post",
-    "postType": "Post type",
+    "section": {
+      "base": "Basic info"
+    },
     "category": "Category",
-    "scope": "Scope",
-    "heading": "Title",
-    "description": "Description",
+    "departureDate": "Departure date",
+    "departureTimeWindow": "Departure time window (15 min)",
+    "phone": "Mobile number",
+    "phonePlaceholder": "Local number",
     "originAddress": "Origin address",
     "destinationAddress": "Destination address",
-    "capacityType": "Capacity",
-    "transportMode": "Transport",
-    "escortSeats": "Escort seats",
-    "feeAmount": "Fee / fuel share",
-    "estimatedItemCost": "Estimated item cost (buy)",
-    "optional": "Optional",
+    "waypointPlaceholder": "Waypoint {index}",
+    "escortSeats": "Escort passengers (0–4)",
+    "maxCompanions": "Travel companions (1–4)",
+    "deliveryMode": "Delivery mode",
+    "shareMode": "Seating",
+    "luggage": "Luggage count",
+    "bumpFee": "Priority tip",
+    "bumpOption": {
+      "0": "Default (+0 EUR)",
+      "2": "Boost (+2 EUR)",
+      "5": "Fast (+5 EUR)",
+      "10": "Instant (+10 EUR)"
+    },
+    "providerAssets": "Vehicle verification",
+    "providerName": "Full name",
+    "vehicleBrand": "Vehicle brand",
+    "vehicleColor": "Color",
+    "licensePlate": "License plate",
+    "buySection": "Item details",
+    "itemQuantity": "Quantity",
+    "itemUnit": "Unit",
+    "itemCondition": "Condition",
+    "itemPrice": "Price (EUR)",
+    "priceCalc": {
+      "unit": "Unit price",
+      "total": "Total price"
+    },
+    "totalBudgetHint": "Total budget = {quantity} × {price} = {total} EUR",
+    "budgetType": "Budget type",
+    "purchasePrice": {
+      "range": "Price range",
+      "negotiable": "Negotiable"
+    },
+    "minBudget": "Min budget",
+    "maxBudget": "Max budget",
+    "referencePhoto": "Reference photo (required for negotiable)",
+    "feeHintRange": "Advance + tip (recommended 5.00 EUR)",
+    "feeHintNegotiable": "Material cost (TBD via message) + tip (recommended 10.00 EUR)",
+    "providerCargoFee": "Carriage fee: negotiable",
+    "serviceAddress": "Service address",
+    "serviceTimeWindow": "Preferred service window",
+    "providerPayType": "Compensation type",
+    "payType": {
+      "hourly": "Hourly rate",
+      "fixed": "Fixed package price",
+      "negotiable": "Negotiable"
+    },
+    "expectedPay": "Expected pay (EUR)",
+    "fixedReward": "Fixed reward (EUR)",
+    "negotiableDisplay": "Display: negotiable",
+    "heading": "Title",
+    "description": "Description",
     "submit": "Publish",
     "submitting": "Publishing…"
   },

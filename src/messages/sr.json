@@ -2,10 +2,161 @@
   "app": {
     "name": "MirioHub",
     "hall": "Usputni prevoz i pomoć",
-    "profile": "Profil",
+    "account": "Nalog",
     "publish": "Objavi",
     "mustRead": "Obavezno pročitaj",
     "mustReadClose": "Razumem"
+  },
+  "ui": {
+    "need_help": "Treba mi pomoć",
+    "passing_by": "Usput sam",
+    "add_waypoint": "Dodaj planiranu stanicu",
+    "spot_mode": "Samo preuzimanje i predaja",
+    "door_mode": "Ulaz u zgradu",
+    "door_mode_hint": "Samo do ulaza zgrade — morate sići da preuzmete.",
+    "share_pool": "Deljenje vožnje",
+    "private_buyout": "Privatno celo vozilo",
+    "private_buyout_notice": "Privatni režim automatski rezerviše sva 4 preostala mesta. Ovo je procena platforme, ne obavezna cena — finalni iznos dogovorite offline sa vozačem pre polaska.",
+    "recommended_fee": "Preporučena podela platforme: {amount} EUR",
+    "demand_disclaimer": "Trenutna cena je referentna podela po kilometraži. Platforma ne naplaćuje direktno; nije obavezna fiksna cena — konačan iznos dogovorite offline sa vozačem.",
+    "handover_shield_alert": "🚨 Bezbednosno upozorenje: pre predaje MORATE proveriti ime, telefon, model, boju i prave tablice vozača — 100% kao na stranici. Inače odbijte ili tražite novu objavu.",
+    "request_auto_melt": "Bezbedno dostavljeno, ali primalac odbija kod",
+    "standard_completion": "🟢 Lično potvrđena dostava: {rate}%",
+    "auto_melt_completion": "🟡 Dostava ispred zgrade (bez koda) · bez žalbe 72h: {rate}%",
+    "space_overload_warning": "⚠️ Preopterećenje: teret može premašiti kapacitet vozila — potvrdite porukom pre prihvatanja."
+  },
+  "category": {
+    "demand": {
+      "deliver": "Dostava paketa",
+      "buy": "Kupi umesto mene",
+      "travel": "Putovanje",
+      "onsite": "Pomoć na licu mesta",
+      "errand": "Red i obaveze"
+    },
+    "provider": {
+      "deliver": "Objavi vožnju",
+      "buy": "Prodaja na pijaci",
+      "travel": "Putovanje",
+      "onsite": "Veštine i alati",
+      "errand": "Slobodno vreme"
+    }
+  },
+  "country": {
+    "sr": "Srbija",
+    "cn": "Kina",
+    "us": "SAD",
+    "uk": "UK",
+    "de": "Nemačka",
+    "fr": "Francuska",
+    "it": "Italija",
+    "at": "Austrija",
+    "ch": "Švajcarska",
+    "hr": "Hrvatska",
+    "ba": "BiH",
+    "me": "Crna Gora",
+    "mk": "Severna Makedonija"
+  },
+  "unit": {
+    "pcs": "kom",
+    "kg": "kg",
+    "g": "g",
+    "l": "l",
+    "ml": "ml",
+    "box": "kutija",
+    "pack": "pakovanje",
+    "bottle": "flaša"
+  },
+  "itemCondition": {
+    "demand": {
+      "new": "Mora biti novo",
+      "used": "Prihvatam polovno"
+    },
+    "provider": {
+      "new": "Novo",
+      "used": "Polovno (navedite stanje u opisu)"
+    }
+  },
+  "luggage": {
+    "small": "Mali prtljag",
+    "medium": "Standardni kofer",
+    "large": "Velika kutija",
+    "xlarge": "Preveliko",
+    "sizeGuide": "Vodič za dimenzije",
+    "dimSmall": "40×30×20 cm",
+    "dimMedium": "55×40×23 cm",
+    "dimLarge": "70×50×30 cm",
+    "dimXlarge": "Bilo koja strana > 100 cm",
+    "oversizeWarning": "⚠️ Upozorenje: pogrešne dimenzije/količina — vozač može odbiti prevoz na licu mesta."
+  },
+  "error": {
+    "invalid_phone": "Neispravan broj telefona (9–14 cifara posle normalizacije).",
+    "invalid_plate": "Neispravne tablice.",
+    "address_required": "Polazak i destinacija su obavezni.",
+    "service_address_required": "Adresa usluge je obavezna.",
+    "fixed_reward_required": "Unesite validnu naknadu.",
+    "item_price_required": "Cena artikla je obavezna.",
+    "reference_photo_required": "Referentna fotografija je obavezna za dogovor.",
+    "submit_failed": "Objava nije uspela. Pokušajte ponovo.",
+    "missing_env": "Nedostaje Supabase konfiguracija.",
+    "not_found": "Objava nije pronađena.",
+    "post_denied_blurred": "Objava trenutno nije moguća. Kontaktirajte podršku.",
+    "time_window_overlap": "Samo jedna aktivna vožnja u istom vremenskom prozoru.",
+    "match_denied_blurred": "Prihvatanje trenutno nije moguće.",
+    "active_cargo_limit_reached": "Dostignut limit aktivnih teretnih naloga.",
+    "bank_verification_required": "Potrebna bankovna verifikacija za više teretnih naloga.",
+    "passenger_limit_exceeded": "Ukupno putnika (uključujući vozača) ne sme preći 5.",
+    "non_member_limit_exceeded": "Limit aktivnih ponuda za ne-članove (max 3)."
+  },
+  "success": {
+    "posted": "Uspešno objavljeno.",
+    "matched": "Uspešno prihvaćeno."
+  },
+  "credit": {
+    "totalRate": "Ukupna stopa završetka: {rate}%",
+    "autoMeltExplain": "Ovo su vožnje gde kupac nije dao kod, ali je vozač dostavio bez sporova u 72h.",
+    "historyDrawer": "Istorija razloga auto-završetka"
+  },
+  "autoMelt": {
+    "title": "Prijavi dostavu bez koda",
+    "note": "Dodatne napomene",
+    "submit": "Pošalji i pokreni 72h odbrojavanje",
+    "cancel": "Otkaži",
+    "countdownHint": "Pokrenuto 72h auto-završavanje. Bez sporova, nalog se automatski završava.",
+    "reason": {
+      "frontDesk": "Kupac nije na licu mesta — ostavljeno na recepciji",
+      "meeting": "Kupac na sastanku — ne vidi telefon",
+      "refused": "Dostavljeno ispred zgrade — kupac odbio kod",
+      "other": "Ostalo (vidi napomene)"
+    }
+  },
+  "account": {
+    "title": "Nalog",
+    "welcome": "Prijavite se da otključate kontakte i objavite vožnje",
+    "continueWithGoogle": "Nastavi sa Google nalogom",
+    "googleLoading": "Preusmeravanje…",
+    "orDivider": "Ili",
+    "email": "Email",
+    "password": "Lozinka",
+    "signIn": "Prijava",
+    "signUp": "Registracija",
+    "signOut": "Odjava",
+    "fullName": "Pravo ime",
+    "phone": "Telefon",
+    "plate": "Tablice",
+    "vehicle": "Model vozila",
+    "facebook": "Facebook",
+    "viber": "Viber",
+    "save": "Sačuvaj",
+    "saved": "Sačuvano",
+    "quota": "Preostali besplatni pregledi",
+    "premium": "Premium",
+    "bankVerifyTitle": "Bankovna verifikacija (100 RSD)",
+    "bankVerifyHint": "Prenesite tačno 100 RSD mobilnom bankom. U Poziv na broj unesite 6-cifreni kod ispod.",
+    "bankReference": "Vaš referentni kod",
+    "bankVerified": "Verifikovano",
+    "bankNotVerified": "Nije verifikovano",
+    "recipient": "Primalac",
+    "accountNumber": "Broj računa"
   },
   "hall": {
     "title": "Usputna pomoć (grad i međugrad)",
@@ -56,57 +207,92 @@
       "van": "Kombi"
     }
   },
-  "order": {
-    "open": "Otvoreno",
-    "matched": "Dogovoreno",
-    "cancelled": "Otkazano",
+  "post": {
+    "status": {
+      "draft": "Nacrt",
+      "active": "Aktivno",
+      "matched": "Upareno",
+      "pending_completion": "Na čekanju",
+      "completed": "Završeno",
+      "canceled": "Otkazano"
+    },
     "reveal": "Prikaži kontakt",
     "freeHint": "Besplatno otključavanje u javnom testu",
     "needLogin": "Prijavite se da vidite kontakt.",
     "confirmMatch": "Potvrdi međusobni izbor",
+    "acceptCargo": "Prihvati teretni nalog",
     "disclaimer": "MirioHub ne snosi apsolutno nikakvu odgovornost. Proverite na licu mesta. Ako podaci ne odgovaraju, otkažite bez posledica.",
     "noFault": "Otkaz bez odgovornosti",
-    "ownOrder": "Ovo je vaša objava.",
+    "ownPost": "Ovo je vaša objava.",
     "from": "Od",
-    "to": "Do"
-  },
-  "profile": {
-    "title": "Profil",
-    "welcome": "Prijavite se da otključate kontakte i objavite vožnje",
-    "continueWithGoogle": "Nastavi sa Google nalogom",
-    "googleLoading": "Preusmeravanje…",
-    "orDivider": "Ili",
-    "email": "Email",
-    "password": "Lozinka",
-    "signIn": "Prijava",
-    "signUp": "Registracija",
-    "signOut": "Odjava",
-    "fullName": "Pravo ime",
-    "phone": "Telefon (samo preko RPC)",
-    "plate": "Tablice",
-    "vehicle": "Model vozila",
-    "facebook": "Facebook",
-    "viber": "Viber",
-    "save": "Sačuvaj",
-    "saved": "Sačuvano",
-    "quota": "Preostali besplatni pregledi",
-    "premium": "Premium"
+    "to": "Do",
+    "pickupCode": "Kod preuzimanja",
+    "deliveryCode": "Kod dostave"
   },
   "publish": {
     "title": "Nova objava",
-    "postType": "Tip objave",
+    "section": {
+      "base": "Osnovne informacije"
+    },
     "category": "Kategorija",
-    "scope": "Opseg",
-    "heading": "Naslov",
-    "description": "Opis",
+    "departureDate": "Datum polaska",
+    "departureTimeWindow": "Vremenski prozor (15 min)",
+    "phone": "Broj telefona",
+    "phonePlaceholder": "Lokalni broj",
     "originAddress": "Adresa polaska",
     "destinationAddress": "Adresa dolaska",
-    "capacityType": "Kapacitet",
-    "transportMode": "Prevoz",
-    "escortSeats": "Mesta za pratnju",
-    "feeAmount": "Naknada / deo goriva",
-    "estimatedItemCost": "Proc. cena robe (kupovina)",
-    "optional": "Opciono",
+    "waypointPlaceholder": "Stanica {index}",
+    "escortSeats": "Pratnja (0–4)",
+    "maxCompanions": "Saputnici (1–4)",
+    "deliveryMode": "Način dostave",
+    "shareMode": "Sedenje",
+    "luggage": "Broj prtljaga",
+    "bumpFee": "Hitni napojnica",
+    "bumpOption": {
+      "0": "Podrazumevano (+0 EUR)",
+      "2": "Ubrzano (+2 EUR)",
+      "5": "Brzo (+5 EUR)",
+      "10": "Instant (+10 EUR)"
+    },
+    "providerAssets": "Verifikacija vozila",
+    "providerName": "Ime i prezime",
+    "vehicleBrand": "Marka vozila",
+    "vehicleColor": "Boja",
+    "licensePlate": "Registarske tablice",
+    "buySection": "Detalji artikla",
+    "itemQuantity": "Količina",
+    "itemUnit": "Jedinica",
+    "itemCondition": "Stanje",
+    "itemPrice": "Cena (EUR)",
+    "priceCalc": {
+      "unit": "Cena po komadu",
+      "total": "Ukupna cena"
+    },
+    "totalBudgetHint": "Ukupan budžet = {quantity} × {price} = {total} EUR",
+    "budgetType": "Tip budžeta",
+    "purchasePrice": {
+      "range": "Raspon cena",
+      "negotiable": "Po dogovoru"
+    },
+    "minBudget": "Min budžet",
+    "maxBudget": "Max budžet",
+    "referencePhoto": "Referentna fotografija (obavezno za dogovor)",
+    "feeHintRange": "Avans + napojnica (preporuka 5.00 EUR)",
+    "feeHintNegotiable": "Materijal (dogovor) + napojnica (preporuka 10.00 EUR)",
+    "providerCargoFee": "Naknada za prevoz: po dogovoru",
+    "serviceAddress": "Adresa usluge",
+    "serviceTimeWindow": "Željeni termin",
+    "providerPayType": "Tip naknade",
+    "payType": {
+      "hourly": "Satnica",
+      "fixed": "Fiksna cena",
+      "negotiable": "Po dogovoru"
+    },
+    "expectedPay": "Očekivana naknada (EUR)",
+    "fixedReward": "Fiksna nagrada (EUR)",
+    "negotiableDisplay": "Prikaz: po dogovoru",
+    "heading": "Naslov",
+    "description": "Opis",
     "submit": "Objavi",
     "submitting": "Objavljivanje…"
   },

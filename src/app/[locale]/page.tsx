@@ -9,7 +9,7 @@ type Props = { params: Promise<{ locale: string }> };
 export const dynamic = "force-dynamic";
 
 const POST_SELECT =
-  "id, user_id, title, description, status, locale, post_type, category, scope, origin_address, destination_address, origin_gps, destination_gps, capacity_type, transport_mode, escort_seats, fee_amount, estimated_item_cost, created_at, updated_at";
+  "id, user_id, title, description, status, locale, post_type, category, scope, origin_address, destination_address, origin_gps, destination_gps, capacity_type, transport_mode, escort_seats, fee_amount, estimated_item_cost, translations, created_at, updated_at";
 
 export default async function HallPage({ params }: Props) {
   const { locale } = await params;

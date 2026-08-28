@@ -1,6 +1,7 @@
--- MirioHub P2 marketplace core: unified `posts` (Demand + Provider mirror hall).
--- Safe to run after phase-1 `init.sql` (profiles must exist). Does NOT drop `orders`.
--- Run in: Supabase Dashboard → SQL Editor → New query → Paste → Run.
+-- MirioHub P2 marketplace core: unified `posts` (Demand + Provider).
+-- Safe to run after phase-1 profiles exist. Prefer also running
+-- `supabase/migrate_orders_to_posts.sql` for matches / unlocks / RPCs.
+-- Does NOT create the legacy `orders` table.
 
 create extension if not exists "pgcrypto";
 create extension if not exists "postgis";
@@ -62,6 +63,9 @@ create table if not exists public.posts (
   -- Only meaningful for category = 'buy' (estimated goods float / advance)
   estimated_item_cost numeric(12, 2),
 
+  -- Cached description translations keyed by locale
+  translations jsonb not null default '{}'::jsonb,
+
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
 
@@ -114,12 +118,12 @@ create trigger posts_set_updated_at
 -- ---------------------------------------------------------------------------
 alter table public.posts enable row level security;
 
--- Public hall: anyone can read active posts (no phone on this table)
+-- Public hall + detail: anyone can read active/completed; drafts only own
 drop policy if exists posts_select_active_or_own on public.posts;
 create policy posts_select_active_or_own on public.posts
   for select
   using (
-    status = 'active'
+    status in ('active', 'completed')
     or auth.uid() = user_id
   );
 

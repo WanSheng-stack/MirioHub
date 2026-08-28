@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 
 type Body = {
-  orderId: string;
+  postId: string;
   locale: "sr" | "en" | "zh";
   sourceLocale: "sr" | "en" | "zh";
   text: string;
@@ -9,7 +9,7 @@ type Body = {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as Body;
-  if (!body.orderId || !body.locale || !body.text) {
+  if (!body.postId || !body.locale || !body.text) {
     return Response.json({ ok: false, error: "BAD_REQUEST" }, { status: 400 });
   }
 
@@ -19,13 +19,13 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "AUTH" }, { status: 401 });
   }
 
-  const { data: order } = await supabase
-    .from("orders")
+  const { data: post } = await supabase
+    .from("posts")
     .select("translations")
-    .eq("id", body.orderId)
+    .eq("id", body.postId)
     .maybeSingle();
 
-  const cached = (order?.translations as Record<string, string> | null)?.[body.locale];
+  const cached = (post?.translations as Record<string, string> | null)?.[body.locale];
   if (cached) {
     return Response.json({ ok: true, text: cached, cached: true });
   }
@@ -41,8 +41,8 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "TRANSLATE_FAIL" }, { status: 502 });
   }
 
-  await supabase.rpc("cache_order_translation", {
-    p_order_id: body.orderId,
+  await supabase.rpc("cache_post_translation", {
+    p_post_id: body.postId,
     p_locale: body.locale,
     p_text: translated,
   });

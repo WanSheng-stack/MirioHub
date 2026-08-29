@@ -60,6 +60,8 @@ export type PostFormState = {
   count_medium: number;
   count_large: number;
   count_xlarge: number;
+  /** Travel scene: toggle to reveal luggage card matrix. */
+  carry_luggage: boolean;
   bump_fee: number;
   estimated_kms: number;
   kms_loading: boolean;
@@ -80,7 +82,8 @@ type Action =
   | { type: "UPDATE_WAYPOINT"; index: number; value: string }
   | { type: "REMOVE_WAYPOINT"; index: number }
   | { type: "INCREMENT_LUGGAGE"; key: "count_small" | "count_medium" | "count_large" | "count_xlarge" }
-  | { type: "DECREMENT_LUGGAGE"; key: "count_small" | "count_medium" | "count_large" | "count_xlarge" };
+  | { type: "DECREMENT_LUGGAGE"; key: "count_small" | "count_medium" | "count_large" | "count_xlarge" }
+  | { type: "SET_CARRY_LUGGAGE"; carry_luggage: boolean };
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -122,6 +125,7 @@ export const initialFormState: PostFormState = {
   count_medium: 0,
   count_large: 0,
   count_xlarge: 0,
+  carry_luggage: false,
   bump_fee: 0,
   estimated_kms: 0,
   kms_loading: false,
@@ -185,6 +189,18 @@ function reducer(state: PostFormState, action: Action): PostFormState {
       return { ...state, [action.key]: state[action.key] + 1 };
     case "DECREMENT_LUGGAGE":
       return { ...state, [action.key]: Math.max(0, state[action.key] - 1) };
+    case "SET_CARRY_LUGGAGE":
+      if (!action.carry_luggage) {
+        return {
+          ...state,
+          carry_luggage: false,
+          count_small: 0,
+          count_medium: 0,
+          count_large: 0,
+          count_xlarge: 0,
+        };
+      }
+      return { ...state, carry_luggage: true };
     default:
       return state;
   }
@@ -276,13 +292,16 @@ export function usePostFormState() {
   }, [state]);
 
   const draftPayload = useMemo((): Partial<PostPayload> => {
+    const luggageActive =
+      state.category === "deliver" ||
+      (state.category === "travel" && state.carry_luggage);
     const p: Partial<PostPayload> = {
       post_type: state.post_type,
       category: state.category,
-      count_small: state.count_small,
-      count_medium: state.count_medium,
-      count_large: state.count_large,
-      count_xlarge: state.count_xlarge,
+      count_small: luggageActive ? state.count_small : 0,
+      count_medium: luggageActive ? state.count_medium : 0,
+      count_large: luggageActive ? state.count_large : 0,
+      count_xlarge: luggageActive ? state.count_xlarge : 0,
       bump_fee: state.bump_fee,
       departure_date: state.departure_date,
       departure_time_window: state.departure_time_window,

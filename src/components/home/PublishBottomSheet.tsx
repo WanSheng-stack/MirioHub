@@ -35,8 +35,16 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const t = useTranslations();
   const locale = useLocale() as AppLocale;
   const router = useRouter();
-  const { state, setField, setShareMode, setMaxCompanions, visibility, computedFee, feeReady } =
-    form;
+  const {
+    state,
+    setField,
+    setShareMode,
+    setMaxCompanions,
+    visibility,
+    computedFee,
+    feeReady,
+    dispatch,
+  } = form;
   const [stage, setStage] = useState<1 | 2>(1);
   const [submitting, setSubmitting] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
@@ -117,7 +125,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         className="absolute inset-0 bg-zinc-950/40 backdrop-blur-[2px]"
         onClick={onClose}
       />
-      <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-[#f7f7f5] shadow-2xl">
+      <div className="relative z-10 flex h-auto max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-[#f7f7f5] shadow-2xl">
         <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-300" />
         <div className="flex items-center justify-between px-5 pt-3 pb-2">
           <h2 className="text-base font-semibold text-zinc-900">
@@ -135,11 +143,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div
-            className="flex h-full w-[200%] transition-transform duration-300 ease-out"
+            className="flex h-auto min-h-[12rem] w-[200%] transition-transform duration-300 ease-out"
             style={{ transform: stage === 1 ? "translateX(0%)" : "translateX(-50%)" }}
           >
             {/* Stage 1 */}
-            <div className="h-full w-1/2 overflow-y-auto px-5 pb-28">
+            <div className="h-auto max-h-[calc(88vh-9rem)] w-1/2 overflow-y-auto px-5 pb-36">
               <div className="space-y-4">
                 <label className="block text-sm font-medium">
                   {t("home.sheet.departure_time")}
@@ -191,57 +199,139 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
                 {isTravel ? (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between text-sm font-medium">
-                      <span>{t("home.sheet.passengers")}</span>
-                      <span>{state.max_companions}</span>
+                    <p className="text-sm font-medium">{t("home.sheet.passengers")}</p>
+                    <div className="grid w-full grid-cols-2 items-center gap-4">
+                      {/* Left half: passenger stepper — centered in its 50% */}
+                      <div className="flex w-full items-center justify-center">
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-200 text-xl font-bold disabled:opacity-40"
+                            disabled={state.share_mode === "private"}
+                            onClick={() => setMaxCompanions(state.max_companions - 1)}
+                          >
+                            −
+                          </button>
+                          <span className="min-w-[2rem] text-center text-xl font-semibold tabular-nums text-zinc-900">
+                            {state.max_companions}
+                          </span>
+                          <button
+                            type="button"
+                            className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-200 text-xl font-bold disabled:opacity-40"
+                            disabled={state.share_mode === "private"}
+                            onClick={() => setMaxCompanions(state.max_companions + 1)}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Right half: share / private radios — centered as a block, left edges flush */}
+                      <div className="flex w-full flex-col items-center justify-center">
+                        <fieldset className="inline-flex flex-col items-start gap-2">
+                          <legend className="sr-only">{t("home.sheet.passengers")}</legend>
+                          <label className="flex cursor-pointer items-center gap-2.5">
+                            <span
+                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                                state.share_mode === "share"
+                                  ? "border-emerald-600"
+                                  : "border-zinc-300"
+                              }`}
+                              aria-hidden
+                            >
+                              {state.share_mode === "share" ? (
+                                <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                              ) : null}
+                            </span>
+                            <input
+                              type="radio"
+                              name="share_mode"
+                              className="sr-only"
+                              checked={state.share_mode === "share"}
+                              onChange={() => setShareMode("share")}
+                            />
+                            <span
+                              className={`text-sm leading-snug ${
+                                state.share_mode === "share"
+                                  ? "font-medium text-zinc-900"
+                                  : "text-zinc-500"
+                              }`}
+                            >
+                              {t("category.demand.share_pool")}
+                            </span>
+                          </label>
+                          <label className="flex cursor-pointer items-center gap-2.5">
+                            <span
+                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                                state.share_mode === "private"
+                                  ? "border-emerald-600"
+                                  : "border-zinc-300"
+                              }`}
+                              aria-hidden
+                            >
+                              {state.share_mode === "private" ? (
+                                <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                              ) : null}
+                            </span>
+                            <input
+                              type="radio"
+                              name="share_mode"
+                              className="sr-only"
+                              checked={state.share_mode === "private"}
+                              onChange={() => setShareMode("private")}
+                            />
+                            <span
+                              className={`text-sm leading-snug ${
+                                state.share_mode === "private"
+                                  ? "font-medium text-zinc-900"
+                                  : "text-zinc-500"
+                              }`}
+                            >
+                              {t("category.demand.private_buyout")}
+                            </span>
+                          </label>
+                        </fieldset>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        className="h-10 w-10 rounded-full bg-zinc-200 text-lg font-bold disabled:opacity-40"
-                        disabled={state.share_mode === "private"}
-                        onClick={() => setMaxCompanions(state.max_companions - 1)}
-                      >
-                        −
-                      </button>
-                      <button
-                        type="button"
-                        className="h-10 w-10 rounded-full bg-zinc-200 text-lg font-bold disabled:opacity-40"
-                        disabled={state.share_mode === "private"}
-                        onClick={() => setMaxCompanions(state.max_companions + 1)}
-                      >
-                        +
-                      </button>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShareMode("share")}
-                        className={`flex-1 rounded-xl px-3 py-2 text-sm ${
-                          state.share_mode === "share"
-                            ? "bg-emerald-600 text-white"
-                            : "bg-zinc-100 text-zinc-600"
-                        }`}
-                      >
-                        {t("ui.share_pool")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShareMode("private")}
-                        className={`flex-1 rounded-xl px-3 py-2 text-sm ${
-                          state.share_mode === "private"
-                            ? "bg-emerald-600 text-white"
-                            : "bg-zinc-100 text-zinc-600"
-                        }`}
-                      >
-                        {t("ui.private_buyout")}
-                      </button>
-                    </div>
+
                     {state.show_private_buyout_notice ? (
                       <p className="text-xs leading-5 text-amber-800">
                         {t("ui.private_buyout_notice")}
                       </p>
                     ) : null}
+
+                    {/* Luggage display block — under passenger stepper */}
+                    <div className="space-y-3">
+                      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3">
+                        <span className="text-sm font-medium text-zinc-800">
+                          {t("ui.has_luggage")}
+                        </span>
+                        <input
+                          type="checkbox"
+                          className="h-5 w-5 accent-emerald-600"
+                          checked={state.carry_luggage}
+                          onChange={(e) =>
+                            dispatch({
+                              type: "SET_CARRY_LUGGAGE",
+                              carry_luggage: e.target.checked,
+                            })
+                          }
+                        />
+                      </label>
+                      <div
+                        className={`grid transition-all duration-300 ease-out ${
+                          state.carry_luggage
+                            ? "grid-rows-[1fr] opacity-100"
+                            : "grid-rows-[0fr] opacity-0"
+                        }`}
+                      >
+                        <div className="overflow-hidden">
+                          {state.carry_luggage ? (
+                            <LuggageCounters form={form} />
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 
@@ -250,25 +340,19 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                 {visibility.buy ? <BuyFields form={form} /> : null}
                 {visibility.local ? <OnsiteErrandFields form={form} /> : null}
 
-                {visibility.showFeeDemand && feeReady && computedFee != null ? (
-                  <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-                    {t("ui.estimated_kms_fee", {
-                      kms: state.estimated_kms.toFixed(0),
-                      amount: computedFee.toFixed(2),
-                    })}
-                  </p>
-                ) : null}
                 {state.kms_loading ? (
                   <p className="text-sm text-zinc-500">{t("publish.kmsCalculating")}</p>
                 ) : null}
                 {state.kms_error_key ? (
-                  <p className="text-sm text-red-600">{t(state.kms_error_key as "error.route_distance_failed")}</p>
+                  <p className="text-sm text-red-600">
+                    {t(state.kms_error_key as "error.route_distance_failed")}
+                  </p>
                 ) : null}
               </div>
             </div>
 
             {/* Stage 2 */}
-            <div className="h-full w-1/2 overflow-y-auto px-5 pb-28">
+            <div className="h-auto max-h-[calc(88vh-9rem)] w-1/2 overflow-y-auto px-5 pb-28">
               <div className="space-y-4">
                 {state.post_type === "demand" ? (
                   <>
@@ -400,38 +484,55 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           </div>
         </div>
 
-        <div className="absolute inset-x-0 bottom-0 flex gap-2 border-t border-zinc-200/80 bg-[#f7f7f5]/95 px-5 py-4 backdrop-blur">
-          {stage === 2 ? (
-            <button
-              type="button"
-              onClick={() => setStage(1)}
-              className="rounded-xl border border-zinc-300 px-4 py-3 text-sm font-medium"
-            >
-              {t("home.sheet.back")}
-            </button>
+        <div className="absolute inset-x-0 bottom-0 space-y-2 border-t border-zinc-200/80 bg-[#f7f7f5]/95 px-5 py-3 backdrop-blur">
+          {stage === 1 && visibility.showFeeDemand ? (
+            <div className="space-y-1 rounded-xl bg-emerald-50/90 px-3 py-2.5 text-sm text-emerald-950 ring-1 ring-emerald-200/70">
+              <p className="tabular-nums">
+                {t("ui.estimated_kms", {
+                  kms: feeReady ? state.estimated_kms.toFixed(0) : "0",
+                })}
+              </p>
+              <p className="font-semibold tabular-nums transition-all duration-150">
+                {t("ui.recommended_price", {
+                  amount:
+                    feeReady && computedFee != null ? computedFee.toFixed(2) : "0.00",
+                })}
+              </p>
+            </div>
           ) : null}
-          {stage === 1 ? (
-            <button
-              type="button"
-              onClick={() => setStage(2)}
-              className="ml-auto rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white"
-            >
-              {t("ui.next_step")}
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => void onPublish()}
-              className="ml-auto rounded-xl bg-zinc-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {submitting
-                ? t("publish.submitting")
-                : state.post_type === "demand"
-                  ? t("ui.publish")
-                  : t("ui.match_now")}
-            </button>
-          )}
+          <div className="flex gap-2">
+            {stage === 2 ? (
+              <button
+                type="button"
+                onClick={() => setStage(1)}
+                className="rounded-xl border border-zinc-300 px-4 py-3 text-sm font-medium"
+              >
+                {t("home.sheet.back")}
+              </button>
+            ) : null}
+            {stage === 1 ? (
+              <button
+                type="button"
+                onClick={() => setStage(2)}
+                className="ml-auto rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white"
+              >
+                {t("ui.next_step")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void onPublish()}
+                className="ml-auto rounded-xl bg-zinc-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {submitting
+                  ? t("publish.submitting")
+                  : state.post_type === "demand"
+                    ? t("ui.publish")
+                    : t("ui.match_now")}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

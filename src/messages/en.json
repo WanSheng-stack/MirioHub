@@ -33,7 +33,10 @@
     "price_premium_label": "Voluntary premium multiplier",
     "price_premium_hint": "Capped at 2.5x the recommended base fee",
     "wait_minutes": "Willing to wait {minutes} min",
-    "estimated_kms_fee": "Est. {kms} km · recommended split {amount} EUR"
+    "estimated_kms_fee": "Est. {kms} km · recommended split {amount} EUR",
+    "has_luggage": "Carrying luggage / bulky items",
+    "estimated_kms": "Estimated distance: {kms} km",
+    "recommended_price": "Platform recommended split: {amount} EUR"
   },
   "category": {
     "demand": {
@@ -41,7 +44,9 @@
       "buy": "Need shopping",
       "travel": "Need a ride",
       "onsite": "Need on-site help",
-      "errand": "Need an errand"
+      "errand": "Need an errand",
+      "share_pool": "Open to ride-share",
+      "private_buyout": "Private full vehicle"
     },
     "provider": {
       "deliver": "Carry parcels",

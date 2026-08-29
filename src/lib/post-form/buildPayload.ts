@@ -41,10 +41,22 @@ export function buildPayloadFromForm(
     departure_date: state.departure_date,
     departure_time_window: fusedWindow,
     estimated_arrival_time: null,
-    count_small: route ? state.count_small : 0,
-    count_medium: route ? state.count_medium : 0,
-    count_large: route ? state.count_large : 0,
-    count_xlarge: route ? state.count_xlarge : 0,
+    count_small:
+      route && (state.category === "deliver" || state.carry_luggage)
+        ? state.count_small
+        : 0,
+    count_medium:
+      route && (state.category === "deliver" || state.carry_luggage)
+        ? state.count_medium
+        : 0,
+    count_large:
+      route && (state.category === "deliver" || state.carry_luggage)
+        ? state.count_large
+        : 0,
+    count_xlarge:
+      route && (state.category === "deliver" || state.carry_luggage)
+        ? state.count_xlarge
+        : 0,
     bump_fee: state.post_type === "demand" && route ? state.bump_fee : 0,
     fee_amount: null,
     estimated_kms: state.estimated_kms,
@@ -121,7 +133,10 @@ export function buildPayloadFromForm(
       payload.share_mode = state.share_mode;
     }
     payload.has_luggage =
-      state.count_small + state.count_medium + state.count_large + state.count_xlarge > 0;
+      state.category === "travel"
+        ? state.carry_luggage &&
+          state.count_small + state.count_medium + state.count_large + state.count_xlarge > 0
+        : state.count_small + state.count_medium + state.count_large + state.count_xlarge > 0;
     if (state.post_type === "demand") {
       payload.fee_amount = calculateFinalFee(state.estimated_kms, payload);
     }

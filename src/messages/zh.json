@@ -33,7 +33,10 @@
     "price_premium_label": "自愿溢价倍率",
     "price_premium_hint": "上限为推荐底价的 2.5 倍",
     "wait_minutes": "愿等 {minutes} 分钟",
-    "estimated_kms_fee": "预估里程 {kms} km · 推荐分摊 {amount} EUR"
+    "estimated_kms_fee": "预估里程 {kms} km · 推荐分摊 {amount} EUR",
+    "has_luggage": "是否携带行李物料/大件",
+    "estimated_kms": "预估里程: {kms} 公里",
+    "recommended_price": "平台分摊推荐价: {amount} EUR"
   },
   "category": {
     "demand": {
@@ -41,7 +44,9 @@
       "buy": "需要代购",
       "travel": "人搭车",
       "onsite": "需要现场帮助",
-      "errand": "需要其他跑腿"
+      "errand": "需要其他跑腿",
+      "share_pool": "接受拼车",
+      "private_buyout": "独享整车空间"
     },
     "provider": {
       "deliver": "顺路捎物",

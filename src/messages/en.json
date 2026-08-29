@@ -23,22 +23,32 @@
     "request_auto_melt": "Delivered safely, but recipient refused delivery code",
     "standard_completion": "Confirmed in-person delivery: {rate}%",
     "auto_melt_completion": "Ground-floor delivery (no code) · no dispute in 72h: {rate}%",
-    "space_overload_warning": "Space overload: cargo may exceed your vehicle capacity — confirm via private message before accepting to avoid a wasted trip."
+    "space_overload_warning": "Space overload: cargo may exceed your vehicle capacity — confirm via private message before accepting to avoid a wasted trip.",
+    "next_step": "Next",
+    "publish": "Publish now",
+    "match_now": "Match now",
+    "perfect_match": "Perfect route match",
+    "good_match": "Good route match",
+    "detour_buffer_notice": "Route tip: the drivers main corridor is slightly off your origin. Confirm by message/phone — you may voluntarily add 2-3 EUR via the premium slider below as a short detour thank-you, or meet on the main road to maximize a shared ride.",
+    "price_premium_label": "Voluntary premium multiplier",
+    "price_premium_hint": "Capped at 2.5x the recommended base fee",
+    "wait_minutes": "Willing to wait {minutes} min",
+    "estimated_kms_fee": "Est. {kms} km · recommended split {amount} EUR"
   },
   "category": {
     "demand": {
-      "deliver": "Parcel delivery",
-      "buy": "Buy for me",
-      "travel": "Travel buddy",
-      "onsite": "On-site help",
-      "errand": "Queue & errands"
+      "deliver": "Ship a parcel",
+      "buy": "Need shopping",
+      "travel": "Need a ride",
+      "onsite": "Need on-site help",
+      "errand": "Need an errand"
     },
     "provider": {
-      "deliver": "Post a trip",
-      "buy": "Marketplace sell",
-      "travel": "Travel buddy",
-      "onsite": "Skills & tools",
-      "errand": "Spare time"
+      "deliver": "Carry parcels",
+      "buy": "Shop along the way",
+      "travel": "Offer seats",
+      "onsite": "On-site help nearby",
+      "errand": "Run errands nearby"
     }
   },
   "country": {
@@ -107,7 +117,10 @@
     "passenger_limit_exceeded": "Total passengers (including driver) cannot exceed 5.",
     "non_member_limit_exceeded": "Non-member active supply post limit reached (max 3).",
     "route_distance_failed": "Could not estimate route distance. Check addresses and try again.",
-    "route_not_compatible": "This trip does not pass through your route in the correct direction."
+    "route_not_compatible": "This trip does not pass through your route in the correct direction.",
+    "invalid_kms": "Invalid distance metrics for match ratio.",
+    "low_match_filtered": "Match ratio too low — filtered out.",
+    "email_required": "Please enter a valid email."
   },
   "success": {
     "posted": "Published successfully.",
@@ -308,5 +321,68 @@
     "body": "The public-beta campaign is off. Transfer via local bank or activate your account.",
     "bank": "Bank transfer / IPS QR",
     "close": "Close"
+  },
+  "home": {
+    "slogan": "People & goods share the journey · green split · help along the way",
+    "sloganHint": "Private cars, motorbikes, buses, and train commutes — full mobility ecosystem",
+    "tab": {
+      "demand": "I need help",
+      "provider": "I can help along the way"
+    },
+    "icons": {
+      "demand": {
+        "travel": "Need a ride",
+        "deliver": "Ship a parcel",
+        "buy": "Need shopping",
+        "onsite": "Need on-site help",
+        "errand": "Need an errand"
+      },
+      "provider": {
+        "travel": "Offer seats",
+        "deliver": "Carry parcels",
+        "buy": "Shop along the way",
+        "onsite": "On-site help nearby",
+        "errand": "Run errands nearby"
+      }
+    },
+    "origin": "Origin",
+    "destination": "Destination",
+    "service_location": "Exact place / market source",
+    "confirm_location": "Confirm & continue",
+    "gps_prompt": "Enable location to sort nearby live posts by distance",
+    "gps_denied": "Location unavailable — showing by time",
+    "lbs": {
+      "title": "Nearby live posts",
+      "empty": "No live buy / onsite / errand posts nearby",
+      "ring": "≤{km} km ring",
+      "demand_col": "Demand",
+      "provider_col": "Supply",
+      "distance": "{km} km"
+    },
+    "compliance": {
+      "title": "Compliance & dual-code lock center",
+      "empty": "No pickup/delivery codes or 72h auto-complete tasks",
+      "pickup_verify": "Pickup-code verification shield",
+      "delivery_pending": "Delivery code pending",
+      "auto_melt_countdown": "72h auto-complete countdown: {hours}h left",
+      "deadline_passed": "Countdown ended — auto-complete will apply",
+      "open_post": "Open order"
+    },
+    "sheet": {
+      "stage1_title": "Scene fine-tune & fee estimate",
+      "stage2_title": "Privacy bind & risk gate",
+      "departure_time": "Exact departure time",
+      "time_buffer": "Willing-to-wait minutes",
+      "passengers": "Passengers",
+      "email": "Email",
+      "phone": "Contact phone",
+      "real_name": "Legal name",
+      "vehicle_type": "Vehicle type",
+      "vehicle_brand": "Vehicle brand",
+      "vehicle_color": "Vehicle color",
+      "license_plate": "License plate",
+      "back": "Back",
+      "close": "Close"
+    }
   }
 }

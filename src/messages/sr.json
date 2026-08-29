@@ -23,22 +23,32 @@
     "request_auto_melt": "Bezbedno dostavljeno, ali primalac odbija kod",
     "standard_completion": "🟢 Lično potvrđena dostava: {rate}%",
     "auto_melt_completion": "🟡 Dostava ispred zgrade (bez koda) · bez žalbe 72h: {rate}%",
-    "space_overload_warning": "⚠️ Preopterećenje: teret može premašiti kapacitet vozila — potvrdite porukom pre prihvatanja."
+    "space_overload_warning": "⚠️ Preopterećenje: teret može premašiti kapacitet vozila — potvrdite porukom pre prihvatanja.",
+    "next_step": "Dalje",
+    "publish": "Objavi sada",
+    "match_now": "Upari sada",
+    "perfect_match": "Savrsen usputni mec",
+    "good_match": "Dobar usputni mec",
+    "detour_buffer_notice": "Savet: vozaceva glavna ruta malo odstupa od vaseg polazista. Potvrdite porukom/telefonom — mozete dobrovoljno dodati 2-3 EUR klizacem ispod kao naknadu za mali zaobilazak, ili se sastati na glavnom putu.",
+    "price_premium_label": "Dobrovoljni multiplikator cene",
+    "price_premium_hint": "Maksimalno 2.5x preporucene osnovne cene",
+    "wait_minutes": "Spreman/na da cekam {minutes} min",
+    "estimated_kms_fee": "Proc. {kms} km · preporucena podela {amount} EUR"
   },
   "category": {
     "demand": {
-      "deliver": "Dostava paketa",
-      "buy": "Kupi umesto mene",
-      "travel": "Putovanje",
-      "onsite": "Pomoć na licu mesta",
-      "errand": "Red i obaveze"
+      "deliver": "Posalji paket",
+      "buy": "Treba kupovina",
+      "travel": "Treba mi voznja",
+      "onsite": "Treba pomoc na licu mesta",
+      "errand": "Treba obaveza"
     },
     "provider": {
-      "deliver": "Objavi vožnju",
-      "buy": "Prodaja na pijaci",
-      "travel": "Putovanje",
-      "onsite": "Veštine i alati",
-      "errand": "Slobodno vreme"
+      "deliver": "Nosim pakete",
+      "buy": "Kupujem usput",
+      "travel": "Nudim mesta",
+      "onsite": "Pomoc u blizini",
+      "errand": "Obaveze u blizini"
     }
   },
   "country": {
@@ -107,7 +117,10 @@
     "passenger_limit_exceeded": "Ukupno putnika (uključujući vozača) ne sme preći 5.",
     "non_member_limit_exceeded": "Limit aktivnih ponuda za ne-članove (max 3).",
     "route_distance_failed": "Nije moguće proceniti rastojanje rute. Proverite adrese.",
-    "route_not_compatible": "Potražnja nije na vašoj ruti u ispravnom smeru."
+    "route_not_compatible": "Potražnja nije na vašoj ruti u ispravnom smeru.",
+    "invalid_kms": "Nevazeci podaci o kilometrazi.",
+    "low_match_filtered": "Previse nizak usputni odnos — filtrirano.",
+    "email_required": "Unesite ispravan email."
   },
   "success": {
     "posted": "Uspešno objavljeno.",
@@ -308,5 +321,68 @@
     "body": "Javni test je zatvoren. Prenesite na račun ili aktivirajte nalog.",
     "bank": "Bankovni transfer / IPS QR",
     "close": "Zatvori"
+  },
+  "home": {
+    "slogan": "Ljudi i robe dele put · zelena podela · pomoc usput",
+    "sloganHint": "Privatni automobili, motori, autobusi i vozovi — ceo ekosistem mobilnosti",
+    "tab": {
+      "demand": "Treba mi pomoc",
+      "provider": "Mogu usput da pomognem"
+    },
+    "icons": {
+      "demand": {
+        "travel": "Treba mi voznja",
+        "deliver": "Posalji paket",
+        "buy": "Treba kupovina",
+        "onsite": "Treba pomoc na licu mesta",
+        "errand": "Treba obaveza"
+      },
+      "provider": {
+        "travel": "Nudim mesta",
+        "deliver": "Nosim pakete",
+        "buy": "Kupujem usput",
+        "onsite": "Pomoc u blizini",
+        "errand": "Obaveze u blizini"
+      }
+    },
+    "origin": "Polaziste",
+    "destination": "Odrediste",
+    "service_location": "Tacna lokacija / izvor na pijaci",
+    "confirm_location": "Potvrdi i nastavi",
+    "gps_prompt": "Ukljuci lokaciju za sortiranje objava po udaljenosti",
+    "gps_denied": "Lokacija nedostupna — prikaz po vremenu",
+    "lbs": {
+      "title": "Zive objave u blizini",
+      "empty": "Nema zivih kupovina / pomoci / obaveza u blizini",
+      "ring": "≤{km} km prsten",
+      "demand_col": "Potraznja",
+      "provider_col": "Ponuda",
+      "distance": "{km} km"
+    },
+    "compliance": {
+      "title": "Centar uskladjenosti i dvostrukog koda",
+      "empty": "Nema kodova ili 72h automatskog zavrsetka",
+      "pickup_verify": "Stit za kod preuzimanja",
+      "delivery_pending": "Kod dostave na cekanju",
+      "auto_melt_countdown": "72h odbrojavanje: jos {hours}h",
+      "deadline_passed": "Odbrojavanje isteklo — automatski zavrsetak",
+      "open_post": "Otvori porudzbinu"
+    },
+    "sheet": {
+      "stage1_title": "Fino podesavanje i procena",
+      "stage2_title": "Privatnost i rizik",
+      "departure_time": "Tacno vreme polaska",
+      "time_buffer": "Minute cekanja",
+      "passengers": "Putnici",
+      "email": "Email",
+      "phone": "Telefon",
+      "real_name": "Ime i prezime",
+      "vehicle_type": "Tip vozila",
+      "vehicle_brand": "Marka vozila",
+      "vehicle_color": "Boja vozila",
+      "license_plate": "Tablice",
+      "back": "Nazad",
+      "close": "Zatvori"
+    }
   }
 }

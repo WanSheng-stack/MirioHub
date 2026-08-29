@@ -3,6 +3,7 @@ import type { PostPayload } from "@/lib/post-payload";
 import { isDeliverOrTravel, isOnsiteOrErrand } from "@/lib/post-payload";
 import { buildRawPhone, normalizeLicensePlate, normalizePhone } from "@/lib/post-validation";
 import { calculateFinalFee } from "@/lib/post-fee";
+import { mergeDepartureWindow } from "@/lib/post-time-windows";
 
 export type BuildPayloadResult =
   | { ok: true; payload: PostPayload & Record<string, unknown> }
@@ -29,6 +30,8 @@ export function buildPayloadFromForm(
     raw_plate = state.raw_license_plate.trim();
   }
 
+  const fusedWindow = mergeDepartureWindow(state.departure_time, state.time_buffer);
+
   const payload: PostPayload & Record<string, unknown> = {
     post_type: state.post_type,
     category: state.category,
@@ -36,7 +39,7 @@ export function buildPayloadFromForm(
     raw_phone: buildRawPhone(state.dial_code, state.raw_phone_local),
     normalized_phone: phoneResult.normalized,
     departure_date: state.departure_date,
-    departure_time_window: state.departure_time_window,
+    departure_time_window: fusedWindow,
     estimated_arrival_time: null,
     count_small: route ? state.count_small : 0,
     count_medium: route ? state.count_medium : 0,
@@ -90,6 +93,14 @@ export function buildPayloadFromForm(
       payload.provider_name = state.provider_name.trim() || null;
       payload.vehicle_brand = state.vehicle_brand.trim() || null;
       payload.vehicle_color = state.vehicle_color.trim() || null;
+      payload.transport_mode = state.transport_mode || null;
+      const needsPlate =
+        state.transport_mode === "car" ||
+        state.transport_mode === "motorbike" ||
+        state.transport_mode === "van";
+      if (needsPlate && !normalized_plate) {
+        return { ok: false, errorKey: "error.invalid_plate" };
+      }
     }
     if (state.post_type === "demand") {
       if (state.estimated_kms <= 0) {
@@ -124,8 +135,15 @@ export function buildPayloadFromForm(
     payload.price_calc_type = state.price_calc_type;
     payload.item_condition = state.item_condition;
     payload.item_price = state.item_price;
+    payload.service_address = state.service_address.trim() || null;
+    payload.origin_address = state.service_address.trim() || state.origin_address.trim() || "";
+    payload.destination_address = payload.origin_address;
+    payload.departure_time_window = fusedWindow;
     payload.title = state.title.trim();
     payload.description = state.description.trim();
+    if (!payload.origin_address) {
+      return { ok: false, errorKey: "error.service_address_required" };
+    }
     if (state.post_type === "demand") {
       payload.purchase_price_type = state.purchase_price_type;
       if (state.purchase_price_type === "range") {
@@ -148,7 +166,9 @@ export function buildPayloadFromForm(
 
   if (local) {
     payload.service_address = state.service_address.trim();
-    payload.service_time_window = state.service_time_window;
+    payload.service_time_window = fusedWindow;
+    payload.origin_address = payload.service_address;
+    payload.destination_address = payload.service_address;
     payload.title = state.title.trim();
     payload.description = state.description.trim();
     if (!payload.service_address) {

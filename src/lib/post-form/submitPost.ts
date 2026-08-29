@@ -6,7 +6,46 @@ import {
   processSupplyPostIntercept,
 } from "@/lib/post-intercept";
 import { buildDepartureTimestamp, demandInterceptRange } from "@/lib/post-time-windows";
+import { geocodeAddress, toGeographyPointWkt } from "@/lib/route-kms";
+import { haversineKm } from "@/lib/geo";
 import type { AppLocale } from "@/i18n/routing";
+import type { PostScope } from "@/lib/types";
+
+async function resolveGeocodePair(
+  originAddr: string,
+  destAddr: string,
+): Promise<{
+  origin: { lat: number; lon: number; wkt: string } | null;
+  destination: { lat: number; lon: number; wkt: string } | null;
+}> {
+  try {
+    const res = await fetch("/api/geocode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin: originAddr, destination: destAddr }),
+    });
+    const json = (await res.json()) as {
+      ok?: boolean;
+      origin?: { lat: number; lon: number; wkt: string } | null;
+      destination?: { lat: number; lon: number; wkt: string } | null;
+    };
+    return {
+      origin: json.origin ?? null,
+      destination: json.destination ?? null,
+    };
+  } catch {
+    const [o, d] = await Promise.all([
+      originAddr ? geocodeAddress(originAddr) : Promise.resolve(null),
+      destAddr ? geocodeAddress(destAddr) : Promise.resolve(null),
+    ]);
+    return {
+      origin: o ? { lat: o.lat, lon: o.lon, wkt: toGeographyPointWkt(o.lat, o.lon) } : null,
+      destination: d
+        ? { lat: d.lat, lon: d.lon, wkt: toGeographyPointWkt(d.lat, d.lon) }
+        : null,
+    };
+  }
+}
 
 export type SubmitPostResult =
   | { ok: true; postId: string }
@@ -73,19 +112,63 @@ async function upsertPlateHistory(
   return inserted.id as number;
 }
 
+/** Distinct UUID count bound to a phone across history + live posts. */
+async function countPhoneBoundAccounts(
+  supabase: SupabaseClient,
+  normalizedPhone: string,
+): Promise<number> {
+  const accounts = new Set<string>();
+  const { data: history } = await supabase
+    .from("phone_history")
+    .select("user_id")
+    .eq("normalized_phone", normalizedPhone);
+  for (const row of history ?? []) accounts.add(row.user_id as string);
+
+  const { data: posts } = await supabase
+    .from("posts")
+    .select("user_id")
+    .eq("normalized_phone", normalizedPhone)
+    .in("status", ["active", "matched", "pending_completion"]);
+  for (const row of posts ?? []) accounts.add(row.user_id as string);
+  return accounts.size;
+}
+
+async function countPlateBoundAccounts(
+  supabase: SupabaseClient,
+  normalizedPlate: string,
+): Promise<number> {
+  if (!normalizedPlate) return 0;
+  const accounts = new Set<string>();
+  const { data: history } = await supabase
+    .from("plate_history")
+    .select("user_id")
+    .eq("normalized_license_plate", normalizedPlate);
+  for (const row of history ?? []) accounts.add(row.user_id as string);
+
+  const { data: posts } = await supabase
+    .from("posts")
+    .select("user_id")
+    .eq("normalized_license_plate", normalizedPlate)
+    .in("status", ["active", "matched", "pending_completion"]);
+  for (const row of posts ?? []) accounts.add(row.user_id as string);
+  return accounts.size;
+}
+
 async function gatherDemandMetrics(
   supabase: SupabaseClient,
   userId: string,
   normalizedPhone: string,
+  normalizedPlate: string | null,
   departureDate: string,
   departureWindow: string,
 ) {
   const { from, to } = demandInterceptRange(departureDate, departureWindow);
   const { data: rows } = await supabase
     .from("posts")
-    .select("user_id, normalized_phone, status, departure_date, departure_time_window")
-    .not("status", "eq", "completed")
-    .not("status", "eq", "canceled");
+    .select(
+      "user_id, normalized_phone, normalized_license_plate, status, departure_date, departure_time_window",
+    )
+    .in("status", ["active", "matched", "pending_completion"]);
 
   const inWindow = (rows ?? []).filter((r) => {
     if (!r.departure_date || !r.departure_time_window) return false;
@@ -94,12 +177,23 @@ async function gatherDemandMetrics(
   });
 
   const phoneMatches = inWindow.filter((r) => r.normalized_phone === normalizedPhone);
-  const accountIds = new Set(inWindow.map((r) => r.user_id));
+  const phoneAccountIds = new Set(phoneMatches.map((r) => r.user_id as string));
+  phoneAccountIds.add(userId);
+
+  const historyPhoneAccounts = await countPhoneBoundAccounts(supabase, normalizedPhone);
+  const plateAccounts = normalizedPlate
+    ? await countPlateBoundAccounts(supabase, normalizedPlate)
+    : 0;
+
+  const account_count = Math.max(phoneAccountIds.size, historyPhoneAccounts, plateAccounts);
+  const is_phone_duplicated =
+    phoneMatches.some((r) => r.user_id !== userId) || historyPhoneAccounts > 1 || plateAccounts > 1;
+
   const activeOwn = inWindow.filter((r) => r.user_id === userId).length;
 
   return {
-    is_phone_duplicated: phoneMatches.length > 0,
-    account_count: accountIds.size,
+    is_phone_duplicated,
+    account_count,
     active_order_count: activeOwn,
   };
 }
@@ -108,6 +202,7 @@ async function gatherSupplyMetrics(
   supabase: SupabaseClient,
   userId: string,
   normalizedPhone: string,
+  normalizedPlate: string | null,
   isPremium: boolean,
 ) {
   const { data: history } = await supabase
@@ -128,6 +223,15 @@ async function gatherSupplyMetrics(
     last_post_time_delta_months = Math.floor(
       (Date.now() - last.getTime()) / (1000 * 60 * 60 * 24 * 30),
     );
+  }
+
+  const phoneAccounts = await countPhoneBoundAccounts(supabase, normalizedPhone);
+  const plateAccounts = normalizedPlate
+    ? await countPlateBoundAccounts(supabase, normalizedPlate)
+    : 0;
+  if (phoneAccounts > 1 || plateAccounts > 1) {
+    is_phone_historically_reused = true;
+    last_post_time_delta_months = Math.min(last_post_time_delta_months, 0);
   }
 
   const { count } = await supabase
@@ -170,6 +274,7 @@ export async function submitPost(
       supabase,
       userId,
       payload.normalized_phone,
+      payload.normalized_license_plate ?? null,
       payload.departure_date,
       payload.departure_time_window,
     );
@@ -180,6 +285,8 @@ export async function submitPost(
           user_id: userId,
           scene: decision.trackerScene,
           normalized_phone: payload.normalized_phone,
+          normalized_license_plate: payload.normalized_license_plate,
+          reporter_side: "demand",
         });
       }
       return { ok: false, errorKey: decision.messageKey, logFraud: decision.logFraud };
@@ -189,6 +296,7 @@ export async function submitPost(
       supabase,
       userId,
       payload.normalized_phone,
+      payload.normalized_license_plate ?? null,
       isPremium,
     );
     const decision = processSupplyPostIntercept(metrics);
@@ -198,10 +306,36 @@ export async function submitPost(
           user_id: userId,
           scene: decision.trackerScene,
           normalized_phone: payload.normalized_phone,
+          normalized_license_plate: payload.normalized_license_plate,
+          reporter_side: "provider",
         });
       }
       return { ok: false, errorKey: decision.messageKey, logFraud: decision.logFraud };
     }
+  }
+
+  const originAddr =
+    (payload.origin_address as string) ||
+    (payload.service_address as string) ||
+    "";
+  const destAddr =
+    (payload.destination_address as string) ||
+    (payload.service_address as string) ||
+    originAddr;
+
+  const [originGeo, destGeo] = await (async () => {
+    const pair = await resolveGeocodePair(originAddr, destAddr);
+    return [pair.origin, pair.destination ?? pair.origin] as const;
+  })();
+  const destResolved = destGeo ?? originGeo;
+
+  let scope: PostScope = "city";
+  if (originGeo && destResolved) {
+    const d = haversineKm(originGeo.lat, originGeo.lon, destResolved.lat, destResolved.lon);
+    if (d <= 5) scope = "near";
+    else if (d <= 20) scope = "city";
+    else if (d <= 200) scope = "intercity";
+    else scope = "cross_border";
   }
 
   const row = {
@@ -226,6 +360,7 @@ export async function submitPost(
     provider_name: payload.provider_name,
     vehicle_brand: payload.vehicle_brand,
     vehicle_color: payload.vehicle_color,
+    transport_mode: payload.transport_mode ?? null,
     departure_date: payload.departure_date,
     departure_time_window: payload.departure_time_window,
     estimated_arrival_time: payload.estimated_arrival_time,
@@ -246,10 +381,12 @@ export async function submitPost(
     fee_amount: payload.fee_amount,
     origin_address: payload.origin_address ?? "",
     destination_address: payload.destination_address ?? "",
+    origin_gps: originGeo?.wkt ?? null,
+    destination_gps: destResolved?.wkt ?? null,
     service_address: payload.service_address,
     service_time_window: payload.service_time_window,
     provider_pay_type: payload.provider_pay_type,
-    scope: "city",
+    scope,
   };
 
   const { data, error } = await supabase.from("posts").insert(row).select("id").single();

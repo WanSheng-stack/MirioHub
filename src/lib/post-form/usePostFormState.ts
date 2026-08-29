@@ -32,11 +32,15 @@ export type PostFormState = {
   item_condition: ItemCondition;
   dial_code: string;
   raw_phone_local: string;
+  contact_email: string;
   raw_license_plate: string;
   provider_name: string;
   vehicle_brand: string;
   vehicle_color: string;
+  transport_mode: import("@/lib/types").TransportMode | "";
   departure_date: string;
+  departure_time: string;
+  time_buffer: number;
   departure_time_window: string;
   waypoints: string[];
   origin_address: string;
@@ -82,7 +86,7 @@ const today = new Date().toISOString().slice(0, 10);
 
 export const initialFormState: PostFormState = {
   post_type: "demand",
-  category: "deliver",
+  category: "travel",
   delivery_mode: "spot",
   share_mode: "share",
   escort_seats: 0,
@@ -90,17 +94,21 @@ export const initialFormState: PostFormState = {
   item_condition: "new",
   dial_code: "+381",
   raw_phone_local: "",
+  contact_email: "",
   raw_license_plate: "",
   provider_name: "",
   vehicle_brand: "",
   vehicle_color: "",
+  transport_mode: "",
   departure_date: today,
-  departure_time_window: "09:00-09:15",
+  departure_time: "14:00",
+  time_buffer: 30,
+  departure_time_window: "14:00-14:30",
   waypoints: [],
   origin_address: "",
   destination_address: "",
   service_address: "",
-  service_time_window: "09:00-09:15",
+  service_time_window: "14:00-14:30",
   item_quantity: 1,
   item_unit: "pcs",
   price_calc_type: "unit",
@@ -135,10 +143,14 @@ function reducer(state: PostFormState, action: Action): PostFormState {
       return {
         ...initialFormState,
         post_type: action.post_type,
-        category: "deliver",
+        category: "travel",
         departure_date: state.departure_date,
+        departure_time: state.departure_time,
+        time_buffer: state.time_buffer,
+        departure_time_window: state.departure_time_window,
         dial_code: state.dial_code,
         raw_phone_local: state.raw_phone_local,
+        contact_email: state.contact_email,
       };
     }
     case "SET_CATEGORY":

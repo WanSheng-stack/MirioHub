@@ -125,6 +125,9 @@ export function PostCard({
         <div className="mt-2 space-y-1">
           <span className="inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-800">
             {t("routeMatchCount", { count: routeMatch.matchedCount })}
+            {routeMatch.bestMatchRatio != null
+              ? ` · ${Math.round(routeMatch.bestMatchRatio * 100)}%`
+              : ""}
           </span>
           {routeMatch.showSpaceWarning ? (
             <p className="animate-pulse text-xs text-amber-700">

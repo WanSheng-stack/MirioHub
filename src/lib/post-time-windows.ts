@@ -42,6 +42,29 @@ export function demandInterceptRange(
   return { from, to };
 }
 
+/** Fuse precise clock + wait-buffer into absolute window "HH:MM-HH:MM". */
+export function mergeDepartureWindow(
+  departureTime: string,
+  timeBufferMinutes: number,
+): string {
+  const [hRaw, mRaw] = departureTime.split(":").map(Number);
+  const startMinutes = (hRaw ?? 0) * 60 + (mRaw ?? 0);
+  const buffer = Math.max(0, Math.min(180, Math.floor(timeBufferMinutes)));
+  const endMinutes = startMinutes + buffer;
+  const fmt = (total: number) => {
+    const h = Math.floor(total / 60) % 24;
+    const m = total % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  };
+  return `${fmt(startMinutes)}-${fmt(endMinutes)}`;
+}
+
+export function formatDepartureWindowLabel(window: string): string {
+  const [start, end] = window.split("-");
+  if (!start || !end) return window;
+  return `${start} – ${end}`;
+}
+
 export const COUNTRY_DIAL_CODES = [
   { code: "+381", key: "country.sr" },
   { code: "+86", key: "country.cn" },

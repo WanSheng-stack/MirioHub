@@ -26,6 +26,7 @@ export interface PostPayload {
   provider_name?: string | null;
   vehicle_brand?: string | null;
   vehicle_color?: string | null;
+  transport_mode?: string | null;
   departure_date: string;
   departure_time_window: string;
   estimated_arrival_time: string | null;
@@ -60,12 +61,29 @@ export interface PostPayload {
 }
 
 export const POST_CATEGORIES: readonly PostCategory[] = [
+  "travel",
   "deliver",
   "buy",
-  "travel",
   "onsite",
   "errand",
 ] as const;
+
+/** HelloBike-style circular icon order on home console. */
+export const HOME_CATEGORY_ORDER: readonly PostCategory[] = [
+  "travel",
+  "deliver",
+  "buy",
+  "onsite",
+  "errand",
+] as const;
+
+export const CATEGORY_ICONS: Record<PostCategory, string> = {
+  travel: "🧑‍🤝‍🧑",
+  deliver: "📦",
+  buy: "🛒",
+  onsite: "🛠️",
+  errand: "🏃",
+};
 
 export const ITEM_UNITS: readonly ItemUnit[] = [
   "pcs",

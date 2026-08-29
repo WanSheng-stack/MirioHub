@@ -35,6 +35,99 @@ export function resolveDriverOrderedRoute(post: {
   return buildDriverOrderedRoute(post.origin_address, wps, post.destination_address);
 }
 
+/** True when demand O/D both appear on driver axis with Index_Origin < Index_Destination. */
+export function isOrderedRouteCompatible(
+  driverOrderedRoute: string[],
+  demandOrigin: string,
+  demandDestination: string,
+): boolean {
+  const routeKeys = driverOrderedRoute.map(normalizeLocationKey);
+  const originIndex = routeKeys.indexOf(normalizeLocationKey(demandOrigin));
+  const destIndex = routeKeys.indexOf(normalizeLocationKey(demandDestination));
+  return originIndex !== -1 && destIndex !== -1 && originIndex < destIndex;
+}
+
+export interface RouteSegmentKms {
+  /** Driver solo straight-line / planned trip km without picking anyone up. */
+  L_driver_straight: number;
+  /** Rolling baseline: actual driven km after already-stacked orders. */
+  L_baseline_current: number;
+  /** Simulated total km if this new order is also stacked. */
+  L_total_new_simulated: number;
+  /** Passenger/cargo OD straight km for the candidate order. */
+  L_passenger_straight: number;
+}
+
+export interface RouteStackingResult {
+  isRouteMatch: boolean;
+  matchRatio: number;
+  isCapacityAllowed: boolean;
+  showSpaceWarning: boolean;
+  showDetourNotice: boolean;
+  messageKey: string;
+}
+
+/**
+ * HelloBike / Didi-style rolling-baseline match ratio.
+ * Denominator is locked to L_passenger_straight; extra detour = simulated − baseline.
+ */
+export function evaluateRouteAndOrderStacking(
+  metrics: RouteSegmentKms,
+  newOrderSeats: number,
+  newOrderUnits: number,
+  currentStackedSeats: number,
+  currentStackedUnits: number,
+  _isBankVerified: boolean,
+): RouteStackingResult {
+  const extra_detour_kms = metrics.L_total_new_simulated - metrics.L_baseline_current;
+  if (metrics.L_passenger_straight <= 0) {
+    return {
+      isRouteMatch: false,
+      matchRatio: 0,
+      isCapacityAllowed: false,
+      showSpaceWarning: false,
+      showDetourNotice: false,
+      messageKey: "error.invalid_kms",
+    };
+  }
+
+  const matchRatio = 1 - extra_detour_kms / metrics.L_passenger_straight;
+  if (matchRatio < 0.7) {
+    return {
+      isRouteMatch: false,
+      matchRatio,
+      isCapacityAllowed: false,
+      showSpaceWarning: false,
+      showDetourNotice: false,
+      messageKey: "error.low_match_filtered",
+    };
+  }
+
+  const total_people_on_board = 1 + currentStackedSeats + newOrderSeats;
+  if (total_people_on_board > 5) {
+    return {
+      isRouteMatch: true,
+      matchRatio,
+      isCapacityAllowed: false,
+      showSpaceWarning: false,
+      showDetourNotice: false,
+      messageKey: "error.passenger_limit_exceeded",
+    };
+  }
+
+  const showSpaceWarning = currentStackedUnits + newOrderUnits > 24;
+  const showDetourNotice = matchRatio >= 0.7 && matchRatio < 0.9;
+
+  return {
+    isRouteMatch: true,
+    matchRatio,
+    isCapacityAllowed: true,
+    showSpaceWarning,
+    showDetourNotice,
+    messageKey: matchRatio >= 0.9 ? "ui.perfect_match" : "ui.good_match",
+  };
+}
+
 export interface RouteMatchMetrics {
   driver_ordered_route: string[];
   demand_origin: string;
@@ -43,28 +136,59 @@ export interface RouteMatchMetrics {
   new_order_units: number;
   current_total_passengers: number;
   current_total_units: number;
+  /** Optional km metrics for rolling-baseline stacking. */
+  segmentKms?: RouteSegmentKms | null;
+  isBankVerified?: boolean;
 }
 
 export interface RouteMatchResult {
   isRouteMatch: boolean;
   isCapacityAllowed: boolean;
   showSpaceWarning: boolean;
+  showDetourNotice?: boolean;
+  matchRatio?: number;
   messageKey?: string;
 }
 
+/**
+ * Projection-slice gate (ordered indices) + optional rolling-baseline stacking.
+ * Without segmentKms, capacity rules still apply with a perfect string-route ratio.
+ */
 export function evaluateRouteAndCapacityMatch(metrics: RouteMatchMetrics): RouteMatchResult {
-  const routeKeys = metrics.driver_ordered_route.map(normalizeLocationKey);
-  const originKey = normalizeLocationKey(metrics.demand_origin);
-  const destKey = normalizeLocationKey(metrics.demand_destination);
+  const orderedOk = isOrderedRouteCompatible(
+    metrics.driver_ordered_route,
+    metrics.demand_origin,
+    metrics.demand_destination,
+  );
 
-  const origin_index = routeKeys.indexOf(originKey);
-  const dest_index = routeKeys.indexOf(destKey);
+  if (!orderedOk) {
+    return {
+      isRouteMatch: false,
+      isCapacityAllowed: false,
+      showSpaceWarning: false,
+      showDetourNotice: false,
+      matchRatio: 0,
+      messageKey: "error.route_not_compatible",
+    };
+  }
 
-  const isRouteMatch =
-    origin_index !== -1 && dest_index !== -1 && origin_index < dest_index;
-
-  if (!isRouteMatch) {
-    return { isRouteMatch: false, isCapacityAllowed: false, showSpaceWarning: false };
+  if (metrics.segmentKms) {
+    const stacked = evaluateRouteAndOrderStacking(
+      metrics.segmentKms,
+      metrics.new_order_passengers,
+      metrics.new_order_units,
+      metrics.current_total_passengers,
+      metrics.current_total_units,
+      Boolean(metrics.isBankVerified),
+    );
+    return {
+      isRouteMatch: stacked.isRouteMatch,
+      isCapacityAllowed: stacked.isCapacityAllowed,
+      showSpaceWarning: stacked.showSpaceWarning,
+      showDetourNotice: stacked.showDetourNotice,
+      matchRatio: stacked.matchRatio,
+      messageKey: stacked.messageKey,
+    };
   }
 
   const total_people_on_board =
@@ -74,6 +198,8 @@ export function evaluateRouteAndCapacityMatch(metrics: RouteMatchMetrics): Route
       isRouteMatch: true,
       isCapacityAllowed: false,
       showSpaceWarning: false,
+      showDetourNotice: false,
+      matchRatio: 1,
       messageKey: "error.passenger_limit_exceeded",
     };
   }
@@ -85,6 +211,8 @@ export function evaluateRouteAndCapacityMatch(metrics: RouteMatchMetrics): Route
     isRouteMatch: true,
     isCapacityAllowed: true,
     showSpaceWarning,
+    showDetourNotice: false,
+    matchRatio: 1,
     messageKey: "success.match_compatible",
   };
 }
@@ -104,4 +232,27 @@ export function estimateSliceKmsFromRoute(
   const segments = route.length - 1;
   const sliceSegments = di - oi;
   return Math.max(3, (totalKms * sliceSegments) / segments);
+}
+
+/**
+ * Approximate rolling baseline kms for hall soft-match when only total driver km is known.
+ * Treats each stacked order as adding a soft 10% corridor buffer (≤10 km absolute).
+ */
+export function approximateSegmentKmsForStacking(opts: {
+  driverStraightKms: number;
+  passengerStraightKms: number;
+  alreadyStackedOrderCount: number;
+}): RouteSegmentKms {
+  const L_driver_straight = Math.max(0, opts.driverStraightKms);
+  const L_passenger_straight = Math.max(0, opts.passengerStraightKms);
+  const stackedBuffer = Math.min(10 * opts.alreadyStackedOrderCount, L_driver_straight * 0.25);
+  const L_baseline_current = L_driver_straight + stackedBuffer;
+  const softDetour = Math.min(10, Math.max(0, L_passenger_straight * 0.15));
+  const L_total_new_simulated = L_baseline_current + softDetour;
+  return {
+    L_driver_straight,
+    L_baseline_current,
+    L_total_new_simulated,
+    L_passenger_straight,
+  };
 }

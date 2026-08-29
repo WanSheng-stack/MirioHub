@@ -10,7 +10,7 @@ export type RouteDistanceResult =
 
 type GeocodeResult = { lat: number; lon: number } | null;
 
-async function geocodeAddress(address: string): Promise<GeocodeResult> {
+export async function geocodeAddress(address: string): Promise<GeocodeResult> {
   const q = encodeURIComponent(address.trim());
   if (!q) return null;
   try {
@@ -25,6 +25,11 @@ async function geocodeAddress(address: string): Promise<GeocodeResult> {
   } catch {
     return null;
   }
+}
+
+/** PostGIS geography WKT for insert via Supabase. */
+export function toGeographyPointWkt(lat: number, lon: number): string {
+  return `SRID=4326;POINT(${lon} ${lat})`;
 }
 
 async function osrmRouteKms(points: GeocodeResult[]): Promise<number | null> {

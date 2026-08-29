@@ -103,6 +103,10 @@ export type Post = {
   service_address?: string | null;
   completion_type?: "standard" | "auto_melt" | null;
   completion_note?: string | null;
+  pickup_code?: string | null;
+  delivery_code?: string | null;
+  auto_melt_deadline?: string | null;
+  matched_at?: string | null;
 };
 
 export type MatchRow = {

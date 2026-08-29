@@ -1,6 +1,6 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { AppLocale } from "@/i18n/routing";
-import { PostCard } from "@/components/hall/PostCard";
+import { HomeConsole } from "@/components/home/HomeConsole";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/server";
 import { computeCreditStats } from "@/lib/credit-stats";
 import {
@@ -14,9 +14,9 @@ type Props = { params: Promise<{ locale: string }> };
 export const dynamic = "force-dynamic";
 
 const POST_SELECT =
-  "id, user_id, title, description, status, locale, post_type, category, scope, origin_address, destination_address, origin_gps, destination_gps, capacity_type, transport_mode, escort_seats, max_companions, fee_amount, estimated_item_cost, translations, created_at, updated_at, waypoints, count_small, count_medium, count_large, count_xlarge, completion_type, completion_note, departure_date, departure_time_window";
+  "id, user_id, title, description, status, locale, post_type, category, scope, origin_address, destination_address, origin_gps, destination_gps, capacity_type, transport_mode, escort_seats, max_companions, fee_amount, estimated_item_cost, translations, created_at, updated_at, waypoints, count_small, count_medium, count_large, count_xlarge, completion_type, completion_note, departure_date, departure_time_window, pickup_code, delivery_code, auto_melt_deadline, matched_at, provider_name, vehicle_brand, vehicle_color, raw_phone, raw_license_plate, normalized_license_plate, service_address";
 
-export default async function HallPage({ params }: Props) {
+export default async function HomePage({ params }: Props) {
   const { locale } = await params;
   setRequestLocale(locale as AppLocale);
   const t = await getTranslations("hall");
@@ -30,12 +30,16 @@ export default async function HallPage({ params }: Props) {
   }
 
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   const { data: posts } = await supabase
     .from("posts")
     .select(POST_SELECT)
     .eq("status", "active")
     .order("created_at", { ascending: false })
-    .limit(80);
+    .limit(120);
 
   const rows = (posts ?? []) as Post[];
   const demands = rows.filter((p) => p.post_type === "demand");
@@ -61,49 +65,59 @@ export default async function HallPage({ params }: Props) {
     creditByUser.set(uid, computeCreditStats((history ?? []) as Post[]));
   }
 
+  const hallBundles = rows.map((post) => ({
+    post,
+    authorName: names.get(post.user_id) ?? null,
+    creditStats:
+      post.post_type === "provider"
+        ? creditByUser.get(post.user_id) ?? null
+        : null,
+    routeMatch:
+      (post.post_type === "provider"
+        ? providerMatchMap.get(post.id)
+        : demandMatchMap.get(post.id)) ?? null,
+  }));
+
+  const lbsBundles = hallBundles.filter((b) =>
+    ["buy", "onsite", "errand"].includes(b.post.category),
+  );
+
+  let compliancePosts: Post[] = [];
+  if (user) {
+    const { data: matchedAsPeer } = await supabase
+      .from("matches")
+      .select("post_id")
+      .or(`demand_user_id.eq.${user.id},provider_user_id.eq.${user.id}`)
+      .is("cancelled_at", null);
+
+    const peerIds = [...new Set((matchedAsPeer ?? []).map((m) => m.post_id as string))];
+    if (peerIds.length) {
+      const { data } = await supabase
+        .from("posts")
+        .select(POST_SELECT)
+        .in("id", peerIds)
+        .in("status", ["matched", "pending_completion"]);
+      compliancePosts = (data ?? []) as Post[];
+    }
+
+    const { data: ownedPending } = await supabase
+      .from("posts")
+      .select(POST_SELECT)
+      .eq("user_id", user.id)
+      .in("status", ["matched", "pending_completion"]);
+
+    const map = new Map<string, Post>();
+    for (const p of [...compliancePosts, ...((ownedPending ?? []) as Post[])]) {
+      map.set(p.id, p);
+    }
+    compliancePosts = [...map.values()];
+  }
+
   return (
-    <section className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">{t("title")}</h1>
-        <p className="mt-1 text-sm text-zinc-600">{t("subtitle")}</p>
-        <div className="mt-3 flex items-center gap-4 text-xs text-zinc-500">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
-            {t("legendDemand")}
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-violet-500" aria-hidden />
-            {t("legendProvider")}
-          </span>
-        </div>
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="text-sm text-zinc-500">{t("empty")}</p>
-      ) : (
-        <div className="space-y-3">
-          {rows.map((post) => {
-            const routeMatch =
-              post.post_type === "provider"
-                ? providerMatchMap.get(post.id)
-                : demandMatchMap.get(post.id);
-
-            return (
-              <PostCard
-                key={post.id}
-                post={post}
-                authorName={names.get(post.user_id)}
-                creditStats={
-                  post.post_type === "provider"
-                    ? creditByUser.get(post.user_id) ?? null
-                    : null
-                }
-                routeMatch={routeMatch ?? null}
-              />
-            );
-          })}
-        </div>
-      )}
-    </section>
+    <HomeConsole
+      hallPosts={hallBundles}
+      lbsPosts={lbsBundles}
+      compliancePosts={compliancePosts}
+    />
   );
 }

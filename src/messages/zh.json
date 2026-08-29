@@ -23,22 +23,32 @@
     "request_auto_melt": "我已安全送达，但对方拒绝提供送达码",
     "standard_completion": "🟢 客户当面确认送达: {rate}%",
     "auto_melt_completion": "🟡 楼下送达(客户未给码)但72h无投诉: {rate}%",
-    "space_overload_warning": "⚠️ 空间过载提示：这单货可能超出您的车型承载空间，请务必提前通过私信与对方确认清楚后再决定是否接单，免得空跑一趟。"
+    "space_overload_warning": "⚠️ 空间过载提示：这单货可能超出您的车型承载空间，请务必提前通过私信与对方确认清楚后再决定是否接单，免得空跑一趟。",
+    "next_step": "下一步",
+    "publish": "立即发布",
+    "match_now": "立即匹配",
+    "perfect_match": "完美顺路",
+    "good_match": "顺路推荐",
+    "detour_buffer_notice": "💡 顺路推荐提示：当前车主的直达干线距离您的起点有轻微偏差。推荐您立即与车主通过私信或电话确认：您可以主动在下方的【自主加价滑块】中自愿多付 2 ~ 3 EUR 作为车主的下路绕路辛苦补偿费；或者选择自行前往主干道交接，以最大化促成顺路同行！",
+    "price_premium_label": "自愿溢价倍率",
+    "price_premium_hint": "上限为推荐底价的 2.5 倍",
+    "wait_minutes": "愿等 {minutes} 分钟",
+    "estimated_kms_fee": "预估里程 {kms} km · 推荐分摊 {amount} EUR"
   },
   "category": {
     "demand": {
-      "deliver": "代送包裹",
-      "buy": "帮买东西",
-      "travel": "结伴旅行",
-      "onsite": "到府互助",
-      "errand": "代办排队"
+      "deliver": "物搭车",
+      "buy": "需要代购",
+      "travel": "人搭车",
+      "onsite": "需要现场帮助",
+      "errand": "需要其他跑腿"
     },
     "provider": {
-      "deliver": "发布行程",
-      "buy": "集市卖货",
-      "travel": "结伴旅行",
-      "onsite": "技能与工具",
-      "errand": "闲置时间"
+      "deliver": "顺路捎物",
+      "buy": "顺路代购",
+      "travel": "顺路捎人",
+      "onsite": "顺路现场帮助",
+      "errand": "顺路跑腿"
     }
   },
   "country": {
@@ -107,7 +117,10 @@
     "passenger_limit_exceeded": "全车总人数（含司机）不能超过 5 人。",
     "non_member_limit_exceeded": "非会员活跃供应帖已达上限（最多 3 条）。",
     "route_distance_failed": "无法估算路线里程，请检查地址后重试。",
-    "route_not_compatible": "该需求起终点不在您的顺路路线方向上。"
+    "route_not_compatible": "该需求起终点不在您的顺路路线方向上。",
+    "invalid_kms": "里程数据无效，无法计算顺路度。",
+    "low_match_filtered": "顺路度过低，已自动过滤。",
+    "email_required": "请填写有效邮箱。"
   },
   "success": {
     "posted": "发布成功。",
@@ -308,5 +321,68 @@
     "body": "全网免费公测已关闭。额度用尽且非会员时，服务器不会返回电话。",
     "bank": "银行转账 / IPS 二维码",
     "close": "关闭"
+  },
+  "home": {
+    "slogan": "人货同航 · 路过顺手 · 绿色共享分摊利他",
+    "sloganHint": "包容私家车、摩托车、大巴与火车通勤等全大交通生态",
+    "tab": {
+      "demand": "我需要帮忙",
+      "provider": "我顺路顺手"
+    },
+    "icons": {
+      "demand": {
+        "travel": "人搭车",
+        "deliver": "物搭车",
+        "buy": "需要代购",
+        "onsite": "需要现场帮助",
+        "errand": "需要其他跑腿"
+      },
+      "provider": {
+        "travel": "顺路捎人",
+        "deliver": "顺路捎物",
+        "buy": "顺路代购",
+        "onsite": "顺路现场帮助",
+        "errand": "顺路跑腿"
+      }
+    },
+    "origin": "起点地址",
+    "destination": "终点地址",
+    "service_location": "具体位置 / 集市货源地",
+    "confirm_location": "确认并继续",
+    "gps_prompt": "开启定位以按距离排序附近活帖",
+    "gps_denied": "定位不可用，暂按时间展示",
+    "lbs": {
+      "title": "附近活帖实时曝光墙",
+      "empty": "附近暂无代购 / 现场互助 / 跑腿活帖",
+      "ring": "≤{km} 公里圈",
+      "demand_col": "需求",
+      "provider_col": "供应",
+      "distance": "{km} km"
+    },
+    "compliance": {
+      "title": "合规与双码锁通知中心",
+      "empty": "暂无待核实取送码或 72 小时催单任务",
+      "pickup_verify": "取货码核实盾牌",
+      "delivery_pending": "送达码待确认",
+      "auto_melt_countdown": "72 小时自动完单倒计时：剩余 {hours} 小时",
+      "deadline_passed": "倒计时已结束，系统将自动完单",
+      "open_post": "查看订单"
+    },
+    "sheet": {
+      "stage1_title": "场景微调与精算",
+      "stage2_title": "隐私绑定与风控落袋",
+      "departure_time": "精确出发时间",
+      "time_buffer": "愿等分钟数",
+      "passengers": "乘客人数",
+      "email": "电子邮箱",
+      "phone": "真实沟通电话",
+      "real_name": "真实姓名",
+      "vehicle_type": "载具类型",
+      "vehicle_brand": "机动车品牌",
+      "vehicle_color": "车辆颜色",
+      "license_plate": "真实原始车牌号",
+      "back": "返回上一步",
+      "close": "关闭"
+    }
   }
 }

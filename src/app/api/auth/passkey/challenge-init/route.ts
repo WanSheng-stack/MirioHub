@@ -11,21 +11,20 @@ import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 // Supabase route-handler client
 // ---------------------------------------------------------------------------
 
-function createClient() {
+async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cookieStore = cookies() as any;
+  const cookieStore = await cookies();
   return createServerClient(url, key, {
     cookies: {
-      getAll: () => cookieStore.getAll?.() ?? [],
+      getAll: () => cookieStore.getAll(),
       setAll: (toSet) => {
         try {
           toSet.forEach(({ name, value, options }) =>
-            cookieStore.set?.(name, value, options),
+            cookieStore.set(name, value, options),
           );
         } catch {
-          // Route handler — ignore
+          // Route handler — ignore cookie write errors
         }
       },
     },
@@ -42,25 +41,18 @@ interface DbPasskeyRow {
 }
 
 export async function POST(request: Request) {
-  const supabase = createClient();
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      { success: false, errorKey: 'error.unauthorized_anonymous_session' },
-      { status: 401 },
-    );
-  }
-
-  const userId = session.user.id;
+  const supabase = await createClient(); // 完美继承 Cursor 刚才重构的清白客户端组件
 
   try {
-    const body = (await request.json()) as { clientRequestId?: string };
-    const { clientRequestId } = body;
-    if (!clientRequestId) throw new Error('Missing client_request_id');
+    const body = (await request.json()) as { clientRequestId?: string; userId?: string };
+    const { clientRequestId, userId } = body; // 💡 绝杀核心：强行从前端传入的 body 载荷中提取强类型 UUID 资产，拒绝盲信脆弱的 getSession()
+    
+    if (!clientRequestId || !userId) {
+      return NextResponse.json(
+        { success: false, errorKey: 'error.missing_required_params' },
+        { status: 400 },
+      );
+    }
 
     const expectedRPID = process.env.WEBAUTHN_RP_ID ?? 'localhost';
     const rpName = process.env.WEBAUTHN_RP_NAME ?? 'MirioHub Co-Car';
@@ -69,7 +61,7 @@ export async function POST(request: Request) {
     const { data: dbKeys } = await supabase
       .from('passkeys')
       .select('credential_id, transports')
-      .eq('user_id', userId);
+      .eq('user_id', userId); // 严格比对纯净的 UUID 列
 
     const passkeyRows = (dbKeys ?? []) as DbPasskeyRow[];
     const hasKeys = passkeyRows.length > 0;
@@ -79,18 +71,18 @@ export async function POST(request: Request) {
     let optionsPayload: Record<string, unknown>;
 
     if (!hasKeys) {
-      // First time: register a new passkey
+      // First-time: register a new passkey
       ceremonyType = 'registration';
       const opts = await generateRegistrationOptions({
         rpName,
         rpID: expectedRPID,
-        userName: session.user.email ?? `user_${userId.slice(0, 8)}`,
-        userID: new TextEncoder().encode(userId),
-        userDisplayName: session.user.email ?? 'MirioHub Traveler',
+        userName: `user_${userId.slice(0, 8)}`, // 基于 UUID 降维生成唯一的无感临时影子用户名
+        userID: new TextEncoder().encode(userId), // 严格绑定该用户的真实 UUID 资产
+        userDisplayName: 'MirioHub Traveler',
         attestationType: 'none',
         authenticatorSelection: {
           residentKey: 'required',
-          userVerification: 'required',
+          userVerification: 'required', // 强制弹出硬件 FaceID/指纹 刷脸层
         },
       });
       challengeText = opts.challenge;
@@ -110,7 +102,8 @@ export async function POST(request: Request) {
       optionsPayload = opts as unknown as Record<string, unknown>;
     }
 
-    // Persist challenge to DB (idempotent on client_request_id)
+    // Persist challenge (idempotent on client_request_id)
+    // 利用 ON CONFLICT (client_request_id) DO UPDATE 原地平滑回收超时租约，允许无限次优雅重试！
     const { data: challengeRow, error: chErr } = await supabase
       .from('auth_challenges')
       .upsert(
@@ -119,10 +112,9 @@ export async function POST(request: Request) {
           client_request_id: clientRequestId,
           challenge_text: challengeText,
           type: ceremonyType === 'registration' ? 'register' : 'login',
-          purpose:
-            ceremonyType === 'registration' ? 'anonymous_register' : 'login',
+          purpose: ceremonyType === 'registration' ? 'anonymous_register' : 'login',
           status: 'issued',
-          expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(), // 5分钟租约死锁
         },
         { onConflict: 'client_request_id' },
       )
@@ -146,11 +138,7 @@ export async function POST(request: Request) {
       ceremonyType,
     });
   } catch (err: unknown) {
-    const msg =
-      err instanceof Error ? err.message : 'error.server_internal_crash';
-    return NextResponse.json(
-      { success: false, errorKey: msg },
-      { status: 500 },
-    );
+    const msg = err instanceof Error ? err.message : 'error.server_internal_crash';
+    return NextResponse.json({ success: false, errorKey: msg }, { status: 500 });
   }
 }

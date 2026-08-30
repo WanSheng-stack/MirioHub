@@ -191,11 +191,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           setStage(2);
         } else {
           // Hard crypto mismatch — surface error inline
-          setErrorKey("error.crypto_invalid_signature");
+          setErrorKey("crypto_invalid_signature");
         }
       }
     } catch {
-      setErrorKey("error.server_internal_crash");
+      setErrorKey("server_internal_crash");
     } finally {
       setIsPublishing(false);
     }
@@ -204,11 +204,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   async function onPublish() {
     setErrorKey(null);
     if (!hasSupabaseEnv()) {
-      setErrorKey("error.missing_env");
+      setErrorKey("missing_env");
       return;
     }
     if (state.post_type === "demand" && !state.contact_email.trim().includes("@")) {
-      setErrorKey("error.email_required");
+      setErrorKey("email_required");
       return;
     }
 
@@ -236,7 +236,8 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setSubmitting(false);
 
     if (!result.ok) {
-      setErrorKey(result.errorKey);
+      // Strip leading "error." so rendering via t(`error.${key}`) stays clean
+      setErrorKey(result.errorKey.replace(/^error\./, ""));
       return;
     }
     onClose();
@@ -602,7 +603,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
                 {errorKey ? (
                   <p className="text-sm text-red-600">
-                    {t(errorKey as "error.post_denied_blurred")}
+                    {t(`error.${errorKey}` as "error.post_denied_blurred")}
                   </p>
                 ) : null}
               </div>
@@ -640,10 +641,10 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
               <button
                 type="button"
                 disabled={isPublishing}
-                onClick={() => void handleBookAttemptRC4()}
+                onClick={handleBookAttemptRC4}
                 className="ml-auto rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
               >
-                {isPublishing ? t("publish.submitting") : t("ui.next_step")}
+                {isPublishing ? t("ui.publishing_loading") : t("ui.next_step")}
               </button>
             ) : (
               <button

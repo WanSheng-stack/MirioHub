@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseAdminClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import {
   generateRegistrationOptions,
@@ -9,8 +9,9 @@ import {
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 
 // ---------------------------------------------------------------------------
-// SSR session client — reads the authenticated/anonymous session cookie only.
-// Uses the anon key; subject to RLS. Do NOT write privileged tables with this.
+// A. sessionClient — SSR cookie client, anon key, subject to RLS.
+//    Only used to read the authenticated/anonymous session (auth.uid()).
+//    Never used to access passkeys or auth_challenges.
 // ---------------------------------------------------------------------------
 
 async function createSessionClient() {
@@ -26,7 +27,7 @@ async function createSessionClient() {
             cookieStore.set(name, value, options),
           );
         } catch {
-          // Route handler — ignore
+          // Route handler — ignore cookie write errors
         }
       },
     },
@@ -34,31 +35,27 @@ async function createSessionClient() {
 }
 
 // ---------------------------------------------------------------------------
-// Service-role admin client — bypasses RLS.
-// Used ONLY server-side. Key is never exposed to the client.
+// B. adminClient — service-role client, bypasses RLS.
+//    Used ONLY server-side for passkeys reads and auth_challenges writes.
+//    Key MUST NOT appear in NEXT_PUBLIC_* or any client-side bundle.
 // ---------------------------------------------------------------------------
 
 function createAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  if (!serviceKey) {
-    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
-  }
-  return createSupabaseClient(url, serviceKey, {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url) throw new Error('NEXT_PUBLIC_SUPABASE_URL is not configured');
+  if (!serviceKey) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
+  return createSupabaseAdminClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
 
 // ---------------------------------------------------------------------------
-// UUID format guard
+// UUID format guard (RFC 4122 — version bits [1-5], variant bits [89ab])
 // ---------------------------------------------------------------------------
 
 const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isValidUUID(v: unknown): v is string {
-  return typeof v === 'string' && UUID_RE.test(v);
-}
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,33 +76,35 @@ interface AuthChallengeRow {
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
-  // ── 1. Resolve session via SSR cookie client (anon key, RLS applies) ──────
+  // ── A. Session: resolve trusted auth.uid() via SSR cookie client ──────────
   const sessionClient = await createSessionClient();
+  const adminClient = createAdminClient();
+
   const {
     data: { user },
-    error: userErr,
+    error: userError,
   } = await sessionClient.auth.getUser();
 
-  if (userErr || !user?.id) {
+  if (userError || !user) {
     return NextResponse.json(
       { success: false, errorKey: 'error.authentication_required' },
       { status: 401 },
     );
   }
 
-  const userId = user.id; // trusted server-side auth.uid()
+  const userId = user.id; // server-trusted auth.uid() — never use body.userId
 
-  // ── 2. Validate clientRequestId from body ─────────────────────────────────
+  // ── Parse + validate request body ─────────────────────────────────────────
   let clientRequestId: string;
+  let bodyUserId: string | undefined;
+
   try {
-    const body = (await request.json()) as { clientRequestId?: unknown };
-    if (!isValidUUID(body.clientRequestId)) {
-      return NextResponse.json(
-        { success: false, errorKey: 'error.invalid_client_request_id' },
-        { status: 400 },
-      );
-    }
-    clientRequestId = body.clientRequestId;
+    const body = (await request.json()) as {
+      clientRequestId?: string;
+      userId?: string;
+    };
+    clientRequestId = body.clientRequestId ?? '';
+    bodyUserId = body.userId;
   } catch {
     return NextResponse.json(
       { success: false, errorKey: 'error.invalid_request_body' },
@@ -113,21 +112,25 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── 3. Admin client — bypasses RLS for privileged reads/writes ────────────
-  let admin: ReturnType<typeof createAdminClient>;
-  try {
-    admin = createAdminClient();
-  } catch (e) {
-    console.error('[challenge-init] Admin client init failed:', e);
+  // ── UUID format guard ──────────────────────────────────────────────────────
+  if (!clientRequestId || !UUID_RE.test(clientRequestId)) {
     return NextResponse.json(
-      { success: false, errorKey: 'error.server_internal_crash' },
-      { status: 500 },
+      { success: false, errorKey: 'error.invalid_client_request_id' },
+      { status: 400 },
+    );
+  }
+
+  // ── bodyUserId consistency check (if client sends it, must match session) ──
+  if (bodyUserId && bodyUserId !== userId) {
+    return NextResponse.json(
+      { success: false, errorKey: 'error.security_boundary_compromised' },
+      { status: 403 },
     );
   }
 
   try {
-    // ── 4. Guard: don't overwrite a challenge that is already processing/consumed ──
-    const { data: existing } = await admin
+    // ── Guard: refuse to overwrite a processing/consumed challenge ─────────
+    const { data: existing } = await adminClient
       .from('auth_challenges')
       .select('id, status')
       .eq('client_request_id', clientRequestId)
@@ -136,32 +139,28 @@ export async function POST(request: Request) {
     if (existing) {
       const row = existing as AuthChallengeRow;
       if (row.status === 'processing' || row.status === 'consumed') {
-        // Idempotency: return existing challenge id so client can retry verify
         return NextResponse.json(
-          {
-            success: false,
-            errorKey: 'error.invalid_or_consumed_challenge',
-          },
+          { success: false, errorKey: 'error.invalid_or_consumed_challenge' },
           { status: 409 },
         );
       }
     }
 
-    // ── 5. Read registered passkeys (admin, no RLS block) ────────────────────
-    const { data: dbKeys, error: keysErr } = await admin
+    // ── B. Read passkeys via adminClient (bypasses RLS) ────────────────────
+    const { data: dbKeys, error: passkeysError } = await adminClient
       .from('passkeys')
       .select('credential_id, transports')
       .eq('user_id', userId);
 
-    if (keysErr) {
+    if (passkeysError) {
       console.error('[challenge-init] passkeys read error:', {
-        message: keysErr.message,
-        code: keysErr.code,
-        details: keysErr.details,
-        hint: keysErr.hint,
+        message: passkeysError.message,
+        code: passkeysError.code,
+        details: passkeysError.details,
+        hint: passkeysError.hint,
       });
       return NextResponse.json(
-        { success: false, errorKey: 'error.server_internal_crash' },
+        { success: false, errorKey: 'error.passkeys_read_failed' },
         { status: 500 },
       );
     }
@@ -169,7 +168,7 @@ export async function POST(request: Request) {
     const passkeyRows = (dbKeys ?? []) as DbPasskeyRow[];
     const hasKeys = passkeyRows.length > 0;
 
-    // ── 6. Generate WebAuthn options ──────────────────────────────────────────
+    // ── Generate WebAuthn options ──────────────────────────────────────────
     const expectedRPID = process.env.WEBAUTHN_RP_ID ?? 'localhost';
     const rpName = process.env.WEBAUTHN_RP_NAME ?? 'MirioHub Co-Car';
 
@@ -207,22 +206,23 @@ export async function POST(request: Request) {
       optionsPayload = opts as unknown as Record<string, unknown>;
     }
 
-    // ── 7. Upsert challenge via admin client (bypasses RLS) ───────────────────
-    // Only overwrite if current status is 'issued' (never overwrite processing/consumed).
-    const upsertPayload = {
-      user_id: userId,
-      client_request_id: clientRequestId,
-      challenge_text: challengeText,
-      type: ceremonyType === 'registration' ? 'register' : 'login',
-      purpose: ceremonyType === 'registration' ? 'anonymous_register' : 'login',
-      status: 'issued',
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-    };
-
-    const { data: challengeRow, error: chErr } = await admin
+    // ── B. Write auth_challenges via adminClient (bypasses RLS) ───────────
+    const { data: challengeRow, error: chErr } = await adminClient
       .from('auth_challenges')
-      .upsert(upsertPayload, { onConflict: 'client_request_id' })
-      .select('id')
+      .upsert(
+        {
+          user_id: userId,
+          client_request_id: clientRequestId,
+          challenge_text: challengeText,
+          type: ceremonyType === 'registration' ? 'register' : 'login',
+          purpose:
+            ceremonyType === 'registration' ? 'anonymous_register' : 'login',
+          status: 'issued',
+          expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        },
+        { onConflict: 'client_request_id' },
+      )
+      .select()
       .single();
 
     if (chErr || !challengeRow) {
@@ -234,7 +234,7 @@ export async function POST(request: Request) {
       });
       return NextResponse.json(
         { success: false, errorKey: 'error.challenge_db_upsert_failed' },
-        { status: 400 },
+        { status: 500 },
       );
     }
 
@@ -248,26 +248,14 @@ export async function POST(request: Request) {
       ceremonyType,
     });
   } catch (err: unknown) {
-    //console.error('[challenge-init] unexpected error:', err);
-    //return NextResponse.json(
-    //  { success: false, errorKey: 'error.server_internal_crash' },
-    //  { status: 500 },
-    //);
-
     const e = err instanceof Error ? err : new Error(String(err));
-
     console.error('[challenge-init] unexpected error:', {
       name: e.name,
       message: e.message,
       stack: e.stack,
     });
-  
     return NextResponse.json(
-      {
-        success: false,
-        errorKey: 'error.server_internal_crash',
-        debugMessage: e.message,
-      },
+      { success: false, errorKey: 'error.server_internal_crash' },
       { status: 500 },
     );
   }

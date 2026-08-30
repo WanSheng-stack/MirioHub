@@ -7,6 +7,7 @@ import type { AppLocale } from "@/i18n/routing";
 import type { PostFormController } from "@/lib/post-form/usePostFormState";
 import { submitPost } from "@/lib/post-form/submitPost";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
+import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
 import { LuggageCounters } from "@/components/post-form/DeliverTravelFields";
 import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteFields";
@@ -47,6 +48,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   } = form;
   const [stage, setStage] = useState<1 | 2>(1);
   const [submitting, setSubmitting] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -74,6 +76,130 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
   const isTravel = state.category === "travel";
   const isDeliver = state.category === "deliver";
+
+  // ---------------------------------------------------------------------------
+  // Dual-channel WebAuthn submit (Channel A: verify, Channel B: shadow-draft)
+  // ---------------------------------------------------------------------------
+  async function handleBookAttemptRC4() {
+    if (isPublishing) return;
+    setIsPublishing(true);
+    setErrorKey(null);
+
+    // Idempotency anchor — generated once at the moment of intent
+    const clientRequestId = crypto.randomUUID();
+
+    try {
+      // Step 1: resolve or provision anonymous session
+      const supabase = createClient();
+      const {
+        data: { session: existingSession },
+      } = await supabase.auth.getSession();
+      let user_id = existingSession?.user?.id;
+
+      if (!user_id) {
+        const { data: anonData, error: anonErr } =
+          await supabase.auth.signInAnonymously();
+        if (anonErr || !anonData.user) throw new Error("anonymous_auth_failed");
+        user_id = anonData.user.id;
+      }
+
+      // Step 2: obtain fencing-token-protected challenge from backend
+      const challengeInitRes = await fetch("/api/auth/passkey/challenge-init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientRequestId, userId: user_id }),
+      });
+      const challengeData = (await challengeInitRes.json()) as {
+        challengeId: string;
+        challengeText: string;
+        ceremonyType: "registration" | "authentication";
+        options: Record<string, unknown>;
+        processingToken: string;
+      };
+      if (!challengeInitRes.ok) throw new Error("challenge_init_failed");
+
+      // Enrich payload with session context (Stage 2 contact fields included)
+      const enrichedPayload = {
+        ...state,
+        associated_user_id: user_id,
+        challenge_text: challengeData.challengeText,
+      };
+
+      try {
+        // Step 3: invoke biometric prompt
+        const webauthnResponse =
+          challengeData.ceremonyType === "registration"
+            ? await startRegistration({
+                optionsJSON:
+                  challengeData.options as unknown as Parameters<
+                    typeof startRegistration
+                  >[0]["optionsJSON"],
+              })
+            : await startAuthentication({
+                optionsJSON:
+                  challengeData.options as unknown as Parameters<
+                    typeof startAuthentication
+                  >[0]["optionsJSON"],
+              });
+
+        // Channel A: passkey verified → atomic post commit
+        const verifyRes = await fetch("/api/auth/passkey/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            challengeId: challengeData.challengeId,
+            response: webauthnResponse,
+            installationId: window.navigator.userAgent,
+            clientRequestId,
+            rawPostInput: enrichedPayload,
+            ceremonyType: challengeData.ceremonyType,
+            processingToken: challengeData.processingToken,
+          }),
+        });
+        const verifyResult = (await verifyRes.json()) as {
+          success: boolean;
+          errorKey?: string;
+        };
+        if (!verifyRes.ok)
+          throw new Error(verifyResult.errorKey ?? "verify_failed");
+
+        // Success → slide to Stage 2 (contact activation)
+        setStage(2);
+      } catch (webauthnErr: unknown) {
+        // Channel B: user cancelled / device unsupported → silent shadow draft
+        const recoverableNames = ["AbortError", "NotAllowedError", "NotSupportedError"];
+        const errName =
+          webauthnErr instanceof Error ? webauthnErr.name : "";
+
+        if (recoverableNames.includes(errName)) {
+          const fallbackRes = await fetch("/api/posts/shadow-draft", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clientRequestId,
+              rawPostInput: enrichedPayload,
+              fallbackReason: errName,
+            }),
+          });
+          const fallbackResult = (await fallbackRes.json()) as {
+            success: boolean;
+          };
+          if (!fallbackRes.ok || !fallbackResult.success)
+            throw new Error("shadow_draft_failed");
+
+          // Draft persisted silently → guide user to Stage 2 for activation
+          setStage(2);
+        } else {
+          // Hard crypto mismatch — surface error inline
+          setErrorKey("error.crypto_invalid_signature");
+        }
+      }
+    } catch {
+      setErrorKey("error.server_internal_crash");
+    } finally {
+      setIsPublishing(false);
+    }
+  }
 
   async function onPublish() {
     setErrorKey(null);
@@ -513,10 +639,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             {stage === 1 ? (
               <button
                 type="button"
-                onClick={() => setStage(2)}
-                className="ml-auto rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white"
+                disabled={isPublishing}
+                onClick={() => void handleBookAttemptRC4()}
+                className="ml-auto rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
               >
-                {t("ui.next_step")}
+                {isPublishing ? t("publish.submitting") : t("ui.next_step")}
               </button>
             ) : (
               <button

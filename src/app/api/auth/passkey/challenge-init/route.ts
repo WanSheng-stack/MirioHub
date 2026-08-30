@@ -248,9 +248,26 @@ export async function POST(request: Request) {
       ceremonyType,
     });
   } catch (err: unknown) {
-    console.error('[challenge-init] unexpected error:', err);
+    //console.error('[challenge-init] unexpected error:', err);
+    //return NextResponse.json(
+    //  { success: false, errorKey: 'error.server_internal_crash' },
+    //  { status: 500 },
+    //);
+
+    const e = err instanceof Error ? err : new Error(String(err));
+
+    console.error('[challenge-init] unexpected error:', {
+      name: e.name,
+      message: e.message,
+      stack: e.stack,
+    });
+  
     return NextResponse.json(
-      { success: false, errorKey: 'error.server_internal_crash' },
+      {
+        success: false,
+        errorKey: 'error.server_internal_crash',
+        debugMessage: e.message,
+      },
       { status: 500 },
     );
   }

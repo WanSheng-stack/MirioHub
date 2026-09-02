@@ -127,6 +127,7 @@
     "invalid_kms": "里程数据无效，无法计算顺路度。",
     "low_match_filtered": "顺路度过低，已自动过滤。",
     "email_required": "请填写有效邮箱。",
+    "authentication_required": "请先登录后再发起预约。",
     "server_price_calculation_failed": "服务器重算行驶里程与顺路费失败，请检查路线是否合规",
     "invalid_or_consumed_challenge": "安全锁验证挑战码超时或已被使用，请重试",
     "crypto_handshake_failed": "设备生物硬件锁（指纹/刷脸）密钥交换失败",

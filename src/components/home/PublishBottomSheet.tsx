@@ -89,25 +89,15 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     const clientRequestId = crypto.randomUUID();
 
     try {
-      // Step 1: resolve or provision anonymous session
-      const supabase = createClient();
-      const {
-        data: { session: existingSession },
-      } = await supabase.auth.getSession();
-      let user_id = existingSession?.user?.id;
-
-      if (!user_id) {
-        const { data: anonData, error: anonErr } =
-          await supabase.auth.signInAnonymously();
-        if (anonErr || !anonData.user) throw new Error("anonymous_auth_failed");
-        user_id = anonData.user.id;
-      }
-
-      // Step 2: obtain fencing-token-protected challenge from backend
+      // Step 1: obtain fencing-token-protected challenge from backend.
+      // challenge-init reads auth.uid() server-side from the session cookie —
+      // we deliberately do NOT call signInAnonymously() here because doing so
+      // creates a new Supabase auth user (and triggers a profile insert) on
+      // every button press, even if the user never completes the Passkey flow.
       const challengeInitRes = await fetch("/api/auth/passkey/challenge-init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientRequestId, userId: user_id }),
+        body: JSON.stringify({ clientRequestId }),
       });
       const challengeData = (await challengeInitRes.json()) as {
         challengeId: string;
@@ -116,17 +106,23 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         options: Record<string, unknown>;
         processingToken: string;
       };
-      if (!challengeInitRes.ok) throw new Error("challenge_init_failed");
+      if (!challengeInitRes.ok) {
+        // 401 means no session — user needs to sign in first
+        if (challengeInitRes.status === 401) {
+          setErrorKey("authentication_required");
+          return;
+        }
+        throw new Error("challenge_init_failed");
+      }
 
       // Enrich payload with session context (Stage 2 contact fields included)
       const enrichedPayload = {
         ...state,
-        associated_user_id: user_id,
         challenge_text: challengeData.challengeText,
       };
 
       try {
-        // Step 3: invoke biometric prompt
+        // Step 2: invoke biometric prompt
         const webauthnResponse =
           challengeData.ceremonyType === "registration"
             ? await startRegistration({
@@ -166,33 +162,20 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         // Success → slide to Stage 2 (contact activation)
         setStage(2);
       } catch (webauthnErr: unknown) {
-        // Channel B: user cancelled / device unsupported → silent shadow draft
-        const recoverableNames = ["AbortError", "NotAllowedError", "NotSupportedError"];
+        // User cancelled or device doesn't support Passkey.
+        // This is a normal user action — stop silently, do NOT call shadow-draft,
+        // do NOT create any user/profile, do NOT show a server error.
+        const cancelNames = ["AbortError", "NotAllowedError", "NotSupportedError"];
         const errName =
           webauthnErr instanceof Error ? webauthnErr.name : "";
 
-        if (recoverableNames.includes(errName)) {
-          const fallbackRes = await fetch("/api/posts/shadow-draft", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientRequestId,
-              rawPostInput: enrichedPayload,
-              fallbackReason: errName,
-            }),
-          });
-          const fallbackResult = (await fallbackRes.json()) as {
-            success: boolean;
-          };
-          if (!fallbackRes.ok || !fallbackResult.success)
-            throw new Error("shadow_draft_failed");
-
-          // Draft persisted silently → guide user to Stage 2 for activation
-          setStage(2);
-        } else {
-          // Hard crypto mismatch — surface error inline
-          setErrorKey("crypto_invalid_signature");
+        if (cancelNames.includes(errName)) {
+          // Silently swallow the cancellation — user can try again
+          return;
         }
+
+        // Hard crypto mismatch — surface error inline
+        setErrorKey("crypto_invalid_signature");
       }
     } catch {
       setErrorKey("server_internal_crash");

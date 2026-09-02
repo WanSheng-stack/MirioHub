@@ -127,6 +127,7 @@
     "invalid_kms": "Nevazeci podaci o kilometrazi.",
     "low_match_filtered": "Previse nizak usputni odnos — filtrirano.",
     "email_required": "Unesite ispravan email.",
+    "authentication_required": "Prijavite se pre zakazivanja.",
     "server_price_calculation_failed": "Greška pri proračunu kilometraže i cene na serveru, proverite rutu",
     "invalid_or_consumed_challenge": "Sigurnosni kod za verifikaciju je istekao ili je već iskorišćen, pokušajte ponovo",
     "crypto_handshake_failed": "Neuspešna razmena ključeva sa biometrijskim modulom uređaja",

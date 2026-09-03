@@ -208,7 +208,20 @@
     "sendVerification": "Pošaljite link za verifikaciju",
     "emailVerificationSent": "Link je poslat — proverite inbox",
     "draftActivated": "Vaš oglas je sada aktivan!",
-    "draftActivatedCount": "{count} oglas(a) je objavljen"
+    "draftActivatedCount": "{count} oglas(a) je objavljen",
+    "identity": {
+      "post_published_after_verification": "Identitet potvrđen — vaš oglas je objavljen!",
+      "view_post": "Pogledaj oglas"
+    }
+  },
+  "identity": {
+    "complete_to_publish": "Potvrdite identitet za objavu",
+    "draft_saved_not_published": "Vaš oglas je sačuvan. Izaberite jednu od opcija ispod da biste potvrdili identitet — isti oglas će biti objavljen, bez duplikata.",
+    "retry_passkey": "Pokušajte ponovo s Passkey",
+    "publish_with_google": "Objavite putem Google",
+    "publish_with_email": "Pošaljite link za potvrdu emaila",
+    "phone_not_identity_verification": "Broj telefona služi za kontakt — nije metoda verifikacije identiteta i neće objaviti oglas.",
+    "email_confirmation_sent": "Link za potvrdu je poslat — otvorite inbox i kliknite link da biste objavili oglas."
   },
   "hall": {
     "title": "Usputna pomoć (grad i međugrad)",

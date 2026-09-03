@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
@@ -158,6 +159,9 @@ export default function ProfilePage() {
   const [identityLoading, setIdentityLoading] = useState(false);
   const [emailForBinding, setEmailForBinding] = useState("");
   const [activatedCount, setActivatedCount] = useState(0);
+  // postId of a draft that was activated after Google/Email identity verification.
+  // Populated from the server response (not from client URL).
+  const [activatedPostId, setActivatedPostId] = useState<string | null>(null);
 
   const bankRef = useMemo(
     () => profile?.bank_reference_code ?? (user ? bankRefFromUuid(user.id) : "------"),
@@ -189,8 +193,9 @@ export default function ProfilePage() {
       const params = new URLSearchParams(window.location.search);
       const cbError = params.get("error");
       const linked = params.get("identity_linked");
-      // activation_nonce is emitted by linkGoogle / bindEmail only when a
-      // Draft activation flow is in progress (context set by BottomSheet).
+      // activation_nonce is emitted ONLY by Draft Identity Completion
+      // (linkGoogleForDraftActivation / bindEmailForDraftActivation).
+      // Account-only linkGoogle / bindEmail never attach this param.
       const urlNonce = params.get("activation_nonce");
 
       if (cbError === "account_identity_continuity_broken") {
@@ -225,20 +230,32 @@ export default function ProfilePage() {
                 };
                 if (res.ok && json.ok) {
                   // CASE A/B: success or already-active → clear context
-                  if (json.isActive) setActivatedCount(1);
+                  if (json.isActive) {
+                    setActivatedCount(1);
+                    // Store server-returned postId for the "View post" link.
+                    // Never trust URL params for this — only the server response.
+                    if (json.postId) setActivatedPostId(json.postId);
+                  }
                   clearCtx = true;
-                } else if (res.status === 404 || res.status === 403) {
-                  // CASE C/E: post not found or ownership failure (permanent)
-                  clearCtx = true;
-                } else if (res.status === 403 && json.errorKey === "error.identity_verification_required") {
-                  // CASE D: identity not yet verified server-side — preserve
-                  // context until TTL so user can retry after verification
+                } else if (
+                  res.status === 403 &&
+                  json.errorKey === "error.identity_verification_required"
+                ) {
+                  // CASE D: identity not yet verified server-side — this branch
+                  // MUST come before the generic 403 branch below, otherwise the
+                  // generic branch would always catch it first (branch-order bug).
+                  // Preserve context until TTL so user can retry after verification.
                   clearCtx = false;
-                } else if (res.status === 400) {
-                  // Malformed request (shouldn't happen) — clear to avoid loop
+                } else if (res.status === 403 || res.status === 404) {
+                  // Permanent ownership / target failure
                   clearCtx = true;
+                } else if (res.status === 400) {
+                  // Malformed request — clear to avoid loop
+                  clearCtx = true;
+                } else {
+                  // 5xx / unexpected temporary failure → preserve until TTL
+                  clearCtx = false;
                 }
-                // HTTP 5xx / network errors: clearCtx stays false → preserve
               } catch {
                 // Network failure → preserve context until TTL (user can retry)
                 clearCtx = false;
@@ -477,6 +494,27 @@ export default function ProfilePage() {
 
   return (
     <>
+    {/* Published-after-verification banner lives outside IdentitySection.
+        After Google linkIdentity the user is no longer anonymous, and
+        IdentitySection may return null — the banner must still appear. */}
+    {activatedCount > 0 ? (
+      <div className="mx-auto mb-4 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2">
+        <p className="text-sm font-medium text-emerald-800">
+          {t("identity.post_published_after_verification")}
+        </p>
+        {activatedPostId ? (
+          <Link
+            href={`/posts/${activatedPostId}`}
+            className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 underline underline-offset-2 hover:text-emerald-900"
+          >
+            {t("identity.view_post")} →
+          </Link>
+        ) : null}
+      </div>
+    ) : null}
+    {identityMsg ? (
+      <p className="mx-auto mb-3 max-w-lg text-sm text-red-600">{identityMsg}</p>
+    ) : null}
     <form className="mx-auto max-w-lg space-y-4" onSubmit={(e) => void save(e)}>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t("title")}</h1>
@@ -551,16 +589,10 @@ export default function ProfilePage() {
     <IdentitySection
       user={user}
       profile={profile}
-      locale={locale}
       t={t}
-      tErr={tErr}
-      identityMsg={identityMsg}
-      setIdentityMsg={setIdentityMsg}
       identityLoading={identityLoading}
-      setIdentityLoading={setIdentityLoading}
       emailForBinding={emailForBinding}
       setEmailForBinding={setEmailForBinding}
-      activatedCount={activatedCount}
       linkGoogle={linkGoogle}
       bindEmail={bindEmail}
     />
@@ -578,16 +610,10 @@ type TFn = ReturnType<typeof useTranslations>;
 interface IdentitySectionProps {
   user: User;
   profile: (Profile & { has_passkey?: boolean; is_bank_verified?: boolean; bank_reference_code?: string | null }) | null;
-  locale: string;
   t: TFn;
-  tErr: TFn;
-  identityMsg: string | null;
-  setIdentityMsg: (v: string | null) => void;
   identityLoading: boolean;
-  setIdentityLoading: (v: boolean) => void;
   emailForBinding: string;
   setEmailForBinding: (v: string) => void;
-  activatedCount: number;
   linkGoogle: () => Promise<void>;
   bindEmail: () => Promise<void>;
 }
@@ -595,16 +621,10 @@ interface IdentitySectionProps {
 function IdentitySection({
   user,
   profile,
-  locale: _locale,
   t,
-  tErr: _tErr,
-  identityMsg,
-  setIdentityMsg: _setIdentityMsg,
   identityLoading,
-  setIdentityLoading: _setIdentityLoading,
   emailForBinding,
   setEmailForBinding,
-  activatedCount,
   linkGoogle,
   bindEmail,
 }: IdentitySectionProps) {
@@ -621,18 +641,6 @@ function IdentitySection({
     <section className="mx-auto mt-4 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 space-y-3">
       <h2 className="text-sm font-semibold text-emerald-900">{t("identityTitle")}</h2>
       <p className="text-xs text-emerald-700">{t("identityHint")}</p>
-
-      {/* Activation success banner */}
-      {activatedCount > 0 && (
-        <p className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-medium text-emerald-800">
-          {t("draftActivatedCount", { count: activatedCount })}
-        </p>
-      )}
-
-      {/* Identity message (error or confirmation) */}
-      {identityMsg && (
-        <p className="text-xs text-red-600">{identityMsg}</p>
-      )}
 
       {/* ── Google status / link button ──────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3">

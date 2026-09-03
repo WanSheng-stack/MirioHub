@@ -11,6 +11,7 @@ import { startRegistration, startAuthentication } from "@simplewebauthn/browser"
 import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
 import { LuggageCounters } from "@/components/post-form/DeliverTravelFields";
 import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteFields";
+import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompletion";
 import type { TransportMode } from "@/lib/types";
 
 const inputClass =
@@ -74,6 +75,18 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // postId from Channel A (verify) or Channel B (shadow-draft).
   // When set, Stage 2 updates this existing post instead of inserting a new one.
   const [pendingPostId, setPendingPostId] = useState<string | null>(null);
+  // Whether the pending post was committed as active (Channel A) or saved as
+  // draft (Channel B).  Controls which UI Stage 2 shows.
+  // Client-only hint — never used to write to the DB.
+  type PendingPostStatus = "active" | "draft" | null;
+  const [pendingPostStatus, setPendingPostStatus] =
+    useState<PendingPostStatus>(null);
+  // State for the Draft Identity Completion panel inside Stage 2
+  const [draftEmailForActivation, setDraftEmailForActivation] = useState("");
+  const [draftActivationMsg, setDraftActivationMsg] = useState<string | null>(null);
+  // true = draftActivationMsg is informational (e.g. "email sent"), false = error
+  const [draftActivationIsInfo, setDraftActivationIsInfo] = useState(false);
+  const [draftActivating, setDraftActivating] = useState(false);
 
   // Publish-intent anchor — ONE uuid per logical post, persists across:
   //   Passkey cancel, Passkey retry, Channel B fallback, sheet close/reopen.
@@ -231,6 +244,10 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           // Save the draft postId so Stage 2 updates the SAME post
           const draftPostId = fallbackResult.postId ?? null;
           setPendingPostId(draftPostId);
+          // Mark as draft so Stage 2 shows the identity completion UI
+          setPendingPostStatus("draft");
+          setDraftActivationMsg(null);
+          setDraftActivationIsInfo(false);
 
           // Write a structured Identity Activation Context to sessionStorage.
           // The Profile page reads this ONLY when the URL also carries the
@@ -292,10 +309,14 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         return;
       }
 
-      // Channel A success: post committed as active via commit_phase3.
-      // Clear the activation context so the Profile page cannot attempt a
-      // second activation from a stale context.
+      // Channel A success (includes Passkey retry from Stage 2):
+      // post committed as active via commit_phase3 CASE C → UPDATE same draft.
       setPendingPostId(verifyResult.postId ?? null);
+      // Mark as active — Stage 2 will show the contact form, not the identity UI
+      setPendingPostStatus("active");
+      setDraftActivationMsg(null);
+      setDraftActivationIsInfo(false);
+      // Clear activation context — no identity-upgrade path needed
       sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
       sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
       setStage(2);
@@ -303,6 +324,136 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       setErrorKey("server_internal_crash");
     } finally {
       setIsPublishing(false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Draft Identity Completion helpers
+  // Called only from DraftIdentityCompletion — NOT from Account-only UI.
+  // Both functions carry activation_nonce in the OAuth/email redirectTo, which
+  // is the second required signal for the Profile page activation gate.
+  // ---------------------------------------------------------------------------
+
+  /** Validate the current IdentityActivationContext for draft activation.
+   *  Returns the context if all checks pass, otherwise sets draftActivationMsg
+   *  and returns null (caller should abort OAuth/email flow). */
+  function validateContextForDraftActivation(): IdentityActivationContext | null {
+    setDraftActivationIsInfo(false); // errors below are always error-type
+    const raw = sessionStorage.getItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+    if (!raw) {
+      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
+      return null;
+    }
+    let ctx: IdentityActivationContext;
+    try {
+      ctx = JSON.parse(raw) as IdentityActivationContext;
+    } catch {
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
+      return null;
+    }
+    // Structural validation
+    if (
+      ctx.version !== 1 ||
+      ctx.purpose !== "draft_activation" ||
+      typeof ctx.postId !== "string" || !ctx.postId ||
+      typeof ctx.nonce !== "string" || !ctx.nonce ||
+      typeof ctx.createdAt !== "number" ||
+      typeof ctx.expiresAt !== "number" ||
+      ctx.expiresAt <= ctx.createdAt
+    ) {
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
+      return null;
+    }
+    // Context.postId must match the current pendingPostId (mismatch = stale context)
+    if (ctx.postId !== pendingPostId) {
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
+      return null;
+    }
+    // TTL check
+    if (Date.now() > ctx.expiresAt) {
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      setDraftActivationMsg(t("error.identity_activation_context_expired"));
+      return null;
+    }
+    return ctx;
+  }
+
+  /** Link Google for Draft activation.
+   *  Uses linkIdentity (not signInWithOAuth) to preserve UUID-A.
+   *  Carries activation_nonce in redirectTo — Profile callback gate uses it. */
+  async function linkGoogleForDraftActivation() {
+    setDraftActivating(true);
+    setDraftActivationMsg(null);
+    try {
+      const ctx = validateContextForDraftActivation();
+      if (!ctx) return; // message already set
+
+      const profileParams = new URLSearchParams({
+        identity_linked: "google",
+        activation_nonce: ctx.nonce,
+      });
+      const callbackNext = encodeURIComponent(
+        `/${locale}/profile?${profileParams.toString()}`,
+      );
+      const supabase = createClient();
+      const { error } = await supabase.auth.linkIdentity({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${callbackNext}`,
+        },
+      });
+      if (error) {
+        setDraftActivationMsg(error.message);
+        setDraftActivationIsInfo(false);
+      }
+      // On success: browser redirects to Google → callback → profile
+    } finally {
+      setDraftActivating(false);
+    }
+  }
+
+  /** Send email confirmation link for Draft activation.
+   *  Carries activation_nonce in emailRedirectTo — Profile callback gate uses it.
+   *  Post is NOT activated until the user clicks the confirmation link. */
+  async function bindEmailForDraftActivation() {
+    const email = draftEmailForActivation.trim();
+    if (!email.includes("@")) {
+      setDraftActivationMsg(t("error.email_required"));
+      return;
+    }
+    setDraftActivating(true);
+    setDraftActivationMsg(null);
+    try {
+      const ctx = validateContextForDraftActivation();
+      if (!ctx) return; // message already set
+
+      const profileParams = new URLSearchParams({
+        identity_linked: "email",
+        activation_nonce: ctx.nonce,
+      });
+      const callbackNext = encodeURIComponent(
+        `/${locale}/profile?${profileParams.toString()}`,
+      );
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser(
+        { email },
+        {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${callbackNext}`,
+        },
+      );
+      if (error) {
+        setDraftActivationMsg(error.message);
+        setDraftActivationIsInfo(false);
+      } else {
+        // Email sent — post remains DRAFT until the user clicks the confirmation link
+        setDraftActivationMsg(t("identity.email_confirmation_sent"));
+        setDraftActivationIsInfo(true);
+      }
+    } finally {
+      setDraftActivating(false);
     }
   }
 
@@ -632,6 +783,21 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             {/* Stage 2 */}
             <div className="h-auto max-h-[calc(88vh-9rem)] w-1/2 overflow-y-auto px-5 pb-28">
               <div className="space-y-4">
+                {/* ── Draft Identity Completion UI (Channel B only) ────────── */}
+                {pendingPostStatus === "draft" && pendingPostId && (
+                  <DraftIdentityCompletion
+                    postId={pendingPostId}
+                    isRetrying={isPublishing}
+                    onRetryPasskey={handleBookAttemptRC4}
+                    onLinkGoogle={() => void linkGoogleForDraftActivation()}
+                    emailValue={draftEmailForActivation}
+                    onEmailChange={setDraftEmailForActivation}
+                    onSendEmail={() => void bindEmailForDraftActivation()}
+                    statusMsg={draftActivationMsg}
+                    statusIsInfo={draftActivationIsInfo}
+                    activating={draftActivating}
+                  />
+                )}
                 {state.post_type === "demand" ? (
                   <>
                     <label className="block text-sm font-medium">

@@ -208,7 +208,20 @@
     "sendVerification": "Send verification link",
     "emailVerificationSent": "Verification link sent — check your inbox",
     "draftActivated": "Your pending post is now live!",
-    "draftActivatedCount": "{count} pending post(s) published"
+    "draftActivatedCount": "{count} pending post(s) published",
+    "identity": {
+      "post_published_after_verification": "Identity verified — your post is now live!",
+      "view_post": "View your post"
+    }
+  },
+  "identity": {
+    "complete_to_publish": "Complete identity verification to publish",
+    "draft_saved_not_published": "Your post has been saved. Choose one of the options below to verify your identity — the same post will be published once verified, no duplicate will be created.",
+    "retry_passkey": "Try Passkey again",
+    "publish_with_google": "Publish with Google",
+    "publish_with_email": "Send email confirmation link",
+    "phone_not_identity_verification": "Your phone number is used so others can contact you — it is not an identity verification method and will not publish your post.",
+    "email_confirmation_sent": "Confirmation link sent — open your inbox and click the link to publish your post."
   },
   "hall": {
     "title": "Mutual-aid hall (city & intercity)",

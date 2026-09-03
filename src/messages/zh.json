@@ -208,7 +208,20 @@
     "sendVerification": "发送验证链接",
     "emailVerificationSent": "验证链接已发送，请查收邮件",
     "draftActivated": "您的待发布帖子已上线！",
-    "draftActivatedCount": "{count} 条待发布帖子已发布"
+    "draftActivatedCount": "{count} 条待发布帖子已发布",
+    "identity": {
+      "post_published_after_verification": "身份验证成功——您的帖子已正式发布！",
+      "view_post": "查看帖子"
+    }
+  },
+  "identity": {
+    "complete_to_publish": "完成身份验证即可发布",
+    "draft_saved_not_published": "您的帖子已安全保存。请选择以下任一方式完成身份验证——验证成功后将发布同一条帖子，不会重复创建。",
+    "retry_passkey": "再试一次 Passkey",
+    "publish_with_google": "通过 Google 完成发布",
+    "publish_with_email": "发送邮箱确认链接",
+    "phone_not_identity_verification": "手机号用于让他人联系你，不作为身份验证，填写后不会发布帖子。",
+    "email_confirmation_sent": "确认邮件已发送——请打开邮箱点击确认链接，点击后帖子将自动发布。"
   },
   "hall": {
     "title": "全能城际与同城众包互助大厅",

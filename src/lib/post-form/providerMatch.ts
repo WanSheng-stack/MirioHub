@@ -223,8 +223,8 @@ export async function runProviderMatchIntercept(
   );
   const ownCargo = overlapping.filter((p) => p.user_id === providerUserId).length;
 
-  let allUnits = currentStackedUnits + newUnits;
-  let allPassengers = currentStackedSeats + newPassengers;
+  const allUnits = currentStackedUnits + newUnits;
+  const allPassengers = currentStackedSeats + newPassengers;
 
   const decision = processProviderMatchIntercept({
     is_plate_duplicated: is_plate_duplicated,

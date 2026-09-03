@@ -267,7 +267,6 @@ export async function POST(request: Request) {
     let verified = false;
     let regInfo: Awaited<ReturnType<typeof verifyRegistrationResponse>>['registrationInfo'] =
       undefined;
-    // eslint-disable-next-line prefer-const
     let authInfo:
       | Awaited<ReturnType<typeof verifyAuthenticationResponse>>['authenticationInfo']
       | undefined = undefined;

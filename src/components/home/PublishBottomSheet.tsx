@@ -254,9 +254,12 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
     setSubmitting(true);
 
-    // ── Path A: post already created by Channel A/B — just write Stage-2 ────
+    // ── Path A: post already created by Channel A/B — write Stage-2 contact ─
+    // Channel A posts are already active; contact info is a post-publish enhancement.
+    // Channel B drafts are activated only if the Account has a verified identity;
+    // unverified phone alone does NOT activate a draft (per activation policy).
     if (pendingPostId) {
-      const res = await fetch("/api/posts/activate-draft", {
+      const res = await fetch("/api/posts/complete-contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -271,15 +274,27 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           locale,
         }),
       });
-      const result = (await res.json()) as { ok: boolean; postId?: string; errorKey?: string };
+      const result = (await res.json()) as {
+        ok: boolean;
+        postId?: string;
+        isActive?: boolean;
+        errorKey?: string;
+      };
       setSubmitting(false);
       if (!result.ok) {
         const raw = result.errorKey ?? "error.submit_failed";
         setErrorKey(raw.replace(/^error\./, ""));
         return;
       }
-      onClose();
-      router.push(`/posts/${result.postId}`);
+      if (result.isActive) {
+        // Post is live — navigate to post page
+        onClose();
+        router.push(`/posts/${result.postId}`);
+      } else {
+        // Draft saved with contact info; identity verification still needed.
+        // Close sheet — user can complete verification from their account.
+        onClose();
+      }
       return;
     }
 

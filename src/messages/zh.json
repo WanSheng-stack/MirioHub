@@ -128,6 +128,7 @@
     "low_match_filtered": "顺路度过低，已自动过滤。",
     "email_required": "请填写有效邮箱。",
     "authentication_required": "请先登录后再发起预约。",
+    "account_identity_continuity_broken": "身份关联失败——系统创建了新账户而不是关联到现有账户。请重试或联系客服。",
     "server_price_calculation_failed": "服务器重算行驶里程与顺路费失败，请检查路线是否合规",
     "invalid_or_consumed_challenge": "安全锁验证挑战码超时或已被使用，请重试",
     "crypto_handshake_failed": "设备生物硬件锁（指纹/刷脸）密钥交换失败",
@@ -190,7 +191,19 @@
     "bankVerified": "已认证",
     "bankNotVerified": "未认证",
     "recipient": "收款人",
-    "accountNumber": "账号"
+    "accountNumber": "账号",
+    "identityTitle": "身份认证",
+    "identityHint": "关联已验证身份后才能发布帖子",
+    "linkGoogle": "关联 Google 账号",
+    "googleLinked": "Google 已关联 ✓",
+    "linkingGoogle": "关联中…",
+    "bindEmail": "验证邮箱",
+    "emailVerified": "邮箱已验证 ✓",
+    "emailBindingLabel": "邮箱",
+    "sendVerification": "发送验证链接",
+    "emailVerificationSent": "验证链接已发送，请查收邮件",
+    "draftActivated": "您的待发布帖子已上线！",
+    "draftActivatedCount": "{count} 条待发布帖子已发布"
   },
   "hall": {
     "title": "全能城际与同城众包互助大厅",

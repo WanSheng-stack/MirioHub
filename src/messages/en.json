@@ -128,6 +128,7 @@
     "low_match_filtered": "Match ratio too low — filtered out.",
     "email_required": "Please enter a valid email.",
     "authentication_required": "Please sign in before making a booking.",
+    "account_identity_continuity_broken": "Identity linking failed — a new account was created instead of linking. Please try again or contact support.",
     "server_price_calculation_failed": "Route pricing re-calculation failed on server side",
     "invalid_or_consumed_challenge": "Authentication challenge expired or invalid, please try again",
     "crypto_handshake_failed": "Biometric hardware signature exchange failed",
@@ -190,7 +191,19 @@
     "bankVerified": "Verified",
     "bankNotVerified": "Not verified",
     "recipient": "Recipient",
-    "accountNumber": "Account number"
+    "accountNumber": "Account number",
+    "identityTitle": "Verified Identity",
+    "identityHint": "Link a verified identity to publish your posts",
+    "linkGoogle": "Link Google account",
+    "googleLinked": "Google linked ✓",
+    "linkingGoogle": "Linking…",
+    "bindEmail": "Verify email address",
+    "emailVerified": "Email verified ✓",
+    "emailBindingLabel": "Email",
+    "sendVerification": "Send verification link",
+    "emailVerificationSent": "Verification link sent — check your inbox",
+    "draftActivated": "Your pending post is now live!",
+    "draftActivatedCount": "{count} pending post(s) published"
   },
   "hall": {
     "title": "Mutual-aid hall (city & intercity)",

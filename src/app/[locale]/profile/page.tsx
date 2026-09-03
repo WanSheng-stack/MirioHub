@@ -54,6 +54,11 @@ export default function ProfilePage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
+  // Identity-linking state (for logged-in / anonymous users)
+  const [identityMsg, setIdentityMsg] = useState<string | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const [emailForBinding, setEmailForBinding] = useState("");
+  const [activatedCount, setActivatedCount] = useState(0);
 
   const bankRef = useMemo(
     () => profile?.bank_reference_code ?? (user ? bankRefFromUuid(user.id) : "------"),
@@ -73,7 +78,45 @@ export default function ProfilePage() {
       .eq("id", 1)
       .maybeSingle()
       .then(({ data }) => setConfig(data as SystemConfig | null));
-  }, []);
+
+    // ── Handle auth callback URL params ──────────────────────────────────────
+    // After Google linking or email verification, the callback redirects back
+    // with ?error=account_identity_continuity_broken  or  ?identity_linked=...
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const cbError = params.get("error");
+      const linked = params.get("identity_linked");
+
+      if (cbError === "account_identity_continuity_broken") {
+        setIdentityMsg(tErr("account_identity_continuity_broken"));
+      } else if (linked) {
+        // Identity was just linked — trigger draft activation
+        void (async () => {
+          try {
+            const res = await fetch("/api/posts/activate-after-identity", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            });
+            const json = (await res.json()) as { ok: boolean; activated?: string[] };
+            if (json.ok && json.activated && json.activated.length > 0) {
+              setActivatedCount(json.activated.length);
+            }
+          } catch {
+            // Activation failure is non-fatal — draft is still safe
+          }
+        })();
+      }
+
+      // Clean up URL params to avoid re-triggering on reload
+      if (cbError ?? linked) {
+        const clean = new URL(window.location.href);
+        clean.searchParams.delete("error");
+        clean.searchParams.delete("identity_linked");
+        window.history.replaceState({}, "", clean.toString());
+      }
+    }
+  }, [tErr]);
 
   async function loadProfile(id: string) {
     const supabase = createClient();
@@ -109,6 +152,48 @@ export default function ProfilePage() {
       setUser(data.user);
       void loadProfile(data.user.id);
     }
+  }
+
+  // ── Identity linking (for already-logged-in / anonymous users) ─────────────
+
+  async function linkGoogle() {
+    setIdentityMsg(null);
+    setIdentityLoading(true);
+    const supabase = createClient();
+    // linkIdentity preserves the current auth.users UUID-A.
+    // Must NOT use signInWithOAuth here — that may create a new UUID-B.
+    const callbackNext = encodeURIComponent(`/${locale}/profile?identity_linked=google`);
+    const { error } = await supabase.auth.linkIdentity({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=${callbackNext}`,
+      },
+    });
+    if (error) {
+      setIdentityMsg(error.message);
+      setIdentityLoading(false);
+    }
+    // On success: Supabase redirects to Google → callback → profile page
+  }
+
+  async function bindEmail() {
+    if (!emailForBinding.trim()) return;
+    setIdentityMsg(null);
+    setIdentityLoading(true);
+    const supabase = createClient();
+    // updateUser({ email }) sends a confirmation email.
+    // The anonymous user's UUID is preserved — no new auth.users row is created.
+    const callbackNext = encodeURIComponent(`/${locale}/profile?identity_linked=email`);
+    const { error } = await supabase.auth.updateUser(
+      { email: emailForBinding.trim() },
+      { emailRedirectTo: `${window.location.origin}/auth/callback?next=${callbackNext}` },
+    );
+    if (error) {
+      setIdentityMsg(error.message);
+    } else {
+      setIdentityMsg(t("emailVerificationSent"));
+    }
+    setIdentityLoading(false);
   }
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
@@ -217,6 +302,7 @@ export default function ProfilePage() {
   }
 
   return (
+    <>
     <form className="mx-auto max-w-lg space-y-4" onSubmit={(e) => void save(e)}>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t("title")}</h1>
@@ -288,5 +374,137 @@ export default function ProfilePage() {
         {t("save")}
       </button>
     </form>
+    <IdentitySection
+      user={user}
+      profile={profile}
+      locale={locale}
+      t={t}
+      tErr={tErr}
+      identityMsg={identityMsg}
+      setIdentityMsg={setIdentityMsg}
+      identityLoading={identityLoading}
+      setIdentityLoading={setIdentityLoading}
+      emailForBinding={emailForBinding}
+      setEmailForBinding={setEmailForBinding}
+      activatedCount={activatedCount}
+      linkGoogle={linkGoogle}
+      bindEmail={bindEmail}
+    />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IdentitySection — shown below the profile form for logged-in users
+// Handles linkIdentity (Google) and updateUser (Email) for anonymous accounts
+// ---------------------------------------------------------------------------
+
+type TFn = ReturnType<typeof useTranslations>;
+
+interface IdentitySectionProps {
+  user: User;
+  profile: (Profile & { has_passkey?: boolean; is_bank_verified?: boolean; bank_reference_code?: string | null }) | null;
+  locale: string;
+  t: TFn;
+  tErr: TFn;
+  identityMsg: string | null;
+  setIdentityMsg: (v: string | null) => void;
+  identityLoading: boolean;
+  setIdentityLoading: (v: boolean) => void;
+  emailForBinding: string;
+  setEmailForBinding: (v: string) => void;
+  activatedCount: number;
+  linkGoogle: () => Promise<void>;
+  bindEmail: () => Promise<void>;
+}
+
+function IdentitySection({
+  user,
+  profile,
+  locale: _locale,
+  t,
+  tErr: _tErr,
+  identityMsg,
+  setIdentityMsg: _setIdentityMsg,
+  identityLoading,
+  setIdentityLoading: _setIdentityLoading,
+  emailForBinding,
+  setEmailForBinding,
+  activatedCount,
+  linkGoogle,
+  bindEmail,
+}: IdentitySectionProps) {
+  const hasPasskey = Boolean(profile?.has_passkey);
+  const hasGoogle = user.identities?.some((i) => i.provider === "google") ?? false;
+  const hasVerifiedEmail = Boolean(user.email_confirmed_at);
+  const isAnonymous = user.is_anonymous === true;
+
+  // If the user already has all identities or is not anonymous, show minimal status
+  if (!isAnonymous && !hasPasskey) return null; // non-anonymous without passkey — signed-in via Google or email directly
+  if (hasPasskey && hasGoogle && hasVerifiedEmail) return null; // fully verified
+
+  return (
+    <section className="mx-auto mt-4 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 space-y-3">
+      <h2 className="text-sm font-semibold text-emerald-900">{t("identityTitle")}</h2>
+      <p className="text-xs text-emerald-700">{t("identityHint")}</p>
+
+      {/* Activation success banner */}
+      {activatedCount > 0 && (
+        <p className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-medium text-emerald-800">
+          {t("draftActivatedCount", { count: activatedCount })}
+        </p>
+      )}
+
+      {/* Identity message (error or confirmation) */}
+      {identityMsg && (
+        <p className="text-xs text-red-600">{identityMsg}</p>
+      )}
+
+      {/* ── Google status / link button ──────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-zinc-700">Google</span>
+        {hasGoogle ? (
+          <span className="text-sm font-medium text-emerald-700">{t("googleLinked")}</span>
+        ) : (
+          <button
+            type="button"
+            disabled={identityLoading}
+            onClick={() => void linkGoogle()}
+            className="flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:opacity-50"
+          >
+            {identityLoading ? t("linkingGoogle") : t("linkGoogle")}
+          </button>
+        )}
+      </div>
+
+      {/* ── Email status / bind form ─────────────────────────────────────── */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-zinc-700">{t("emailBindingLabel")}</span>
+          {hasVerifiedEmail && (
+            <span className="text-sm font-medium text-emerald-700">{t("emailVerified")}</span>
+          )}
+        </div>
+        {!hasVerifiedEmail && (
+          <div className="flex gap-2">
+            <input
+              type="email"
+              className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
+              placeholder={t("bindEmail")}
+              value={emailForBinding}
+              onChange={(e) => setEmailForBinding(e.target.value)}
+            />
+            <button
+              type="button"
+              disabled={identityLoading || !emailForBinding.trim()}
+              onClick={() => void bindEmail()}
+              className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-800 disabled:opacity-50"
+            >
+              {t("sendVerification")}
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

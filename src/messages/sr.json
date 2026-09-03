@@ -128,6 +128,7 @@
     "low_match_filtered": "Previse nizak usputni odnos — filtrirano.",
     "email_required": "Unesite ispravan email.",
     "authentication_required": "Prijavite se pre zakazivanja.",
+    "account_identity_continuity_broken": "Povezivanje identiteta nije uspelo — kreiran je novi nalog umesto povezivanja. Pokušajte ponovo ili kontaktirajte podršku.",
     "server_price_calculation_failed": "Greška pri proračunu kilometraže i cene na serveru, proverite rutu",
     "invalid_or_consumed_challenge": "Sigurnosni kod za verifikaciju je istekao ili je već iskorišćen, pokušajte ponovo",
     "crypto_handshake_failed": "Neuspešna razmena ključeva sa biometrijskim modulom uređaja",
@@ -190,7 +191,19 @@
     "bankVerified": "Verifikovano",
     "bankNotVerified": "Nije verifikovano",
     "recipient": "Primalac",
-    "accountNumber": "Broj računa"
+    "accountNumber": "Broj računa",
+    "identityTitle": "Verifikovani identitet",
+    "identityHint": "Povežite verifikovani identitet da biste objavili oglase",
+    "linkGoogle": "Povežite Google nalog",
+    "googleLinked": "Google je povezan ✓",
+    "linkingGoogle": "Povezivanje…",
+    "bindEmail": "Verifikujte email adresu",
+    "emailVerified": "Email je verifikovan ✓",
+    "emailBindingLabel": "Email",
+    "sendVerification": "Pošaljite link za verifikaciju",
+    "emailVerificationSent": "Link je poslat — proverite inbox",
+    "draftActivated": "Vaš oglas je sada aktivan!",
+    "draftActivatedCount": "{count} oglas(a) je objavljen"
   },
   "hall": {
     "title": "Usputna pomoć (grad i međugrad)",

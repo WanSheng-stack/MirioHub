@@ -89,11 +89,28 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     const clientRequestId = crypto.randomUUID();
 
     try {
-      // Step 1: obtain fencing-token-protected challenge from backend.
-      // challenge-init reads auth.uid() server-side from the session cookie —
-      // we deliberately do NOT call signInAnonymously() here because doing so
-      // creates a new Supabase auth user (and triggers a profile insert) on
-      // every button press, even if the user never completes the Passkey flow.
+      // Step 1: resolve or provision anonymous session.
+      // Key invariant: signInAnonymously() is called AT MOST ONCE per browser.
+      // If a session already exists (anonymous or real), we reuse it — never
+      // create a second user. This means the profile trigger fires only once.
+      const supabase = createClient();
+      const {
+        data: { session: existingSession },
+      } = await supabase.auth.getSession();
+      let user_id = existingSession?.user?.id;
+
+      if (!user_id) {
+        // First Publish intent with no session: create one anonymous auth user.
+        // Subsequent clicks reuse the cookie session — this branch won't run again.
+        const { data: anonData, error: anonErr } =
+          await supabase.auth.signInAnonymously();
+        if (anonErr || !anonData.user) throw new Error("anonymous_auth_failed");
+        user_id = anonData.user.id;
+      }
+
+      // Step 2: obtain fencing-token-protected challenge from backend.
+      // challenge-init reads auth.uid() server-side from the session cookie set
+      // by the signInAnonymously() / existing session above.
       const challengeInitRes = await fetch("/api/auth/passkey/challenge-init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -106,23 +123,17 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         options: Record<string, unknown>;
         processingToken: string;
       };
-      if (!challengeInitRes.ok) {
-        // 401 means no session — user needs to sign in first
-        if (challengeInitRes.status === 401) {
-          setErrorKey("authentication_required");
-          return;
-        }
-        throw new Error("challenge_init_failed");
-      }
+      if (!challengeInitRes.ok) throw new Error("challenge_init_failed");
 
-      // Enrich payload with session context (Stage 2 contact fields included)
+      // Enrich payload with all business fields for both channels
       const enrichedPayload = {
         ...state,
+        associated_user_id: user_id,
         challenge_text: challengeData.challengeText,
       };
 
       try {
-        // Step 2: invoke biometric prompt
+        // Step 3: invoke biometric prompt
         const webauthnResponse =
           challengeData.ceremonyType === "registration"
             ? await startRegistration({
@@ -159,22 +170,39 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         if (!verifyRes.ok)
           throw new Error(verifyResult.errorKey ?? "verify_failed");
 
-        // Success → slide to Stage 2 (contact activation)
+        // Channel A success → slide to Stage 2 (contact activation)
         setStage(2);
       } catch (webauthnErr: unknown) {
-        // User cancelled or device doesn't support Passkey.
-        // This is a normal user action — stop silently, do NOT call shadow-draft,
-        // do NOT create any user/profile, do NOT show a server error.
+        // Recoverable cancel: user dismissed the Passkey prompt or device
+        // doesn't support it. Use the already-established anonymous session
+        // to save a shadow draft — no new user is created here.
         const cancelNames = ["AbortError", "NotAllowedError", "NotSupportedError"];
         const errName =
           webauthnErr instanceof Error ? webauthnErr.name : "";
 
         if (cancelNames.includes(errName)) {
-          // Silently swallow the cancellation — user can try again
+          // Channel B: silent shadow draft using existing session cookie
+          const fallbackRes = await fetch("/api/posts/shadow-draft", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clientRequestId,
+              rawPostInput: enrichedPayload,
+              fallbackReason: errName,
+            }),
+          });
+          const fallbackResult = (await fallbackRes.json()) as {
+            success: boolean;
+          };
+          if (!fallbackRes.ok || !fallbackResult.success)
+            throw new Error("shadow_draft_failed");
+
+          // Draft saved → guide user to Stage 2 for progressive activation
+          setStage(2);
           return;
         }
 
-        // Hard crypto mismatch — surface error inline
+        // Hard crypto / security error — surface inline
         setErrorKey("crypto_invalid_signature");
       }
     } catch {

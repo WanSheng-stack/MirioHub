@@ -96,7 +96,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Server-side route distance (best-effort; fall back to 0 if unavailable)
+    // Server-side route distance (best-effort; fall back to 0 on error)
     const waypointsArray: WaypointItem[] = Array.isArray(rawPostInput.waypoints)
       ? (rawPostInput.waypoints as WaypointItem[])
       : [];
@@ -117,8 +117,6 @@ export async function POST(request: Request) {
     }
 
     // Idempotent shadow-draft commit via RPC.
-    // If the RPC does not yet exist in this environment, return a graceful
-    // accepted response so the UI does not surface a server error to the user.
     const { data: txData, error: txErr } = await supabase.rpc(
       'create_shadow_draft_idempotent_v86',
       {
@@ -132,19 +130,21 @@ export async function POST(request: Request) {
     );
 
     if (txErr) {
-      // RPC may not be deployed yet — log server-side but don't 500 the client.
       console.error('[shadow-draft] RPC error:', {
         message: txErr.message,
         code: txErr.code,
         details: txErr.details,
         hint: txErr.hint,
       });
-      // Return a soft-accepted response so the UI flow continues cleanly.
-      return NextResponse.json({ success: true, postId: null, shadowUserId: current_uid });
+      return NextResponse.json(
+        { success: false, errorKey: 'error.shadow_draft_transaction_failed' },
+        { status: 500 },
+      );
     }
 
     const tx = txData as ShadowDraftResult | null;
 
+    // Duplicate is still success — use the already-existing post_id.
     if (!tx?.ok) {
       return NextResponse.json(
         { success: false, errorKey: tx?.error_msg ?? 'error.shadow_draft_transaction_failed' },

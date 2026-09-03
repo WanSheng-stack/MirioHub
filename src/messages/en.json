@@ -132,6 +132,8 @@
     "target_post_required": "No target post specified. Please retry your publish intent.",
     "identity_verification_required": "Please verify your identity (Passkey, Google, or email) before activating this post.",
     "invalid_post_status": "This post cannot be activated in its current state.",
+    "identity_activation_context_expired": "Your publish session has expired (30 min). Please restart the publish flow.",
+    "identity_activation_context_invalid": "Publish session data is invalid. Please restart the publish flow.",
     "server_price_calculation_failed": "Route pricing re-calculation failed on server side",
     "invalid_or_consumed_challenge": "Authentication challenge expired or invalid, please try again",
     "crypto_handshake_failed": "Biometric hardware signature exchange failed",

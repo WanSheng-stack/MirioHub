@@ -132,6 +132,8 @@
     "target_post_required": "Nije naveden ciljni post. Pokušajte ponovo s objavom.",
     "identity_verification_required": "Potvrdite identitet (Passkey, Google ili email) pre aktivacije objave.",
     "invalid_post_status": "Ovaj post ne može biti aktiviran u trenutnom statusu.",
+    "identity_activation_context_expired": "Sesija objave je istekla (30 min). Pokrenite objavu ponovo.",
+    "identity_activation_context_invalid": "Podaci sesije objave su neispravni. Pokrenite objavu ponovo.",
     "server_price_calculation_failed": "Greška pri proračunu kilometraže i cene na serveru, proverite rutu",
     "invalid_or_consumed_challenge": "Sigurnosni kod za verifikaciju je istekao ili je već iskorišćen, pokušajte ponovo",
     "crypto_handshake_failed": "Neuspešna razmena ključeva sa biometrijskim modulom uređaja",

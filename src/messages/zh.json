@@ -132,6 +132,8 @@
     "target_post_required": "未指定目标帖子，请重新发起发布意图。",
     "identity_verification_required": "请先完成身份验证（Passkey、Google 或邮箱）后再激活此帖子。",
     "invalid_post_status": "该帖子当前状态无法激活。",
+    "identity_activation_context_expired": "发布会话已过期（30分钟），请重新开始发布流程。",
+    "identity_activation_context_invalid": "发布会话数据无效，请重新开始发布流程。",
     "server_price_calculation_failed": "服务器重算行驶里程与顺路费失败，请检查路线是否合规",
     "invalid_or_consumed_challenge": "安全锁验证挑战码超时或已被使用，请重试",
     "crypto_handshake_failed": "设备生物硬件锁（指纹/刷脸）密钥交换失败",

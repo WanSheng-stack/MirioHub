@@ -16,6 +16,27 @@ import type { TransportMode } from "@/lib/types";
 const inputClass =
   "mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15";
 
+// ── Identity Activation Context ──────────────────────────────────────────────
+// Written to sessionStorage when a user's Passkey is cancelled (Channel B).
+// Enables the Profile page to activate the SAME specific draft after the user
+// links Google or confirms Email — without guessing from a bare postId.
+//
+// Security note: sessionStorage is a UX hint only.  The server re-validates
+// auth.uid() + post.user_id + identity status on every activation request.
+
+const IDENTITY_ACTIVATION_CONTEXT_KEY = "mirio_identity_activation_context";
+const IDENTITY_ACTIVATION_LEGACY_KEY = "mirio_identity_activation_post_id";
+const IDENTITY_ACTIVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+interface IdentityActivationContext {
+  version: 1;
+  purpose: "draft_activation";
+  postId: string;
+  nonce: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 const VEHICLE_OPTIONS: TransportMode[] = [
   "car",
   "motorbike",
@@ -210,15 +231,30 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           // Save the draft postId so Stage 2 updates the SAME post
           const draftPostId = fallbackResult.postId ?? null;
           setPendingPostId(draftPostId);
-          // Write activation target to sessionStorage so that if the user
-          // navigates to the Profile page to link Google/Email, the profile
-          // page can activate THIS specific draft — not all user drafts.
+
+          // Write a structured Identity Activation Context to sessionStorage.
+          // The Profile page reads this ONLY when the URL also carries the
+          // matching nonce — preventing stale contexts from activating posts
+          // during unrelated Account-management identity actions.
           if (draftPostId) {
+            // Remove legacy key (plain postId, no nonce — no longer trusted)
+            sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+
+            const now = Date.now();
+            const ctx: IdentityActivationContext = {
+              version: 1,
+              purpose: "draft_activation",
+              postId: draftPostId,
+              nonce: crypto.randomUUID(),
+              createdAt: now,
+              expiresAt: now + IDENTITY_ACTIVATION_TTL_MS,
+            };
             sessionStorage.setItem(
-              "mirio_identity_activation_post_id",
-              draftPostId,
+              IDENTITY_ACTIVATION_CONTEXT_KEY,
+              JSON.stringify(ctx),
             );
           }
+
           // Draft saved → guide user to Stage 2 for contact activation
           setStage(2);
           return;
@@ -256,11 +292,12 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         return;
       }
 
-      // Channel A success: post committed as active — no identity-upgrade path
-      // needed. Clear any pending activation target so the profile page does
-      // NOT attempt a second activation.
+      // Channel A success: post committed as active via commit_phase3.
+      // Clear the activation context so the Profile page cannot attempt a
+      // second activation from a stale context.
       setPendingPostId(verifyResult.postId ?? null);
-      sessionStorage.removeItem("mirio_identity_activation_post_id");
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
       setStage(2);
     } catch {
       setErrorKey("server_internal_crash");

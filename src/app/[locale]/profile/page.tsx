@@ -29,6 +29,105 @@ function GoogleIcon() {
   );
 }
 
+// ── Identity Activation Context ──────────────────────────────────────────────
+// These helpers are module-level (no React state) so they can be called both
+// from useEffect and from linkGoogle / bindEmail without closure issues.
+//
+// Design principles:
+//   1. Context is written by PublishBottomSheet (Channel B) — not by this page.
+//   2. The activation_nonce from the URL is the second required signal.
+//      Context alone (sessionStorage) is NOT sufficient to trigger activation.
+//   3. Server is the final authority: auth.uid() + post.user_id + identity.
+
+const IDENTITY_ACTIVATION_CONTEXT_KEY = "mirio_identity_activation_context";
+const IDENTITY_ACTIVATION_LEGACY_KEY = "mirio_identity_activation_post_id";
+
+interface IdentityActivationContext {
+  version: 1;
+  purpose: "draft_activation";
+  postId: string;
+  nonce: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+/** Parse and structurally validate the context object from sessionStorage.
+ *  Returns null on missing key, malformed JSON, or invalid shape. */
+function parseActivationContext(): IdentityActivationContext | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+    if (!raw) return null;
+    const ctx = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      ctx["version"] !== 1 ||
+      ctx["purpose"] !== "draft_activation" ||
+      typeof ctx["postId"] !== "string" ||
+      !ctx["postId"] ||
+      typeof ctx["nonce"] !== "string" ||
+      !ctx["nonce"] ||
+      typeof ctx["createdAt"] !== "number" ||
+      typeof ctx["expiresAt"] !== "number" ||
+      ctx["expiresAt"] <= ctx["createdAt"]
+    ) {
+      return null;
+    }
+    return ctx as unknown as IdentityActivationContext;
+  } catch {
+    return null;
+  }
+}
+
+/** Remove the context from sessionStorage. */
+function clearActivationContext(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+}
+
+/**
+ * Validate the context against the URL-supplied nonce.
+ * All 10 invariants must pass; on any failure the stale context is cleared.
+ *
+ * Gate 1:  context exists
+ * Gate 2:  JSON parses successfully
+ * Gate 3:  version === 1
+ * Gate 4:  purpose === "draft_activation"
+ * Gate 5:  postId is a non-empty string
+ * Gate 6:  nonce is a non-empty string
+ * Gate 7:  URL nonce === context.nonce
+ * Gate 8:  Date.now() <= context.expiresAt
+ * Gate 9:  createdAt / expiresAt are valid numbers
+ * Gate 10: expiresAt > createdAt
+ *
+ * Returns the validated context, or null if any gate fails.
+ */
+function validateActivationContext(
+  urlNonce: string,
+): IdentityActivationContext | null {
+  const ctx = parseActivationContext();
+
+  // Gates 1–6, 9–10 are checked by parseActivationContext.
+  if (!ctx) {
+    // Malformed or missing → clear and return null (Gate 1/2/3/4/5/6/9/10)
+    clearActivationContext();
+    return null;
+  }
+
+  // Gate 8: TTL check
+  if (Date.now() > ctx.expiresAt) {
+    clearActivationContext(); // expired
+    return null;
+  }
+
+  // Gate 7: nonce match
+  if (ctx.nonce !== urlNonce) {
+    clearActivationContext(); // stale / tampered context
+    return null;
+  }
+
+  return ctx;
+}
+
 function bankRefFromUuid(id: string): string {
   let hash = 0;
   for (let i = 0; i < id.length; i++) {
@@ -83,55 +182,88 @@ export default function ProfilePage() {
     // After Google linking or email verification, the callback redirects back
     // with ?error=account_identity_continuity_broken  or  ?identity_linked=...
     if (typeof window !== "undefined") {
+      // Remove legacy Phase 5.1 key immediately — it has no nonce and cannot
+      // be trusted as an activation signal.
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+
       const params = new URLSearchParams(window.location.search);
       const cbError = params.get("error");
       const linked = params.get("identity_linked");
+      // activation_nonce is emitted by linkGoogle / bindEmail only when a
+      // Draft activation flow is in progress (context set by BottomSheet).
+      const urlNonce = params.get("activation_nonce");
 
       if (cbError === "account_identity_continuity_broken") {
         setIdentityMsg(tErr("account_identity_continuity_broken"));
       } else if (linked) {
-        // Identity was just linked.
-        // Only activate a post if there is an EXPLICIT target stored in
-        // sessionStorage (written by PublishBottomSheet on Channel B).
-        // If the user linked Google/Email independently (Account page, no
-        // draft context) there will be no key — and we do NOT activate anything.
-        const activationPostId = sessionStorage.getItem(
-          "mirio_identity_activation_post_id",
-        );
-        if (activationPostId) {
-          void (async () => {
-            try {
-              const res = await fetch("/api/posts/activate-after-identity", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ postId: activationPostId }),
-              });
-              const json = (await res.json()) as {
-                ok: boolean;
-                postId?: string;
-                isActive?: boolean;
-                alreadyActive?: boolean;
-              };
-              if (json.ok && json.isActive && !json.alreadyActive) {
-                setActivatedCount(1);
+        // ── Activation Gate ──────────────────────────────────────────────────
+        // TWO independent signals must align for automatic activation:
+        //   Signal 1: URL carries activation_nonce  (set by linkGoogle/bindEmail
+        //             only when a Draft activation flow is in progress)
+        //   Signal 2: sessionStorage context is valid AND nonce matches AND TTL ok
+        //
+        // If EITHER signal is absent, this is treated as Account-only identity
+        // management → ZERO activation.
+        if (urlNonce) {
+          const ctx = validateActivationContext(urlNonce);
+          if (ctx) {
+            // All 10 gates passed — attempt targeted activation
+            void (async () => {
+              let clearCtx = false;
+              try {
+                const res = await fetch("/api/posts/activate-after-identity", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ postId: ctx.postId }),
+                });
+                const json = (await res.json()) as {
+                  ok: boolean;
+                  postId?: string;
+                  isActive?: boolean;
+                  alreadyActive?: boolean;
+                  errorKey?: string;
+                };
+                if (res.ok && json.ok) {
+                  // CASE A/B: success or already-active → clear context
+                  if (json.isActive) setActivatedCount(1);
+                  clearCtx = true;
+                } else if (res.status === 404 || res.status === 403) {
+                  // CASE C/E: post not found or ownership failure (permanent)
+                  clearCtx = true;
+                } else if (res.status === 403 && json.errorKey === "error.identity_verification_required") {
+                  // CASE D: identity not yet verified server-side — preserve
+                  // context until TTL so user can retry after verification
+                  clearCtx = false;
+                } else if (res.status === 400) {
+                  // Malformed request (shouldn't happen) — clear to avoid loop
+                  clearCtx = true;
+                }
+                // HTTP 5xx / network errors: clearCtx stays false → preserve
+              } catch {
+                // Network failure → preserve context until TTL (user can retry)
+                clearCtx = false;
+              } finally {
+                if (clearCtx) clearActivationContext();
               }
-            } catch {
-              // Activation failure is non-fatal — draft is still safe
-            } finally {
-              // Always clear the target — whether activation succeeded or not.
-              // On failure the user can retry through another flow.
-              sessionStorage.removeItem("mirio_identity_activation_post_id");
+            })();
+          } else {
+            // Context invalid / expired / nonce mismatch (all cleared inside
+            // validateActivationContext) → ZERO activation
+            if (urlNonce) {
+              // Provide non-fatal feedback for expired context
+              setIdentityMsg(tErr("identity_activation_context_expired"));
             }
-          })();
+          }
         }
-        // No activationPostId → Account-only linking → zero drafts activated (correct).
+        // No urlNonce → Account-only linking → ZERO automatic activation (correct).
       }
 
-      // Clean up URL params to avoid re-triggering on reload
+      // Clean up ALL identity-callback URL params to prevent re-triggering on reload
       if (cbError ?? linked) {
         const clean = new URL(window.location.href);
         clean.searchParams.delete("error");
         clean.searchParams.delete("identity_linked");
+        clean.searchParams.delete("activation_nonce");
         window.history.replaceState({}, "", clean.toString());
       }
     }
@@ -179,13 +311,26 @@ export default function ProfilePage() {
     setIdentityMsg(null);
     setIdentityLoading(true);
     const supabase = createClient();
-    // linkIdentity preserves the current auth.users UUID-A.
-    // Must NOT use signInWithOAuth here — that may create a new UUID-B.
-    const callbackNext = encodeURIComponent(`/${locale}/profile?identity_linked=google`);
+
+    // ── Safe default: Account-only linking — NO activation_nonce ─────────────
+    // linkGoogle() always operates as "identity management only".
+    // Draft activation via Google requires a dedicated UI path that explicitly
+    // carries the activation_nonce from the current IdentityActivationContext.
+    // Reason: the presence of a sessionStorage context alone cannot prove the
+    // user intends to publish a specific draft on this particular action.
+    // See: PHASE 5.2 STOP GATE — IDENTITY ACTION INTENT UI PATH NOT DISTINGUISHABLE
+    //
+    // linkIdentity (not signInWithOAuth) preserves the current auth.users UUID-A.
+    const callbackNext = new URLSearchParams({
+      identity_linked: "google",
+      // activation_nonce intentionally omitted — Account-only path
+    });
     const { error } = await supabase.auth.linkIdentity({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${callbackNext}`,
+        redirectTo:
+          `${window.location.origin}/auth/callback?next=` +
+          encodeURIComponent(`/${locale}/profile?${callbackNext.toString()}`),
       },
     });
     if (error) {
@@ -200,12 +345,22 @@ export default function ProfilePage() {
     setIdentityMsg(null);
     setIdentityLoading(true);
     const supabase = createClient();
-    // updateUser({ email }) sends a confirmation email.
+
+    // ── Safe default: Account-only binding — NO activation_nonce ─────────────
+    // Same reasoning as linkGoogle above.
+    // updateUser({ email }) sends a confirmation email via Supabase.
     // The anonymous user's UUID is preserved — no new auth.users row is created.
-    const callbackNext = encodeURIComponent(`/${locale}/profile?identity_linked=email`);
+    const callbackNext = new URLSearchParams({
+      identity_linked: "email",
+      // activation_nonce intentionally omitted — Account-only path
+    });
     const { error } = await supabase.auth.updateUser(
       { email: emailForBinding.trim() },
-      { emailRedirectTo: `${window.location.origin}/auth/callback?next=${callbackNext}` },
+      {
+        emailRedirectTo:
+          `${window.location.origin}/auth/callback?next=` +
+          encodeURIComponent(`/${locale}/profile?${callbackNext.toString()}`),
+      },
     );
     if (error) {
       setIdentityMsg(error.message);

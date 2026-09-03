@@ -54,20 +54,29 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // When set, Stage 2 updates this existing post instead of inserting a new one.
   const [pendingPostId, setPendingPostId] = useState<string | null>(null);
 
-  // Publish-intent anchor — generated once per sheet session, reused across:
-  //   Passkey retries, Channel B fallbacks, Stage-2 contact completion.
-  // Reset to null when the sheet opens so each new sheet session gets a fresh intent.
-  // Using useRef to guarantee synchronous reads within the same call without React
-  // state batching race conditions.
+  // Publish-intent anchor — ONE uuid per logical post, persists across:
+  //   Passkey cancel, Passkey retry, Channel B fallback, sheet close/reopen.
+  //
+  // LIFECYCLE RULES:
+  //   • Generated lazily: first click of Book Now for a new post creates the UUID.
+  //   • NEVER cleared on sheet open/close — closing and reopening resumes the
+  //     same in-flight intent and the same draft post.
+  //   • Only cleared implicitly when the component unmounts (post published,
+  //     navigation away) or when the parent deliberately remounts the component
+  //     with a fresh form for a brand-new post.
+  //
+  // Using useRef so reads are synchronous within the same async call, avoiding
+  // React state batching races.
   const publishIntentIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setStage(1);
       setErrorKey(null);
-      setPendingPostId(null);
-      // New sheet session → clear any prior intent so first click creates a fresh UUID
-      publishIntentIdRef.current = null;
+      // DO NOT reset pendingPostId or publishIntentIdRef here.
+      // Close → reopen resumes the same in-flight intent and existing draft.
+      // These are only cleared on component unmount (navigation after publish)
+      // or when the parent mounts a fresh component for a new post.
     }
   }, [open]);
 

@@ -16,20 +16,17 @@ import { calculateFinalFee } from '@/lib/post-fee';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createClient() {
+async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   return createServerClient(url, key, {
     cookies: {
-      // Next 15 cookies() is still sync in route handlers
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      getAll: () => (cookieStore as any).getAll?.() ?? [],
+      getAll: () => cookieStore.getAll(),
       setAll: (toSet) => {
         try {
           toSet.forEach(({ name, value, options }) =>
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (cookieStore as any).set?.(name, value, options),
+            cookieStore.set(name, value, options),
           );
         } catch {
           // Route handler – ignore
@@ -194,7 +191,7 @@ interface TxResult {
 }
 
 export async function POST(request: Request) {
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const {
     data: { session },
@@ -209,16 +206,20 @@ export async function POST(request: Request) {
 
   const current_uid = session.user.id;
 
+  // Declare outside try so catch can reference it for challenge cleanup.
+  let clientRequestId: string | undefined;
+
   try {
     const body = (await request.json()) as RequestBody;
     const {
       challengeId,
       response,
       installationId,
-      clientRequestId,
       rawPostInput,
       ceremonyType,
     } = body;
+    // Assign to outer-scoped variable so catch can use it.
+    clientRequestId = body.clientRequestId;
 
     // 1. Reserve & validate challenge
     const { data: challengeData, error: chErr } = await supabase.rpc(
@@ -392,10 +393,13 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     const msg =
       error instanceof Error ? error.message : 'error.server_internal_crash';
-    await supabase
-      .from('auth_challenges')
-      .update({ status: 'failed' })
-      .eq('client_request_id', current_uid);
+    // Only attempt cleanup when we know which challenge to mark failed.
+    if (clientRequestId) {
+      await supabase
+        .from('auth_challenges')
+        .update({ status: 'failed' })
+        .eq('client_request_id', clientRequestId);
+    }
     return NextResponse.json({ success: false, errorKey: msg }, { status: 500 });
   }
 }

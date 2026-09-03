@@ -194,8 +194,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           const fallbackResult = (await fallbackRes.json()) as {
             success: boolean;
           };
-          if (!fallbackRes.ok || !fallbackResult.success)
-            throw new Error("shadow_draft_failed");
+          if (!fallbackRes.ok || !fallbackResult.success) {
+            // Shadow-draft failure is a server/network issue, not a crypto error.
+            setErrorKey("shadow_draft_failed");
+            return;
+          }
 
           // Draft saved → guide user to Stage 2 for progressive activation
           setStage(2);

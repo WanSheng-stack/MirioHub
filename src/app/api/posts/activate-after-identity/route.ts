@@ -1,29 +1,31 @@
 /**
  * POST /api/posts/activate-after-identity
  *
- * Activates eligible draft posts owned by the current Account after a
- * verified identity event (Passkey / Google linking / email verification).
+ * Activates ONE specific draft post owned by the current Account, after the
+ * Account has acquired a verified identity (Passkey / Google linking /
+ * email confirmation).
  *
- * Body (all optional):
- *   { postId?: string }
- *   - postId present → target only that draft post
- *   - postId absent  → target ALL draft posts owned by the current user
+ * Body (required):
+ *   { postId: string }
+ *   - postId absent or blank → 400 error.target_post_required
  *
- * Server-side activation policy (identical to complete-contact):
- *   canActivate = has_passkey OR google_identity OR email_confirmed_at
+ * TARGETED activation only — NEVER batch-activates all user drafts.
+ * The caller must supply an explicit postId because identity verification
+ * grants "publish eligibility", not "publish everything ever drafted".
  *
- * Never trusts client-supplied identity claims (no identityVerified,
- * hasPasskey, googleLinked, etc. in request body).
+ * Idempotency:
+ *   CASE A: post is draft + account verified  → UPDATE active → { isActive: true }
+ *   CASE B: post is already active            → no mutation   → { isActive: true, alreadyActive: true }
+ *   CASE C: post not owned by current user    → 404
+ *   CASE D: post is draft but account lacks verified identity
+ *           → 403 error.identity_verification_required
+ *   CASE E: postId absent/blank              → 400 error.target_post_required
  *
- * Idempotent: already-active posts are counted in the response but not
- * double-updated.
- *
- * Cross-user protection:
- *   - auth.getUser() (not getSession()) is used — forgeable JWTs rejected
- *   - .eq('user_id', user.id) enforces ownership server-side
- *   - RLS adds a second layer of enforcement
- *
- * Returns: { ok: true, activated: string[], alreadyActive: string[] }
+ * Security:
+ *   - auth.getUser() (not getSession()) — server-validates JWT
+ *   - .eq('user_id', user.id) enforces ownership
+ *   - RLS provides a third layer of enforcement
+ *   - No client-supplied identity flags accepted
  */
 
 import { NextResponse } from 'next/server';
@@ -32,7 +34,7 @@ import { cookies } from 'next/headers';
 import type { User } from '@supabase/supabase-js';
 
 // ---------------------------------------------------------------------------
-// Supabase client (anon key — RLS enforces post ownership)
+// Supabase client (anon key — RLS enforces ownership)
 // ---------------------------------------------------------------------------
 
 async function createClient() {
@@ -56,8 +58,7 @@ async function createClient() {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical server-side activation policy
-// (same logic as complete-contact; co-located to avoid import cycles)
+// Server-side activation policy (identical to complete-contact)
 // ---------------------------------------------------------------------------
 
 async function checkCanActivatePost(
@@ -73,7 +74,7 @@ async function checkCanActivatePost(
   if ((profile as { has_passkey?: boolean } | null)?.has_passkey) return true;
 
   // 2. Google OAuth identity linked to THIS exact UUID
-  //    (preserved only when linkIdentity() was used — not signInWithOAuth)
+  //    (only when linkIdentity() was used — signInWithOAuth may create a new UUID)
   if (user.identities?.some((i) => i.provider === 'google')) return true;
 
   // 3. Email confirmed for THIS UUID
@@ -89,7 +90,7 @@ async function checkCanActivatePost(
 export async function POST(request: Request) {
   const supabase = await createClient();
 
-  // auth.getUser() — not getSession() — validates the JWT server-side
+  // auth.getUser() validates the JWT server-side — cannot be forged by client
   const {
     data: { user },
     error: authErr,
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Parse optional postId (empty body is valid — activates all user drafts)
+  // ── Require explicit postId — NO batch-activation fallback ────────────────
   let postId: string | null = null;
   try {
     const body = (await request.json()) as { postId?: unknown };
@@ -110,29 +111,25 @@ export async function POST(request: Request) {
       postId = body.postId.trim();
     }
   } catch {
-    // Empty / malformed body → activate all drafts
+    // Malformed JSON body — postId stays null → 400 below
   }
 
-  // ── Activation policy check ───────────────────────────────────────────────
-  const canActivate = await checkCanActivatePost(supabase, user);
-  if (!canActivate) {
-    // User does not yet hold a verified identity — return ok but nothing done
-    return NextResponse.json({ ok: true, activated: [], alreadyActive: [] });
+  if (!postId) {
+    // Missing target = cannot know which post the user intends to publish.
+    // Returning 400 prevents any unintended batch activation.
+    return NextResponse.json(
+      { ok: false, errorKey: 'error.target_post_required' },
+      { status: 400 },
+    );
   }
 
-  // ── Fetch target draft(s) ─────────────────────────────────────────────────
-  // Only fetch posts the current auth.uid() owns (RLS + explicit eq clause)
-  let selectQuery = supabase
+  // ── Fetch targeted post with ownership check ──────────────────────────────
+  const { data: post, error: fetchErr } = await supabase
     .from('posts')
-    .select('id, status')
-    .eq('user_id', user.id)
-    .in('status', ['draft', 'active']); // fetch both so we can report already-active
-
-  if (postId) {
-    selectQuery = selectQuery.eq('id', postId);
-  }
-
-  const { data: posts, error: fetchErr } = await selectQuery;
+    .select('id, user_id, status')
+    .eq('id', postId)
+    .eq('user_id', user.id) // server-enforces ownership — RLS is third layer
+    .maybeSingle();
 
   if (fetchErr) {
     console.error('[activate-after-identity] fetch error:', {
@@ -145,28 +142,52 @@ export async function POST(request: Request) {
     );
   }
 
-  const typedPosts = (posts ?? []) as { id: string; status: string }[];
-
-  const alreadyActive = typedPosts
-    .filter((p) => p.status === 'active')
-    .map((p) => p.id);
-
-  const draftIds = typedPosts
-    .filter((p) => p.status === 'draft')
-    .map((p) => p.id);
-
-  if (draftIds.length === 0) {
-    // Nothing to activate — idempotent success
-    return NextResponse.json({ ok: true, activated: [], alreadyActive });
+  // CASE C / E: post not found or not owned by this user
+  if (!post) {
+    return NextResponse.json(
+      { ok: false, errorKey: 'error.not_found' },
+      { status: 404 },
+    );
   }
 
-  // ── Activate draft(s) in-place ────────────────────────────────────────────
+  const typedPost = post as { id: string; user_id: string; status: string };
+
+  // CASE B: already active → idempotent success (no mutation)
+  if (typedPost.status === 'active') {
+    return NextResponse.json({
+      ok: true,
+      postId,
+      isActive: true,
+      alreadyActive: true,
+    });
+  }
+
+  // Non-draft, non-active status (e.g. matched, completed) — not eligible
+  if (typedPost.status !== 'draft') {
+    return NextResponse.json(
+      { ok: false, errorKey: 'error.invalid_post_status' },
+      { status: 400 },
+    );
+  }
+
+  // ── Activation policy — all claims come from server-trusted sources ───────
+  const canActivate = await checkCanActivatePost(supabase, user);
+
+  // CASE D: post is draft but account lacks verified identity
+  if (!canActivate) {
+    return NextResponse.json(
+      { ok: false, errorKey: 'error.identity_verification_required' },
+      { status: 403 },
+    );
+  }
+
+  // ── CASE A: Activate the targeted draft in-place ──────────────────────────
   const { error: updateErr } = await supabase
     .from('posts')
     .update({ status: 'active', updated_at: new Date().toISOString() })
-    .in('id', draftIds)
-    .eq('user_id', user.id) // ownership double-check (RLS provides third layer)
-    .eq('status', 'draft');  // only flip actual drafts
+    .eq('id', postId)
+    .eq('user_id', user.id) // ownership double-check
+    .eq('status', 'draft');  // guard: only flip actual drafts
 
   if (updateErr) {
     console.error('[activate-after-identity] update error:', {
@@ -179,9 +200,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({
-    ok: true,
-    activated: draftIds,
-    alreadyActive,
-  });
+  return NextResponse.json({ ok: true, postId, isActive: true });
 }

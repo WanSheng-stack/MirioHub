@@ -90,22 +90,41 @@ export default function ProfilePage() {
       if (cbError === "account_identity_continuity_broken") {
         setIdentityMsg(tErr("account_identity_continuity_broken"));
       } else if (linked) {
-        // Identity was just linked — trigger draft activation
-        void (async () => {
-          try {
-            const res = await fetch("/api/posts/activate-after-identity", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({}),
-            });
-            const json = (await res.json()) as { ok: boolean; activated?: string[] };
-            if (json.ok && json.activated && json.activated.length > 0) {
-              setActivatedCount(json.activated.length);
+        // Identity was just linked.
+        // Only activate a post if there is an EXPLICIT target stored in
+        // sessionStorage (written by PublishBottomSheet on Channel B).
+        // If the user linked Google/Email independently (Account page, no
+        // draft context) there will be no key — and we do NOT activate anything.
+        const activationPostId = sessionStorage.getItem(
+          "mirio_identity_activation_post_id",
+        );
+        if (activationPostId) {
+          void (async () => {
+            try {
+              const res = await fetch("/api/posts/activate-after-identity", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ postId: activationPostId }),
+              });
+              const json = (await res.json()) as {
+                ok: boolean;
+                postId?: string;
+                isActive?: boolean;
+                alreadyActive?: boolean;
+              };
+              if (json.ok && json.isActive && !json.alreadyActive) {
+                setActivatedCount(1);
+              }
+            } catch {
+              // Activation failure is non-fatal — draft is still safe
+            } finally {
+              // Always clear the target — whether activation succeeded or not.
+              // On failure the user can retry through another flow.
+              sessionStorage.removeItem("mirio_identity_activation_post_id");
             }
-          } catch {
-            // Activation failure is non-fatal — draft is still safe
-          }
-        })();
+          })();
+        }
+        // No activationPostId → Account-only linking → zero drafts activated (correct).
       }
 
       // Clean up URL params to avoid re-triggering on reload

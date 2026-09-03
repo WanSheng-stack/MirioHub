@@ -208,7 +208,17 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             return;
           }
           // Save the draft postId so Stage 2 updates the SAME post
-          setPendingPostId(fallbackResult.postId ?? null);
+          const draftPostId = fallbackResult.postId ?? null;
+          setPendingPostId(draftPostId);
+          // Write activation target to sessionStorage so that if the user
+          // navigates to the Profile page to link Google/Email, the profile
+          // page can activate THIS specific draft — not all user drafts.
+          if (draftPostId) {
+            sessionStorage.setItem(
+              "mirio_identity_activation_post_id",
+              draftPostId,
+            );
+          }
           // Draft saved → guide user to Stage 2 for contact activation
           setStage(2);
           return;
@@ -246,8 +256,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         return;
       }
 
-      // Channel A success: save postId so Stage 2 updates the SAME post
+      // Channel A success: post committed as active — no identity-upgrade path
+      // needed. Clear any pending activation target so the profile page does
+      // NOT attempt a second activation.
       setPendingPostId(verifyResult.postId ?? null);
+      sessionStorage.removeItem("mirio_identity_activation_post_id");
       setStage(2);
     } catch {
       setErrorKey("server_internal_crash");

@@ -87,6 +87,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // true = draftActivationMsg is informational (e.g. "email sent"), false = error
   const [draftActivationIsInfo, setDraftActivationIsInfo] = useState(false);
   const [draftActivating, setDraftActivating] = useState(false);
+  // Google/Email completion is only offered when a valid, unexpired
+  // IdentityActivationContext matches the current pendingPostId.
+  const [draftContextUsable, setDraftContextUsable] = useState(false);
 
   // Publish-intent anchor — ONE uuid per logical post, persists across:
   //   Passkey cancel, Passkey retry, Channel B fallback, sheet close/reopen.
@@ -103,15 +106,102 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // React state batching races.
   const publishIntentIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (open) {
-      setStage(1);
-      setErrorKey(null);
-      // DO NOT reset pendingPostId or publishIntentIdRef here.
-      // Close → reopen resumes the same in-flight intent and existing draft.
-      // These are only cleared on component unmount (navigation after publish)
-      // or when the parent mounts a fresh component for a new post.
+  /** Read + validate IdentityActivationContext for this postId.
+   *  Clears stale/expired/mismatched context. Returns whether Google/Email
+   *  completion may still be offered. Never deletes the draft row. */
+  function inspectDraftContext(postId: string): boolean {
+    const raw = sessionStorage.getItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+    if (!raw) return false;
+    try {
+      const ctx = JSON.parse(raw) as IdentityActivationContext;
+      if (
+        ctx.version !== 1 ||
+        ctx.purpose !== "draft_activation" ||
+        typeof ctx.postId !== "string" ||
+        !ctx.postId ||
+        typeof ctx.nonce !== "string" ||
+        !ctx.nonce ||
+        typeof ctx.createdAt !== "number" ||
+        typeof ctx.expiresAt !== "number" ||
+        ctx.expiresAt <= ctx.createdAt
+      ) {
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+        return false;
+      }
+      if (ctx.postId !== postId) {
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+        return false;
+      }
+      if (Date.now() > ctx.expiresAt) {
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+        return false;
+      }
+      return true;
+    } catch {
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      return false;
     }
+  }
+
+  /** If the Account is already eligible, activate THIS draft via the server.
+   *  Client never writes posts.status. Returns true when the post is active. */
+  async function tryActivateEligibleDraft(postId: string): Promise<boolean> {
+    try {
+      const eligRes = await fetch("/api/auth/activation-eligibility");
+      const elig = (await eligRes.json()) as {
+        success?: boolean;
+        eligible?: boolean;
+      };
+      if (!eligRes.ok || !elig.success || !elig.eligible) return false;
+
+      const actRes = await fetch("/api/posts/activate-after-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      });
+      const act = (await actRes.json()) as {
+        ok?: boolean;
+        isActive?: boolean;
+      };
+      if (actRes.ok && act.ok && act.isActive) {
+        setPendingPostStatus("active");
+        setDraftActivationMsg(null);
+        setDraftContextUsable(false);
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+        return true;
+      }
+    } catch {
+      // Network / 5xx — keep draft. Caller may still offer Retry Passkey.
+    }
+    return false;
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    setErrorKey(null);
+    // Close → reopen must restore the in-flight post, not bounce to Stage 1.
+    // Do NOT clear publishIntentIdRef / pendingPostId / pendingPostStatus /
+    // a valid activation context on close.
+    if (
+      pendingPostId &&
+      (pendingPostStatus === "draft" || pendingPostStatus === "active")
+    ) {
+      setStage(2);
+      if (pendingPostStatus === "draft") {
+        const usable = inspectDraftContext(pendingPostId);
+        setDraftContextUsable(usable);
+        if (!usable) {
+          setDraftActivationMsg(t("identity.resume_context_expired"));
+          setDraftActivationIsInfo(false);
+        }
+        void tryActivateEligibleDraft(pendingPostId);
+      }
+    } else {
+      setStage(1);
+    }
+    // Resume only when the sheet opens. pending* are read from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
@@ -244,35 +334,39 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           // Save the draft postId so Stage 2 updates the SAME post
           const draftPostId = fallbackResult.postId ?? null;
           setPendingPostId(draftPostId);
-          // Mark as draft so Stage 2 shows the identity completion UI
+          if (!draftPostId) {
+            setErrorKey("shadow_draft_failed");
+            return;
+          }
+
+          // Account already eligible (has_passkey / Google / verified email)
+          // → activate SAME draft. Do not ask the user to re-link identity.
+          const activated = await tryActivateEligibleDraft(draftPostId);
+          if (activated) {
+            setStage(2);
+            return;
+          }
+
+          // Account is not yet eligible — write activation context so a later
+          // Google/Email Draft completion can target THIS post only.
           setPendingPostStatus("draft");
           setDraftActivationMsg(null);
           setDraftActivationIsInfo(false);
-
-          // Write a structured Identity Activation Context to sessionStorage.
-          // The Profile page reads this ONLY when the URL also carries the
-          // matching nonce — preventing stale contexts from activating posts
-          // during unrelated Account-management identity actions.
-          if (draftPostId) {
-            // Remove legacy key (plain postId, no nonce — no longer trusted)
-            sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
-
-            const now = Date.now();
-            const ctx: IdentityActivationContext = {
-              version: 1,
-              purpose: "draft_activation",
-              postId: draftPostId,
-              nonce: crypto.randomUUID(),
-              createdAt: now,
-              expiresAt: now + IDENTITY_ACTIVATION_TTL_MS,
-            };
-            sessionStorage.setItem(
-              IDENTITY_ACTIVATION_CONTEXT_KEY,
-              JSON.stringify(ctx),
-            );
-          }
-
-          // Draft saved → guide user to Stage 2 for contact activation
+          sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+          const now = Date.now();
+          const ctx: IdentityActivationContext = {
+            version: 1,
+            purpose: "draft_activation",
+            postId: draftPostId,
+            nonce: crypto.randomUUID(),
+            createdAt: now,
+            expiresAt: now + IDENTITY_ACTIVATION_TTL_MS,
+          };
+          sessionStorage.setItem(
+            IDENTITY_ACTIVATION_CONTEXT_KEY,
+            JSON.stringify(ctx),
+          );
+          setDraftContextUsable(true);
           setStage(2);
           return;
         }
@@ -796,6 +890,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     statusMsg={draftActivationMsg}
                     statusIsInfo={draftActivationIsInfo}
                     activating={draftActivating}
+                    allowIdentityUpgrade={draftContextUsable}
                   />
                 )}
                 {state.post_type === "demand" ? (

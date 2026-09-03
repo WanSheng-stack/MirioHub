@@ -221,7 +221,8 @@
     "publish_with_google": "Publish with Google",
     "publish_with_email": "Send email confirmation link",
     "phone_not_identity_verification": "Your phone number is used so others can contact you — it is not an identity verification method and will not publish your post.",
-    "email_confirmation_sent": "Confirmation link sent — open your inbox and click the link to publish your post."
+    "email_confirmation_sent": "Confirmation link sent — open your inbox and click the link to publish your post.",
+    "resume_context_expired": "This publish session has expired. You can retry Passkey. Google or email completion for this draft is no longer available. The draft was not deleted."
   },
   "hall": {
     "title": "Mutual-aid hall (city & intercity)",

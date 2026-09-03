@@ -31,7 +31,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import type { User } from '@supabase/supabase-js';
+import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
 import {
   normalizePhone,
   normalizeLicensePlate,
@@ -73,41 +73,6 @@ async function createClient() {
       },
     },
   });
-}
-
-// ---------------------------------------------------------------------------
-// Identity activation policy
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true when the current Account holds at least one recognised identity
- * that qualifies a draft post for publication.
- *
- * All checks are scoped to the current session UUID.  A different UUID (e.g.
- * a freshly-created Google user) will correctly return false for posts owned
- * by an anonymous UUID — preventing silent cross-account activation.
- */
-async function checkCanActivatePost(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  user: User,
-): Promise<boolean> {
-  // 1. Passkey registered for this Account
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('has_passkey')
-    .eq('id', user.id)
-    .maybeSingle();
-  if ((profile as { has_passkey?: boolean } | null)?.has_passkey) return true;
-
-  // 2. Google OAuth identity linked to THIS exact UUID
-  //    (works only when Supabase preserves the anonymous UUID on OAuth link,
-  //    which requires auto-merge or explicit linkIdentity() — BLOCKED if not).
-  if (user.identities?.some((i) => i.provider === 'google')) return true;
-
-  // 3. Email confirmed for THIS UUID (email/password sign-up confirmed)
-  if (user.email_confirmed_at) return true;
-
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,8 +340,8 @@ export async function POST(request: Request) {
   let isActive = post.status === 'active';
 
   if (post.status === 'draft') {
-    const canActivate = await checkCanActivatePost(supabase, user);
-    if (canActivate) {
+    const { eligible } = await getAccountActivationEligibility(supabase, user);
+    if (eligible) {
       updatePayload.status = 'active';
       isActive = true;
     }

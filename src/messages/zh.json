@@ -221,7 +221,8 @@
     "publish_with_google": "通过 Google 完成发布",
     "publish_with_email": "发送邮箱确认链接",
     "phone_not_identity_verification": "手机号用于让他人联系你，不作为身份验证，填写后不会发布帖子。",
-    "email_confirmation_sent": "确认邮件已发送——请打开邮箱点击确认链接，点击后帖子将自动发布。"
+    "email_confirmation_sent": "确认邮件已发送——请打开邮箱点击确认链接，点击后帖子将自动发布。",
+    "resume_context_expired": "本次发布恢复上下文已失效。你可以再试一次 Passkey。Google / 邮箱完成发布已不可用。草稿未被删除。"
   },
   "hall": {
     "title": "全能城际与同城众包互助大厅",

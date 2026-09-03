@@ -31,7 +31,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import type { User } from '@supabase/supabase-js';
+import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
 
 // ---------------------------------------------------------------------------
 // Supabase client (anon key — RLS enforces ownership)
@@ -55,32 +55,6 @@ async function createClient() {
       },
     },
   });
-}
-
-// ---------------------------------------------------------------------------
-// Server-side activation policy (identical to complete-contact)
-// ---------------------------------------------------------------------------
-
-async function checkCanActivatePost(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  user: User,
-): Promise<boolean> {
-  // 1. Passkey registered for this Account
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('has_passkey')
-    .eq('id', user.id)
-    .maybeSingle();
-  if ((profile as { has_passkey?: boolean } | null)?.has_passkey) return true;
-
-  // 2. Google OAuth identity linked to THIS exact UUID
-  //    (only when linkIdentity() was used — signInWithOAuth may create a new UUID)
-  if (user.identities?.some((i) => i.provider === 'google')) return true;
-
-  // 3. Email confirmed for THIS UUID
-  if (user.email_confirmed_at) return true;
-
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +145,10 @@ export async function POST(request: Request) {
   }
 
   // ── Activation policy — all claims come from server-trusted sources ───────
-  const canActivate = await checkCanActivatePost(supabase, user);
+  const { eligible } = await getAccountActivationEligibility(supabase, user);
 
   // CASE D: post is draft but account lacks verified identity
-  if (!canActivate) {
+  if (!eligible) {
     return NextResponse.json(
       { ok: false, errorKey: 'error.identity_verification_required' },
       { status: 403 },

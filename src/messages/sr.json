@@ -221,7 +221,8 @@
     "publish_with_google": "Objavite putem Google",
     "publish_with_email": "Pošaljite link za potvrdu emaila",
     "phone_not_identity_verification": "Broj telefona služi za kontakt — nije metoda verifikacije identiteta i neće objaviti oglas.",
-    "email_confirmation_sent": "Link za potvrdu je poslat — otvorite inbox i kliknite link da biste objavili oglas."
+    "email_confirmation_sent": "Link za potvrdu je poslat — otvorite inbox i kliknite link da biste objavili oglas.",
+    "resume_context_expired": "Sesija objave je istekla. Možete ponovo pokušati Passkey. Google / email završetak za ovaj nacrt više nije dostupan. Nacrt nije obrisan."
   },
   "hall": {
     "title": "Usputna pomoć (grad i međugrad)",

@@ -50,11 +50,15 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
+  // postId from Channel A (verify) or Channel B (shadow-draft).
+  // When set, Stage 2 updates this existing post instead of inserting a new one.
+  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setStage(1);
       setErrorKey(null);
+      setPendingPostId(null);
     }
   }, [open]);
 
@@ -121,20 +125,27 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         challengeText: string;
         ceremonyType: "registration" | "authentication";
         options: Record<string, unknown>;
-        processingToken: string;
+        // processingToken is NOT returned by challenge-init; it lives in the DB
+        // and is read server-side by the verify route — do not use here.
       };
       if (!challengeInitRes.ok) throw new Error("challenge_init_failed");
 
-      // Enrich payload with all business fields for both channels
+      // Enrich payload with all Stage-1 business fields for both channels
       const enrichedPayload = {
         ...state,
         associated_user_id: user_id,
         challenge_text: challengeData.challengeText,
       };
 
+      // ── Step 3: WebAuthn biometric prompt (isolated try/catch) ──────────
+      // Only AbortError / NotAllowedError / NotSupportedError are user-driven
+      // cancel events → Channel B.  All other errors here are hard crypto
+      // failures → crypto_invalid_signature.
+      // Verify API errors (step 4) must NOT fall into this catch.
+      type WebAuthnResponse = Awaited<ReturnType<typeof startRegistration>>;
+      let webauthnResponse: WebAuthnResponse;
       try {
-        // Step 3: invoke biometric prompt
-        const webauthnResponse =
+        webauthnResponse = (
           challengeData.ceremonyType === "registration"
             ? await startRegistration({
                 optionsJSON:
@@ -147,41 +158,15 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                   challengeData.options as unknown as Parameters<
                     typeof startAuthentication
                   >[0]["optionsJSON"],
-              });
-
-        // Channel A: passkey verified → atomic post commit
-        const verifyRes = await fetch("/api/auth/passkey/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            challengeId: challengeData.challengeId,
-            response: webauthnResponse,
-            installationId: window.navigator.userAgent,
-            clientRequestId,
-            rawPostInput: enrichedPayload,
-            ceremonyType: challengeData.ceremonyType,
-            processingToken: challengeData.processingToken,
-          }),
-        });
-        const verifyResult = (await verifyRes.json()) as {
-          success: boolean;
-          errorKey?: string;
-        };
-        if (!verifyRes.ok)
-          throw new Error(verifyResult.errorKey ?? "verify_failed");
-
-        // Channel A success → slide to Stage 2 (contact activation)
-        setStage(2);
+              })
+        ) as WebAuthnResponse;
       } catch (webauthnErr: unknown) {
-        // Recoverable cancel: user dismissed the Passkey prompt or device
-        // doesn't support it. Use the already-established anonymous session
-        // to save a shadow draft — no new user is created here.
         const cancelNames = ["AbortError", "NotAllowedError", "NotSupportedError"];
-        const errName =
-          webauthnErr instanceof Error ? webauthnErr.name : "";
+        const errName = webauthnErr instanceof Error ? webauthnErr.name : "";
 
         if (cancelNames.includes(errName)) {
-          // Channel B: silent shadow draft using existing session cookie
+          // Channel B: save shadow draft using the existing session cookie.
+          // No new user is created — we reuse the anonymous session from above.
           const fallbackRes = await fetch("/api/posts/shadow-draft", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -193,21 +178,55 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           });
           const fallbackResult = (await fallbackRes.json()) as {
             success: boolean;
+            postId?: string | null;
           };
           if (!fallbackRes.ok || !fallbackResult.success) {
-            // Shadow-draft failure is a server/network issue, not a crypto error.
+            // shadow-draft failure = server/network issue, not a crypto error
             setErrorKey("shadow_draft_failed");
             return;
           }
-
-          // Draft saved → guide user to Stage 2 for progressive activation
+          // Save the draft postId so Stage 2 updates the SAME post
+          setPendingPostId(fallbackResult.postId ?? null);
+          // Draft saved → guide user to Stage 2 for contact activation
           setStage(2);
           return;
         }
 
-        // Hard crypto / security error — surface inline
+        // Hard WebAuthn error (SecurityError, InvalidStateError, etc.)
         setErrorKey("crypto_invalid_signature");
+        return;
       }
+
+      // ── Step 4: Channel A — verify + atomic commit (outside WebAuthn catch) ──
+      // Any error here surfaces its own errorKey; it is NOT a WebAuthn error.
+      const verifyRes = await fetch("/api/auth/passkey/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          challengeId: challengeData.challengeId,
+          response: webauthnResponse,
+          installationId: window.navigator.userAgent,
+          clientRequestId,
+          rawPostInput: enrichedPayload,
+          ceremonyType: challengeData.ceremonyType,
+          // processingToken is NOT sent — the verify route reads it from DB
+        }),
+      });
+      const verifyResult = (await verifyRes.json()) as {
+        success: boolean;
+        postId?: string | null;
+        errorKey?: string;
+      };
+      if (!verifyRes.ok) {
+        // Show the specific API error, not a generic crypto message
+        const raw = verifyResult.errorKey ?? "error.verify_failed";
+        setErrorKey(raw.replace(/^error\./, ""));
+        return;
+      }
+
+      // Channel A success: save postId so Stage 2 updates the SAME post
+      setPendingPostId(verifyResult.postId ?? null);
+      setStage(2);
     } catch {
       setErrorKey("server_internal_crash");
     } finally {
@@ -233,13 +252,44 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       return;
     }
 
+    setSubmitting(true);
+
+    // ── Path A: post already created by Channel A/B — just write Stage-2 ────
+    if (pendingPostId) {
+      const res = await fetch("/api/posts/activate-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId: pendingPostId,
+          dial_code: state.dial_code,
+          raw_phone_local: state.raw_phone_local,
+          provider_name: state.provider_name,
+          raw_license_plate: state.raw_license_plate,
+          vehicle_brand: state.vehicle_brand,
+          vehicle_color: state.vehicle_color,
+          transport_mode: state.transport_mode,
+          locale,
+        }),
+      });
+      const result = (await res.json()) as { ok: boolean; postId?: string; errorKey?: string };
+      setSubmitting(false);
+      if (!result.ok) {
+        const raw = result.errorKey ?? "error.submit_failed";
+        setErrorKey(raw.replace(/^error\./, ""));
+        return;
+      }
+      onClose();
+      router.push(`/posts/${result.postId}`);
+      return;
+    }
+
+    // ── Path B: no pending post (legacy / direct publish without Passkey) ────
     const { data: profile } = await supabase
       .from("profiles")
       .select("is_premium")
       .eq("id", auth.user.id)
       .maybeSingle();
 
-    setSubmitting(true);
     const result = await submitPost(
       supabase,
       auth.user.id,

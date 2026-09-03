@@ -51,7 +51,7 @@ export type SubmitPostResult =
   | { ok: true; postId: string }
   | { ok: false; errorKey: string; logFraud?: boolean };
 
-async function upsertPhoneHistory(
+export async function upsertPhoneHistory(
   supabase: SupabaseClient,
   userId: string,
   normalizedPhone: string,
@@ -84,7 +84,7 @@ async function upsertPhoneHistory(
   return inserted.id as number;
 }
 
-async function upsertPlateHistory(
+export async function upsertPlateHistory(
   supabase: SupabaseClient,
   userId: string,
   normalizedLicensePlate: string,
@@ -154,7 +154,7 @@ async function countPlateBoundAccounts(
   return accounts.size;
 }
 
-async function gatherDemandMetrics(
+export async function gatherDemandMetrics(
   supabase: SupabaseClient,
   userId: string,
   normalizedPhone: string,
@@ -198,7 +198,7 @@ async function gatherDemandMetrics(
   };
 }
 
-async function gatherSupplyMetrics(
+export async function gatherSupplyMetrics(
   supabase: SupabaseClient,
   userId: string,
   normalizedPhone: string,

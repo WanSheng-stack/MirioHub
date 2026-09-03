@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/navigation";
 import type { AppLocale } from "@/i18n/routing";
@@ -54,11 +54,20 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // When set, Stage 2 updates this existing post instead of inserting a new one.
   const [pendingPostId, setPendingPostId] = useState<string | null>(null);
 
+  // Publish-intent anchor — generated once per sheet session, reused across:
+  //   Passkey retries, Channel B fallbacks, Stage-2 contact completion.
+  // Reset to null when the sheet opens so each new sheet session gets a fresh intent.
+  // Using useRef to guarantee synchronous reads within the same call without React
+  // state batching race conditions.
+  const publishIntentIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (open) {
       setStage(1);
       setErrorKey(null);
       setPendingPostId(null);
+      // New sheet session → clear any prior intent so first click creates a fresh UUID
+      publishIntentIdRef.current = null;
     }
   }, [open]);
 
@@ -89,8 +98,12 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setIsPublishing(true);
     setErrorKey(null);
 
-    // Idempotency anchor — generated once at the moment of intent
-    const clientRequestId = crypto.randomUUID();
+    // Reuse the intent ID if this is a retry/fallback within the same sheet session.
+    // Only generate a fresh UUID when no intent has been started yet.
+    if (!publishIntentIdRef.current) {
+      publishIntentIdRef.current = crypto.randomUUID();
+    }
+    const clientRequestId = publishIntentIdRef.current;
 
     try {
       // Step 1: resolve or provision anonymous session.

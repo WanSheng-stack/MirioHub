@@ -87,9 +87,6 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // true = draftActivationMsg is informational (e.g. "email sent"), false = error
   const [draftActivationIsInfo, setDraftActivationIsInfo] = useState(false);
   const [draftActivating, setDraftActivating] = useState(false);
-  // Google/Email completion is only offered when a valid, unexpired
-  // IdentityActivationContext matches the current pendingPostId.
-  const [draftContextUsable, setDraftContextUsable] = useState(false);
 
   // Publish-intent anchor — ONE uuid per logical post, persists across:
   //   Passkey cancel, Passkey retry, Channel B fallback, sheet close/reopen.
@@ -166,7 +163,6 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       if (actRes.ok && act.ok && act.isActive) {
         setPendingPostStatus("active");
         setDraftActivationMsg(null);
-        setDraftContextUsable(false);
         sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
         sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
         return true;
@@ -190,12 +186,12 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       setStage(2);
       if (pendingPostStatus === "draft") {
         const usable = inspectDraftContext(pendingPostId);
-        setDraftContextUsable(usable);
         if (!usable) {
           setDraftActivationMsg(t("identity.resume_context_expired"));
           setDraftActivationIsInfo(false);
         }
-        void tryActivateEligibleDraft(pendingPostId);
+        // Reopen is resume only — never auto-activate, even if the Account
+        // became eligible after the sheet was closed.
       }
     } else {
       setStage(1);
@@ -231,9 +227,13 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setIsPublishing(true);
     setErrorKey(null);
 
-    // Reuse the intent ID if this is a retry/fallback within the same sheet session.
-    // Only generate a fresh UUID when no intent has been started yet.
-    if (!publishIntentIdRef.current) {
+    // A completed ACTIVE intent must not reuse its client_request_id for the
+    // next genuine Stage 1 publish. Draft cancel/retry/reopen keep the old id.
+    if (pendingPostStatus === "active") {
+      publishIntentIdRef.current = crypto.randomUUID();
+      setPendingPostId(null);
+      setPendingPostStatus(null);
+    } else if (!publishIntentIdRef.current) {
       publishIntentIdRef.current = crypto.randomUUID();
     }
     const clientRequestId = publishIntentIdRef.current;
@@ -258,6 +258,59 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         user_id = anonData.user.id;
       }
 
+      // Fail-closed eligibility: HTTP/network failure is NOT "not eligible".
+      let eligJson: { success?: boolean; eligible?: boolean; errorKey?: string };
+      try {
+        const eligRes = await fetch("/api/auth/activation-eligibility");
+        eligJson = (await eligRes.json()) as {
+          success?: boolean;
+          eligible?: boolean;
+          errorKey?: string;
+        };
+        if (!eligRes.ok || !eligJson.success) {
+          const raw = eligJson.errorKey ?? "error.server_internal_crash";
+          setErrorKey(raw.replace(/^error\./, ""));
+          return;
+        }
+      } catch {
+        setErrorKey("server_internal_crash");
+        return;
+      }
+
+      const basePayload = {
+        ...state,
+        associated_user_id: user_id,
+      };
+
+      if (eligJson.eligible === true) {
+        const pubRes = await fetch("/api/posts/trusted-publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientRequestId,
+            rawPostInput: basePayload,
+          }),
+        });
+        const pubResult = (await pubRes.json()) as {
+          success?: boolean;
+          postId?: string | null;
+          errorKey?: string;
+        };
+        if (!pubRes.ok || !pubResult.success) {
+          const raw = pubResult.errorKey ?? "error.submit_failed";
+          setErrorKey(raw.replace(/^error\./, ""));
+          return;
+        }
+        setPendingPostId(pubResult.postId ?? null);
+        setPendingPostStatus("active");
+        setDraftActivationMsg(null);
+        setDraftActivationIsInfo(false);
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+        sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+        setStage(2);
+        return;
+      }
+
       // Step 2: obtain fencing-token-protected challenge from backend.
       // challenge-init reads auth.uid() server-side from the session cookie set
       // by the signInAnonymously() / existing session above.
@@ -278,8 +331,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
       // Enrich payload with all Stage-1 business fields for both channels
       const enrichedPayload = {
-        ...state,
-        associated_user_id: user_id,
+        ...basePayload,
         challenge_text: challengeData.challengeText,
       };
 
@@ -366,7 +418,6 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             IDENTITY_ACTIVATION_CONTEXT_KEY,
             JSON.stringify(ctx),
           );
-          setDraftContextUsable(true);
           setStage(2);
           return;
         }
@@ -428,50 +479,35 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // is the second required signal for the Profile page activation gate.
   // ---------------------------------------------------------------------------
 
-  /** Validate the current IdentityActivationContext for draft activation.
-   *  Returns the context if all checks pass, otherwise sets draftActivationMsg
-   *  and returns null (caller should abort OAuth/email flow). */
-  function validateContextForDraftActivation(): IdentityActivationContext | null {
-    setDraftActivationIsInfo(false); // errors below are always error-type
-    const raw = sessionStorage.getItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-    if (!raw) {
+  /** Return a valid context for THIS draft, minting a new nonce if the old
+   *  one is missing/expired. Only called on an explicit Google/Email click. */
+  function ensureActivationContextForDraft(): IdentityActivationContext | null {
+    setDraftActivationIsInfo(false);
+    if (!pendingPostId) {
       setDraftActivationMsg(t("error.identity_activation_context_invalid"));
       return null;
     }
-    let ctx: IdentityActivationContext;
-    try {
-      ctx = JSON.parse(raw) as IdentityActivationContext;
-    } catch {
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
-      return null;
+    if (inspectDraftContext(pendingPostId)) {
+      const raw = sessionStorage.getItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+      if (raw) {
+        try {
+          return JSON.parse(raw) as IdentityActivationContext;
+        } catch {
+          sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+        }
+      }
     }
-    // Structural validation
-    if (
-      ctx.version !== 1 ||
-      ctx.purpose !== "draft_activation" ||
-      typeof ctx.postId !== "string" || !ctx.postId ||
-      typeof ctx.nonce !== "string" || !ctx.nonce ||
-      typeof ctx.createdAt !== "number" ||
-      typeof ctx.expiresAt !== "number" ||
-      ctx.expiresAt <= ctx.createdAt
-    ) {
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
-      return null;
-    }
-    // Context.postId must match the current pendingPostId (mismatch = stale context)
-    if (ctx.postId !== pendingPostId) {
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-      setDraftActivationMsg(t("error.identity_activation_context_invalid"));
-      return null;
-    }
-    // TTL check
-    if (Date.now() > ctx.expiresAt) {
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-      setDraftActivationMsg(t("error.identity_activation_context_expired"));
-      return null;
-    }
+    const now = Date.now();
+    const ctx: IdentityActivationContext = {
+      version: 1,
+      purpose: "draft_activation",
+      postId: pendingPostId,
+      nonce: crypto.randomUUID(),
+      createdAt: now,
+      expiresAt: now + IDENTITY_ACTIVATION_TTL_MS,
+    };
+    sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+    sessionStorage.setItem(IDENTITY_ACTIVATION_CONTEXT_KEY, JSON.stringify(ctx));
     return ctx;
   }
 
@@ -482,7 +518,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setDraftActivating(true);
     setDraftActivationMsg(null);
     try {
-      const ctx = validateContextForDraftActivation();
+      const ctx = ensureActivationContextForDraft();
       if (!ctx) return; // message already set
 
       const profileParams = new URLSearchParams({
@@ -521,7 +557,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setDraftActivating(true);
     setDraftActivationMsg(null);
     try {
-      const ctx = validateContextForDraftActivation();
+      const ctx = ensureActivationContextForDraft();
       if (!ctx) return; // message already set
 
       const profileParams = new URLSearchParams({
@@ -890,7 +926,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     statusMsg={draftActivationMsg}
                     statusIsInfo={draftActivationIsInfo}
                     activating={draftActivating}
-                    allowIdentityUpgrade={draftContextUsable}
+                    allowIdentityUpgrade
                   />
                 )}
                 {state.post_type === "demand" ? (

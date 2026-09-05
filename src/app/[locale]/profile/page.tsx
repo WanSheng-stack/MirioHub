@@ -9,11 +9,6 @@ import {
   isProfileFullNameEmpty,
   resolveGoogleDisplayName,
 } from "@/lib/auth/googleProfileName";
-import {
-  isPermanentConfirmedUser,
-  isWebAuthnUserCancel,
-  nativePasskeyErrorKey,
-} from "@/lib/auth/nativePasskey";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -154,7 +149,6 @@ type ExtendedProfile = Profile & {
 
 export default function ProfilePage() {
   const t = useTranslations("account");
-  const tIdentity = useTranslations("identity");
   const tErr = useTranslations("error");
   const locale = useLocale();
   const [authReady, setAuthReady] = useState(false);
@@ -165,7 +159,6 @@ export default function ProfilePage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [deviceLoginLoading, setDeviceLoginLoading] = useState(false);
   // Identity-linking state (for logged-in / anonymous users)
   const [identityMsg, setIdentityMsg] = useState<string | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
@@ -174,10 +167,6 @@ export default function ProfilePage() {
   // postId of a draft that was activated after Google/Email identity verification.
   // Populated from the server response (not from client URL).
   const [activatedPostId, setActivatedPostId] = useState<string | null>(null);
-  const [nativePasskeyCount, setNativePasskeyCount] = useState<number | null>(null);
-  const [nativePasskeyReady, setNativePasskeyReady] = useState(false);
-  const [nativeEnrollLoading, setNativeEnrollLoading] = useState(false);
-  const [nativeEnrollMsg, setNativeEnrollMsg] = useState<string | null>(null);
   const nameFillAttemptedRef = useRef(false);
 
   const bankRef = useMemo(
@@ -329,90 +318,6 @@ export default function ProfilePage() {
     }
   }
 
-  async function loginWithDevice() {
-    setMessage(null);
-    setDeviceLoginLoading(true);
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase.auth.signInWithPasskey();
-      if (error) {
-        if (isWebAuthnUserCancel(error)) return;
-        setMessage(tErr(nativePasskeyErrorKey(error) as "device_login_failed"));
-        return;
-      }
-      if (!data.session || !data.user) {
-        setMessage(tErr("device_login_failed"));
-        return;
-      }
-      setUser(data.user);
-      setAuthReady(true);
-      await loadProfile(data.user.id);
-      await loadSystemConfig();
-    } catch (err) {
-      if (isWebAuthnUserCancel(err)) return;
-      setMessage(tErr("device_login_failed"));
-    } finally {
-      setDeviceLoginLoading(false);
-    }
-  }
-
-  async function enrollNativeDeviceLogin() {
-    setNativeEnrollMsg(null);
-    setNativeEnrollLoading(true);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.registerPasskey();
-      if (error) {
-        if (isWebAuthnUserCancel(error)) return;
-        setNativeEnrollMsg(tErr(nativePasskeyErrorKey(error) as "device_login_failed"));
-        return;
-      }
-      const { data, error: listError } = await supabase.auth.passkey.list();
-      if (listError || !Array.isArray(data)) {
-        setNativePasskeyCount(1);
-        setNativePasskeyReady(true);
-        return;
-      }
-      setNativePasskeyCount(data.length);
-      setNativePasskeyReady(true);
-    } catch (err) {
-      if (isWebAuthnUserCancel(err)) return;
-      setNativeEnrollMsg(tErr("device_login_failed"));
-    } finally {
-      setNativeEnrollLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!authReady || !user || !isPermanentConfirmedUser(user)) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase.auth.passkey.list();
-        if (cancelled) return;
-        if (error) {
-          setNativePasskeyCount(null);
-          setNativePasskeyReady(true);
-          return;
-        }
-        setNativePasskeyCount(Array.isArray(data) ? data.length : 0);
-        setNativePasskeyReady(true);
-      } catch {
-        if (cancelled) return;
-        setNativePasskeyCount(null);
-        setNativePasskeyReady(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Native list is derived from the current Auth user, not publish eligibility.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady, user?.id, user?.is_anonymous, user?.email_confirmed_at]);
-
   async function signInWithGoogle() {
     setMessage(null);
     setGoogleLoading(true);
@@ -549,24 +454,6 @@ export default function ProfilePage() {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">{t("accessTitle")}</h1>
           <p className="mt-2 text-sm leading-relaxed text-zinc-500">{t("welcome")}</p>
         </header>
-
-        <section className="mb-6 space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-zinc-900">
-            {tIdentity("verify_with_device")}
-          </h2>
-          <p className="text-xs leading-relaxed text-zinc-600">
-            {tIdentity("verify_with_device_helper")}
-          </p>
-          <button
-            type="button"
-            disabled={deviceLoginLoading}
-            onClick={() => void loginWithDevice()}
-            className="w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
-          >
-            {tIdentity("continue")}
-          </button>
-          {message ? <p className="text-sm text-red-600">{message}</p> : null}
-        </section>
 
         <button
           type="button"
@@ -743,15 +630,6 @@ export default function ProfilePage() {
       linkGoogle={linkGoogle}
       bindEmail={bindEmail}
     />
-    <NativeDeviceLoginSection
-      user={user}
-      nativePasskeyReady={nativePasskeyReady}
-      nativePasskeyCount={nativePasskeyCount}
-      nativeEnrollLoading={nativeEnrollLoading}
-      nativeEnrollMsg={nativeEnrollMsg}
-      enrollNativeDeviceLogin={enrollNativeDeviceLogin}
-      t={t}
-    />
     </>
   );
 }
@@ -774,47 +652,13 @@ interface IdentitySectionProps {
   bindEmail: () => Promise<void>;
 }
 
-function NativeDeviceLoginSection({
-  user,
-  nativePasskeyReady,
-  nativePasskeyCount,
-  nativeEnrollLoading,
-  nativeEnrollMsg,
-  enrollNativeDeviceLogin,
-  t,
-}: {
-  user: User;
-  nativePasskeyReady: boolean;
-  nativePasskeyCount: number | null;
-  nativeEnrollLoading: boolean;
-  nativeEnrollMsg: string | null;
-  enrollNativeDeviceLogin: () => Promise<void>;
-  t: TFn;
-}) {
-  if (!isPermanentConfirmedUser(user) || !nativePasskeyReady) return null;
-  if (nativePasskeyCount === null) return null;
-
-  const enrolled = nativePasskeyCount >= 1;
-
-  return (
-    <section className="mx-auto mt-4 max-w-lg rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-zinc-900">{t("addDeviceLoginTitle")}</h2>
-      <p className="text-xs leading-relaxed text-zinc-600">{t("addDeviceLoginHint")}</p>
-      {enrolled ? (
-        <p className="text-sm font-medium text-emerald-700">{t("deviceLoginAdded")}</p>
-      ) : (
-        <button
-          type="button"
-          disabled={nativeEnrollLoading}
-          onClick={() => void enrollNativeDeviceLogin()}
-          className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:opacity-50"
-        >
-          {t("addDeviceLogin")}
-        </button>
-      )}
-      {nativeEnrollMsg ? <p className="text-sm text-red-600">{nativeEnrollMsg}</p> : null}
-    </section>
-  );
+function googleIdentityEmail(user: User): string {
+  const google = user.identities?.find((i) => i.provider === "google");
+  const fromIdentity = String(
+    (google?.identity_data as { email?: unknown } | undefined)?.email ?? "",
+  ).trim();
+  if (fromIdentity) return fromIdentity;
+  return String(user.email ?? "").trim();
 }
 
 function IdentitySection({
@@ -831,69 +675,96 @@ function IdentitySection({
   const hasGoogle = user.identities?.some((i) => i.provider === "google") ?? false;
   const hasVerifiedEmail = Boolean(user.email_confirmed_at);
   const isAnonymous = user.is_anonymous === true;
-
-  // If the user already has all identities or is not anonymous, show minimal status
-  if (!isAnonymous && !hasPasskey) return null; // non-anonymous without passkey — signed-in via Google or email directly
-  if (hasPasskey && hasGoogle && hasVerifiedEmail) return null; // fully verified
+  const googleEmail = hasGoogle ? googleIdentityEmail(user) : "";
+  const verifiedEmail = String(user.email ?? "").trim();
+  const sameEmail =
+    hasGoogle &&
+    hasVerifiedEmail &&
+    Boolean(googleEmail) &&
+    Boolean(verifiedEmail) &&
+    googleEmail.toLowerCase() === verifiedEmail.toLowerCase();
+  const customOnly = hasPasskey && !hasGoogle && !hasVerifiedEmail;
+  const needsGoogle = !hasGoogle;
+  const needsEmail = !hasVerifiedEmail;
 
   return (
-    <section className="mx-auto mt-4 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-emerald-900">
-        {isAnonymous ? t("secureTitle") : t("identityTitle")}
-      </h2>
-      <p className="text-xs text-emerald-700">
-        {isAnonymous ? t("secureHint") : t("identityHint")}
-      </p>
+    <section className="mx-auto mt-4 max-w-lg rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
+      <h2 className="text-sm font-semibold text-zinc-900">{t("securityTitle")}</h2>
+      {isAnonymous ? (
+        <p className="text-sm font-medium text-zinc-800">{t("secureTitle")}</p>
+      ) : null}
+      {isAnonymous && !hasPasskey ? (
+        <p className="text-xs leading-relaxed text-zinc-600">{t("secureHint")}</p>
+      ) : null}
+      {hasPasskey ? (
+        <p className="text-sm font-medium text-emerald-700">{t("deviceVerified")}</p>
+      ) : null}
+      {customOnly ? (
+        <p className="text-xs leading-relaxed text-amber-800">{t("customOnlyWarning")}</p>
+      ) : null}
 
-      {/* ── Google status / link button ──────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-zinc-700">Google</span>
-        {hasGoogle ? (
-          <span className="text-sm font-medium text-emerald-700">{t("googleLinked")}</span>
-        ) : (
-          <button
-            type="button"
-            disabled={identityLoading}
-            onClick={() => void linkGoogle()}
-            className="flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:opacity-50"
-          >
-            {identityLoading
-              ? t("linkingGoogle")
-              : isAnonymous
-                ? t("continueWithGoogle")
-                : t("linkGoogle")}
-          </button>
-        )}
-      </div>
-
-      {/* ── Email status / bind form ─────────────────────────────────────── */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm text-zinc-700">{t("emailBindingLabel")}</span>
-          {hasVerifiedEmail && (
-            <span className="text-sm font-medium text-emerald-700">{t("emailVerified")}</span>
-          )}
+      {hasGoogle ? (
+        <div className="space-y-1 rounded-lg bg-emerald-50 px-3 py-2.5">
+          <p className="text-sm font-medium text-emerald-800">{t("googleBound")}</p>
+          {googleEmail ? <p className="text-xs text-emerald-700">{googleEmail}</p> : null}
+          {sameEmail ? (
+            <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
+          ) : null}
         </div>
-        {!hasVerifiedEmail && (
-          <div className="flex gap-2">
-            <input
-              type="email"
-              className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
-              placeholder={t("bindEmail")}
-              value={emailForBinding}
-              onChange={(e) => setEmailForBinding(e.target.value)}
-            />
+      ) : null}
+
+      {hasVerifiedEmail && !sameEmail ? (
+        <div className="space-y-1 rounded-lg bg-emerald-50 px-3 py-2.5">
+          <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
+          {verifiedEmail ? <p className="text-xs text-emerald-700">{verifiedEmail}</p> : null}
+        </div>
+      ) : null}
+
+      {needsGoogle || needsEmail ? (
+        <div className="space-y-3">
+          {needsGoogle ? (
             <button
               type="button"
-              disabled={identityLoading || !emailForBinding.trim()}
-              onClick={() => void bindEmail()}
-              className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-800 disabled:opacity-50"
+              disabled={identityLoading}
+              onClick={() => void linkGoogle()}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:opacity-50"
             >
-              {t("sendVerification")}
+              {identityLoading ? t("linkingGoogle") : t("bindGoogle")}
             </button>
-          </div>
-        )}
-      </div>
+          ) : null}
+          {needsGoogle && needsEmail ? (
+            <div className="relative py-1">
+              <div aria-hidden="true" className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-zinc-200" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-3 text-xs font-medium text-zinc-400">
+                  {t("orOtherEmail")}
+                </span>
+              </div>
+            </div>
+          ) : null}
+          {needsEmail ? (
+            <div className="space-y-2">
+              <input
+                type="email"
+                className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm focus:border-emerald-400 focus:outline-none"
+                placeholder={t("bindEmail")}
+                value={emailForBinding}
+                onChange={(e) => setEmailForBinding(e.target.value)}
+              />
+              <button
+                type="button"
+                disabled={identityLoading || !emailForBinding.trim()}
+                onClick={() => void bindEmail()}
+                className="w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-50"
+              >
+                {t("sendVerification")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

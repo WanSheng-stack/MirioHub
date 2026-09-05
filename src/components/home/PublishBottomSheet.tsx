@@ -1025,6 +1025,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                   <PublishedPostSuccess
                     postId={pendingPostId}
                     hasGoogle={hasGoogleIdentity}
+                    hasVerifiedEmail={Boolean(accountUser?.email_confirmed_at)}
                     googleEmail={accountUser?.email ?? null}
                     connecting={backupActivating}
                     backupEmail={backupEmail}

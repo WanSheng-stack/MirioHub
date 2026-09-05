@@ -16,6 +16,7 @@ import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
 interface PublishedPostSuccessProps {
   postId: string | null;
   hasGoogle: boolean;
+  hasVerifiedEmail: boolean;
   googleEmail: string | null;
   connecting: boolean;
   backupEmail: string;
@@ -60,6 +61,7 @@ function GoogleMark() {
 export function PublishedPostSuccess({
   postId,
   hasGoogle,
+  hasVerifiedEmail,
   googleEmail,
   connecting,
   backupEmail,
@@ -78,6 +80,7 @@ export function PublishedPostSuccess({
   onSkip,
 }: PublishedPostSuccessProps) {
   const t = useTranslations("publishSuccess");
+  const needsRecovery = !hasGoogle && !hasVerifiedEmail;
 
   return (
     <div className="space-y-5">
@@ -100,16 +103,26 @@ export function PublishedPostSuccess({
       <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold text-zinc-900">{t("protectTitle")}</h3>
-          <p className="text-xs leading-relaxed text-zinc-600">{t("protectHint")}</p>
+          <p className="text-xs leading-relaxed text-zinc-600">
+            {needsRecovery ? t("customOnlyHint") : t("protectHint")}
+          </p>
         </div>
 
         {hasGoogle ? (
           <div className="space-y-1 rounded-xl bg-emerald-50/80 px-3 py-2.5">
             <p className="text-sm font-medium text-emerald-800">{t("googleConnected")}</p>
             {googleEmail ? (
-              <p className="text-xs text-emerald-700">
-                {t("notifyEmail", { email: googleEmail })}
-              </p>
+              <p className="text-xs text-emerald-700">{googleEmail}</p>
+            ) : null}
+            {hasVerifiedEmail ? (
+              <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
+            ) : null}
+          </div>
+        ) : hasVerifiedEmail ? (
+          <div className="space-y-1 rounded-xl bg-emerald-50/80 px-3 py-2.5">
+            <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
+            {googleEmail ? (
+              <p className="text-xs text-emerald-700">{googleEmail}</p>
             ) : null}
           </div>
         ) : (
@@ -124,35 +137,39 @@ export function PublishedPostSuccess({
           </button>
         )}
 
-        <div className="relative py-1">
-          <div aria-hidden="true" className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-zinc-200" />
-          </div>
-          <div className="relative flex justify-center">
-            <span className="bg-white px-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
-              {t("orOtherEmail")}
-            </span>
-          </div>
-        </div>
+        {needsRecovery ? (
+          <>
+            <div className="relative py-1">
+              <div aria-hidden="true" className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-zinc-200" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  {t("orOtherEmail")}
+                </span>
+              </div>
+            </div>
 
-        <label className="block text-sm font-medium text-zinc-800">
-          {t("emailAddress")}
-          <input
-            type="email"
-            value={backupEmail}
-            onChange={(e) => onBackupEmailChange(e.target.value)}
-            placeholder={t("emailPlaceholder")}
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
-          />
-        </label>
-        <button
-          type="button"
-          disabled={connecting || !backupEmail.trim()}
-          onClick={onSendEmail}
-          className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-50"
-        >
-          {t("sendVerification")}
-        </button>
+            <label className="block text-sm font-medium text-zinc-800">
+              {t("emailAddress")}
+              <input
+                type="email"
+                value={backupEmail}
+                onChange={(e) => onBackupEmailChange(e.target.value)}
+                placeholder={t("emailPlaceholder")}
+                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={connecting || !backupEmail.trim()}
+              onClick={onSendEmail}
+              className="w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-50"
+            >
+              {t("sendVerification")}
+            </button>
+          </>
+        ) : null}
         {backupMsg ? (
           <p
             className={`text-xs leading-relaxed ${backupIsInfo ? "text-emerald-700" : "text-red-600"}`}

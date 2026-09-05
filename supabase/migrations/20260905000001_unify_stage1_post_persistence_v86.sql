@@ -291,7 +291,25 @@ begin
       WHERE id = v_existing_post_id
         AND user_id = p_user_id
         AND status = 'draft';
-      RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
+
+      if found then
+        RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
+      end if;
+
+      SELECT id, payload_hash, status, user_id
+      INTO v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner
+      FROM public.posts
+      WHERE client_request_id = p_client_request_id;
+
+      if v_existing_owner IS DISTINCT FROM p_user_id then
+        RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
+      elsif v_existing_hash IS DISTINCT FROM p_payload_hash then
+        RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
+      elsif v_existing_status = 'active' then
+        RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
+      else
+        RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
+      end if;
     end if;
 
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
@@ -327,7 +345,25 @@ EXCEPTION WHEN unique_violation THEN
     WHERE id = v_existing_post_id
       AND user_id = p_user_id
       AND status = 'draft';
-    RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
+
+    if found then
+      RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
+    end if;
+
+    SELECT id, payload_hash, status, user_id
+    INTO v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner
+    FROM public.posts
+    WHERE client_request_id = p_client_request_id;
+
+    if v_existing_owner IS DISTINCT FROM p_user_id then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
+    elsif v_existing_hash IS DISTINCT FROM p_payload_hash then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
+    elsif v_existing_status = 'active' then
+      RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
+    else
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
+    end if;
   else
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
   end if;

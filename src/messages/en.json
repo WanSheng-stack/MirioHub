@@ -116,7 +116,7 @@
     "missing_env": "Missing Supabase configuration.",
     "not_found": "Post not found.",
     "post_denied_blurred": "Unable to publish at this time. Please contact support if you believe this is an error.",
-    "time_window_overlap": "Only one active trip allowed in the same time window.",
+    "time_window_overlap": "You already have an active request around this time. Please choose a different departure time or manage your existing post first.",
     "match_denied_blurred": "Unable to accept this order at this time.",
     "active_cargo_limit_reached": "Active cargo order limit reached for this vehicle/phone.",
     "bank_verification_required": "Bank verification required to accept more cargo orders.",
@@ -448,5 +448,27 @@
       "back": "Back",
       "close": "Close"
     }
+  },
+  "publishSuccess": {
+    "title": "Published successfully",
+    "body": "Your post is now live.",
+    "hint": "You can add account and contact details now, or skip and complete them later.",
+    "viewPost": "View published post",
+    "protectTitle": "Protect your account and receive order updates",
+    "protectHint": "Your account is protected by device verification. Add another sign-in method to improve account access and receive order status updates and important notifications.",
+    "connectGoogle": "Connect Google",
+    "googleConnected": "Google connected",
+    "notifyEmail": "Notification email: {email}",
+    "orOtherEmail": "Or use another email",
+    "emailAddress": "Email address",
+    "emailPlaceholder": "email@example.com",
+    "sendVerification": "Send verification email",
+    "emailSent": "Verification email sent. Please check your inbox to confirm.",
+    "phoneTitle": "Make it easier to contact you after order confirmation",
+    "phoneHint": "Add a valid phone number so you can be reached after an order is confirmed.",
+    "savePhone": "Save phone number",
+    "savingPhone": "Saving…",
+    "phoneSaved": "Phone number saved",
+    "skip": "Skip for now"
   }
 }

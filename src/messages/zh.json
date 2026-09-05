@@ -116,7 +116,7 @@
     "missing_env": "缺少 Supabase 环境变量。",
     "not_found": "帖子不存在。",
     "post_denied_blurred": "暂时无法发布，如有疑问请联系客服。",
-    "time_window_overlap": "同一时间段只能存在一条行程单。",
+    "time_window_overlap": "这个时间附近你已经有一条进行中的需求。为避免重复发布，请调整出发时间，或先处理已有帖子。",
     "match_denied_blurred": "暂时无法承接此单。",
     "active_cargo_limit_reached": "该车辆/手机号在当前时段活跃货运单已达上限。",
     "bank_verification_required": "需完成银行对公认证后才能承接更多货运单。",
@@ -448,5 +448,27 @@
       "back": "返回上一步",
       "close": "关闭"
     }
+  },
+  "publishSuccess": {
+    "title": "发布成功",
+    "body": "你的帖子已经上线。",
+    "hint": "你可以继续完善账户和联系方式，也可以暂时跳过，稍后再设置。",
+    "viewPost": "查看已发布的帖子",
+    "protectTitle": "保护账户并接收订单动态",
+    "protectHint": "你的账户已经通过设备验证保护。建议再添加一种备用访问方式，并用于接收订单状态更新和重要通知。",
+    "connectGoogle": "使用 Google 绑定",
+    "googleConnected": "Google 已绑定",
+    "notifyEmail": "通知邮箱：{email}",
+    "orOtherEmail": "或使用其他邮箱",
+    "emailAddress": "邮箱地址",
+    "emailPlaceholder": "email@example.com",
+    "sendVerification": "发送验证邮件",
+    "emailSent": "验证邮件已发送，请前往邮箱完成确认。",
+    "phoneTitle": "方便订单确认后联系",
+    "phoneHint": "填写正确的手机号码，方便订单确认后联系。",
+    "savePhone": "保存手机号",
+    "savingPhone": "保存中…",
+    "phoneSaved": "手机号已保存",
+    "skip": "暂时跳过"
   }
 }

@@ -12,7 +12,9 @@ import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
 import { LuggageCounters } from "@/components/post-form/DeliverTravelFields";
 import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteFields";
 import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompletion";
+import { PublishedPostSuccess } from "@/components/home/PublishedPostSuccess";
 import type { TransportMode } from "@/lib/types";
+import type { User } from "@supabase/supabase-js";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15";
@@ -87,6 +89,13 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   // true = draftActivationMsg is informational (e.g. "email sent"), false = error
   const [draftActivationIsInfo, setDraftActivationIsInfo] = useState(false);
   const [draftActivating, setDraftActivating] = useState(false);
+  const [accountUser, setAccountUser] = useState<User | null>(null);
+  const [backupEmail, setBackupEmail] = useState("");
+  const [backupActivating, setBackupActivating] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [backupIsInfo, setBackupIsInfo] = useState(false);
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneSaved, setPhoneSaved] = useState(false);
 
   // Publish-intent anchor — ONE uuid per logical post, persists across:
   //   Passkey cancel, Passkey retry, Channel B fallback, sheet close/reopen.
@@ -201,6 +210,13 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   }, [open]);
 
   useEffect(() => {
+    if (pendingPostStatus !== "active") return;
+    void createClient()
+      .auth.getUser()
+      .then(({ data }) => setAccountUser(data.user ?? null));
+  }, [pendingPostStatus]);
+
+  useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -218,6 +234,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
   const isTravel = state.category === "travel";
   const isDeliver = state.category === "deliver";
+  const isActiveSuccess = pendingPostStatus === "active";
+  const hasGoogleIdentity =
+    accountUser?.identities?.some((i) => i.provider === "google") ?? false;
 
   // ---------------------------------------------------------------------------
   // Dual-channel WebAuthn submit (Channel A: verify, Channel B: shadow-draft)
@@ -588,6 +607,90 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     }
   }
 
+  /** Account-only Google link after an already-active post. No activation_nonce. */
+  async function linkGoogleForAccountBackup() {
+    setBackupActivating(true);
+    setBackupMsg(null);
+    setBackupIsInfo(false);
+    try {
+      const callbackNext = new URLSearchParams({ identity_linked: "google" });
+      const supabase = createClient();
+      const { error } = await supabase.auth.linkIdentity({
+        provider: "google",
+        options: {
+          redirectTo:
+            `${window.location.origin}/auth/callback?next=` +
+            encodeURIComponent(`/${locale}/profile?${callbackNext.toString()}`),
+        },
+      });
+      if (error) setBackupMsg(error.message);
+    } finally {
+      setBackupActivating(false);
+    }
+  }
+
+  /** Account-only email confirmation-link. Does not write posts.contact_email. */
+  async function bindEmailForAccountBackup() {
+    const email = backupEmail.trim();
+    if (!email.includes("@")) {
+      setBackupMsg(t("error.email_required"));
+      setBackupIsInfo(false);
+      return;
+    }
+    setBackupActivating(true);
+    setBackupMsg(null);
+    setBackupIsInfo(false);
+    try {
+      const callbackNext = new URLSearchParams({ identity_linked: "email" });
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser(
+        { email },
+        {
+          emailRedirectTo:
+            `${window.location.origin}/auth/callback?next=` +
+            encodeURIComponent(`/${locale}/profile?${callbackNext.toString()}`),
+        },
+      );
+      if (error) {
+        setBackupMsg(error.message);
+      } else {
+        setBackupMsg(t("publishSuccess.emailSent"));
+        setBackupIsInfo(true);
+      }
+    } finally {
+      setBackupActivating(false);
+    }
+  }
+
+  /** Phone-only complete-contact on an already-active post. No republish. */
+  async function saveActivePhone() {
+    if (!pendingPostId || !state.raw_phone_local.trim()) return;
+    setPhoneSaving(true);
+    setPhoneSaved(false);
+    setErrorKey(null);
+    try {
+      const res = await fetch("/api/posts/complete-contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId: pendingPostId,
+          dial_code: state.dial_code,
+          raw_phone_local: state.raw_phone_local,
+          locale,
+        }),
+      });
+      const result = (await res.json()) as { ok?: boolean; errorKey?: string };
+      if (!result.ok) {
+        const raw = result.errorKey ?? "error.submit_failed";
+        setErrorKey(raw.replace(/^error\./, ""));
+        return;
+      }
+      setPhoneSaved(true);
+    } finally {
+      setPhoneSaving(false);
+    }
+  }
+
   async function onPublish() {
     setErrorKey(null);
     if (!hasSupabaseEnv()) {
@@ -689,7 +792,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-300" />
         <div className="flex items-center justify-between px-5 pt-3 pb-2">
           <h2 className="text-base font-semibold text-zinc-900">
-            {stage === 1 ? t("home.sheet.stage1_title") : t("home.sheet.stage2_title")}
+            {stage === 1
+              ? t("home.sheet.stage1_title")
+              : isActiveSuccess
+                ? t("publishSuccess.title")
+                : t("home.sheet.stage2_title")}
           </h2>
           <button
             type="button"
@@ -914,8 +1021,30 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             {/* Stage 2 */}
             <div className="h-auto max-h-[calc(88vh-9rem)] w-1/2 overflow-y-auto px-5 pb-28">
               <div className="space-y-4">
+                {isActiveSuccess ? (
+                  <PublishedPostSuccess
+                    postId={pendingPostId}
+                    hasGoogle={hasGoogleIdentity}
+                    googleEmail={accountUser?.email ?? null}
+                    connecting={backupActivating}
+                    backupEmail={backupEmail}
+                    onBackupEmailChange={setBackupEmail}
+                    onConnectGoogle={() => void linkGoogleForAccountBackup()}
+                    onSendEmail={() => void bindEmailForAccountBackup()}
+                    backupMsg={backupMsg}
+                    backupIsInfo={backupIsInfo}
+                    dialCode={state.dial_code}
+                    phoneLocal={state.raw_phone_local}
+                    onDialCodeChange={(value) => setField("dial_code", value)}
+                    onPhoneLocalChange={(value) => setField("raw_phone_local", value)}
+                    onSavePhone={() => void saveActivePhone()}
+                    phoneSaving={phoneSaving}
+                    phoneSaved={phoneSaved}
+                    onSkip={onClose}
+                  />
+                ) : null}
                 {/* ── Draft Identity Completion UI (Channel B only) ────────── */}
-                {pendingPostStatus === "draft" && pendingPostId && (
+                {!isActiveSuccess && pendingPostStatus === "draft" && pendingPostId && (
                   <DraftIdentityCompletion
                     postId={pendingPostId}
                     isRetrying={isPublishing}
@@ -930,7 +1059,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     allowIdentityUpgrade
                   />
                 )}
-                {state.post_type === "demand" ? (
+                {!isActiveSuccess ? (state.post_type === "demand" ? (
                   <>
                     <label className="block text-sm font-medium">
                       {t("home.sheet.email")}
@@ -1048,7 +1177,8 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                       </div>
                     ) : null}
                   </>
-                )}
+                )
+                ) : null}
 
                 {errorKey ? (
                   <p className="text-sm text-red-600">
@@ -1062,6 +1192,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           </div>
         </div>
 
+        {stage === 2 && isActiveSuccess ? null : (
         <div className="absolute inset-x-0 bottom-0 space-y-2 border-t border-zinc-200/80 bg-[#f7f7f5]/95 px-5 py-3 backdrop-blur">
           {stage === 1 && visibility.showFeeDemand ? (
             <div className="space-y-1 rounded-xl bg-emerald-50/90 px-3 py-2.5 text-sm text-emerald-950 ring-1 ring-emerald-200/70">
@@ -1139,6 +1270,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

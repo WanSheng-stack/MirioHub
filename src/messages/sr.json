@@ -116,7 +116,7 @@
     "missing_env": "Nedostaje Supabase konfiguracija.",
     "not_found": "Objava nije pronađena.",
     "post_denied_blurred": "Objava trenutno nije moguća. Kontaktirajte podršku.",
-    "time_window_overlap": "Samo jedna aktivna vožnja u istom vremenskom prozoru.",
+    "time_window_overlap": "Već imate aktivan zahtev oko ovog vremena. Izaberite drugo vreme polaska ili prvo uredite postojeći oglas.",
     "match_denied_blurred": "Prihvatanje trenutno nije moguće.",
     "active_cargo_limit_reached": "Dostignut limit aktivnih teretnih naloga.",
     "bank_verification_required": "Potrebna bankovna verifikacija za više teretnih naloga.",
@@ -448,5 +448,27 @@
       "back": "Nazad",
       "close": "Zatvori"
     }
+  },
+  "publishSuccess": {
+    "title": "Uspešno objavljeno",
+    "body": "Vaš oglas je sada aktivan.",
+    "hint": "Možete sada dodati podatke o nalogu i kontaktu, ili to uraditi kasnije.",
+    "viewPost": "Pogledaj objavljeni oglas",
+    "protectTitle": "Zaštitite nalog i primajte novosti o porudžbinama",
+    "protectHint": "Vaš nalog je zaštićen verifikacijom uređajem. Dodajte još jedan način prijave radi boljeg pristupa i primanja obaveštenja o statusu porudžbine.",
+    "connectGoogle": "Poveži Google",
+    "googleConnected": "Google je povezan",
+    "notifyEmail": "Email za obaveštenja: {email}",
+    "orOtherEmail": "Ili koristite drugi email",
+    "emailAddress": "Email adresa",
+    "emailPlaceholder": "email@example.com",
+    "sendVerification": "Pošalji verifikacioni email",
+    "emailSent": "Verifikacioni email je poslat. Proverite inbox da potvrdite.",
+    "phoneTitle": "Olakšajte kontakt nakon potvrde porudžbine",
+    "phoneHint": "Unesite ispravan broj telefona da biste bili dostupni nakon potvrde porudžbine.",
+    "savePhone": "Sačuvaj broj",
+    "savingPhone": "Čuvanje…",
+    "phoneSaved": "Broj telefona je sačuvan",
+    "skip": "Preskoči za sada"
   }
 }

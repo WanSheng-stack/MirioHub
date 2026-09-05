@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import { readWithClockSkewRetry } from "@/lib/auth/readWithClockSkewRetry";
 import {
@@ -149,6 +150,7 @@ type ExtendedProfile = Profile & {
 
 export default function ProfilePage() {
   const t = useTranslations("account");
+  const tIdentity = useTranslations("identity");
   const tErr = useTranslations("error");
   const locale = useLocale();
   const [authReady, setAuthReady] = useState(false);
@@ -159,6 +161,7 @@ export default function ProfilePage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [deviceLoginLoading, setDeviceLoginLoading] = useState(false);
   // Identity-linking state (for logged-in / anonymous users)
   const [identityMsg, setIdentityMsg] = useState<string | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
@@ -318,6 +321,72 @@ export default function ProfilePage() {
     }
   }
 
+  async function loginWithDevice() {
+    setMessage(null);
+    setDeviceLoginLoading(true);
+    try {
+      const clientRequestId = crypto.randomUUID();
+      const optionsRes = await fetch("/api/auth/passkey/login/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientRequestId }),
+      });
+      const optionsJson = (await optionsRes.json()) as {
+        success?: boolean;
+        challengeId?: string;
+        clientRequestId?: string;
+        options?: Record<string, unknown>;
+        errorKey?: string;
+      };
+      if (!optionsRes.ok || !optionsJson.success || !optionsJson.options || !optionsJson.challengeId) {
+        const raw = optionsJson.errorKey ?? "error.device_login_failed";
+        setMessage(tErr(raw.replace(/^error\./, "") as "device_login_failed"));
+        return;
+      }
+
+      let assertion: Awaited<ReturnType<typeof startAuthentication>>;
+      try {
+        assertion = await startAuthentication({
+          optionsJSON: optionsJson.options as unknown as Parameters<
+            typeof startAuthentication
+          >[0]["optionsJSON"],
+        });
+      } catch (webauthnErr: unknown) {
+        const name = webauthnErr instanceof Error ? webauthnErr.name : "";
+        if (name === "AbortError" || name === "NotAllowedError") {
+          return;
+        }
+        setMessage(tErr("device_login_failed"));
+        return;
+      }
+
+      const verifyRes = await fetch("/api/auth/passkey/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          challengeId: optionsJson.challengeId,
+          clientRequestId: optionsJson.clientRequestId ?? clientRequestId,
+          response: assertion,
+        }),
+      });
+      const verifyJson = (await verifyRes.json()) as {
+        success?: boolean;
+        sessionIssued?: boolean;
+        errorKey?: string;
+      };
+      if (verifyJson.sessionIssued === true && verifyJson.success) {
+        // Official SAME-user session minting is not available this phase.
+        return;
+      }
+      const raw = verifyJson.errorKey ?? "error.device_login_failed";
+      setMessage(tErr(raw.replace(/^error\./, "") as "device_login_failed"));
+    } catch {
+      setMessage(tErr("device_login_failed"));
+    } finally {
+      setDeviceLoginLoading(false);
+    }
+  }
+
   async function signInWithGoogle() {
     setMessage(null);
     setGoogleLoading(true);
@@ -454,6 +523,23 @@ export default function ProfilePage() {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">{t("accessTitle")}</h1>
           <p className="mt-2 text-sm leading-relaxed text-zinc-500">{t("welcome")}</p>
         </header>
+
+        <section className="mb-6 space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-zinc-900">
+            {tIdentity("verify_with_device")}
+          </h2>
+          <p className="text-xs leading-relaxed text-zinc-600">
+            {tIdentity("verify_with_device_helper")}
+          </p>
+          <button
+            type="button"
+            disabled={deviceLoginLoading}
+            onClick={() => void loginWithDevice()}
+            className="w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
+          >
+            {tIdentity("continue")}
+          </button>
+        </section>
 
         <button
           type="button"

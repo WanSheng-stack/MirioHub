@@ -68,7 +68,10 @@ export function DraftIdentityCompletion({
       {/* Header */}
       <div className="space-y-1">
         <p className="text-sm font-semibold text-amber-900">
-          {t("identity.complete_to_publish")}
+          {t("identity.verify_with_device")}
+        </p>
+        <p className="text-xs leading-relaxed text-amber-800">
+          {t("identity.verify_with_device_helper")}
         </p>
         <p className="text-xs leading-relaxed text-amber-800">
           {t("identity.draft_saved_not_published")}
@@ -99,11 +102,8 @@ export function DraftIdentityCompletion({
           <path d="M6 12a6 6 0 0 1 12 0" />
           <path d="M3 12a9 9 0 0 1 18 0" />
         </svg>
-        {t("identity.retry_passkey")}
+        {t("identity.continue")}
       </button>
-      <p className="text-xs leading-relaxed text-amber-800">
-        {t("identity.verify_with_device_helper")}
-      </p>
 
       {/* ── Path B/C: Google + Email — only with a valid activation context */}
       {allowIdentityUpgrade ? (

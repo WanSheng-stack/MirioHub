@@ -1,3 +1,8 @@
+/**
+ * DEPRECATED / remove candidate (PHASE 6.4A).
+ * Custom public.passkeys login cannot mint a SAME-user Supabase session.
+ * Returning login should use supabase.auth.signInWithPasskey() after native enrollment.
+ */
 /** Official GoTrue Admin API cannot mint a session for an existing user id. */
 export const LOGIN_SESSION_ISSUANCE_AVAILABLE = false;
 

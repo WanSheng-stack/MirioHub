@@ -1,3 +1,7 @@
+-- DEPRECATED / remove candidate (PHASE 6.4A).
+-- Do NOT apply this migration. Native returning login uses
+-- supabase.auth.signInWithPasskey() after a permanent-user registerPasskey().
+--
 -- PHASE 6.4: returning-user WebAuthn authentication challenge lifecycle.
 -- Does NOT alter registration RPCs or deployed 000001 / 000002 / 000004.
 -- Existing reserve_* / mark_* require auth.uid() = user_id and cannot serve

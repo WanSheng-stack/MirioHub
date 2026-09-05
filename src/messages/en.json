@@ -226,6 +226,10 @@
     "emailVerificationSent": "Verification link sent — check your inbox",
     "draftActivated": "Your pending post is now live!",
     "draftActivatedCount": "{count} pending post(s) published",
+    "addDeviceLoginTitle": "Add a device sign-in method",
+    "addDeviceLoginHint": "You can later sign in directly with your fingerprint, face, or device unlock.",
+    "addDeviceLogin": "Add device sign-in",
+    "deviceLoginAdded": "Device sign-in is added",
     "identity": {
       "post_published_after_verification": "Identity verified — your post is now live!",
       "view_post": "View your post"

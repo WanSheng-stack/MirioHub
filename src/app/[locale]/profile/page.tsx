@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
-import { startAuthentication } from "@simplewebauthn/browser";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import { readWithClockSkewRetry } from "@/lib/auth/readWithClockSkewRetry";
 import {
   isProfileFullNameEmpty,
   resolveGoogleDisplayName,
 } from "@/lib/auth/googleProfileName";
+import {
+  isPermanentConfirmedUser,
+  isWebAuthnUserCancel,
+  nativePasskeyErrorKey,
+} from "@/lib/auth/nativePasskey";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -170,6 +174,10 @@ export default function ProfilePage() {
   // postId of a draft that was activated after Google/Email identity verification.
   // Populated from the server response (not from client URL).
   const [activatedPostId, setActivatedPostId] = useState<string | null>(null);
+  const [nativePasskeyCount, setNativePasskeyCount] = useState<number | null>(null);
+  const [nativePasskeyReady, setNativePasskeyReady] = useState(false);
+  const [nativeEnrollLoading, setNativeEnrollLoading] = useState(false);
+  const [nativeEnrollMsg, setNativeEnrollMsg] = useState<string | null>(null);
   const nameFillAttemptedRef = useRef(false);
 
   const bankRef = useMemo(
@@ -325,67 +333,85 @@ export default function ProfilePage() {
     setMessage(null);
     setDeviceLoginLoading(true);
     try {
-      const clientRequestId = crypto.randomUUID();
-      const optionsRes = await fetch("/api/auth/passkey/login/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientRequestId }),
-      });
-      const optionsJson = (await optionsRes.json()) as {
-        success?: boolean;
-        challengeId?: string;
-        clientRequestId?: string;
-        options?: Record<string, unknown>;
-        errorKey?: string;
-      };
-      if (!optionsRes.ok || !optionsJson.success || !optionsJson.options || !optionsJson.challengeId) {
-        const raw = optionsJson.errorKey ?? "error.device_login_failed";
-        setMessage(tErr(raw.replace(/^error\./, "") as "device_login_failed"));
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signInWithPasskey();
+      if (error) {
+        if (isWebAuthnUserCancel(error)) return;
+        setMessage(tErr(nativePasskeyErrorKey(error) as "device_login_failed"));
         return;
       }
-
-      let assertion: Awaited<ReturnType<typeof startAuthentication>>;
-      try {
-        assertion = await startAuthentication({
-          optionsJSON: optionsJson.options as unknown as Parameters<
-            typeof startAuthentication
-          >[0]["optionsJSON"],
-        });
-      } catch (webauthnErr: unknown) {
-        const name = webauthnErr instanceof Error ? webauthnErr.name : "";
-        if (name === "AbortError" || name === "NotAllowedError") {
-          return;
-        }
+      if (!data.session || !data.user) {
         setMessage(tErr("device_login_failed"));
         return;
       }
-
-      const verifyRes = await fetch("/api/auth/passkey/login/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          challengeId: optionsJson.challengeId,
-          clientRequestId: optionsJson.clientRequestId ?? clientRequestId,
-          response: assertion,
-        }),
-      });
-      const verifyJson = (await verifyRes.json()) as {
-        success?: boolean;
-        sessionIssued?: boolean;
-        errorKey?: string;
-      };
-      if (verifyJson.sessionIssued === true && verifyJson.success) {
-        // Official SAME-user session minting is not available this phase.
-        return;
-      }
-      const raw = verifyJson.errorKey ?? "error.device_login_failed";
-      setMessage(tErr(raw.replace(/^error\./, "") as "device_login_failed"));
-    } catch {
+      setUser(data.user);
+      setAuthReady(true);
+      await loadProfile(data.user.id);
+      await loadSystemConfig();
+    } catch (err) {
+      if (isWebAuthnUserCancel(err)) return;
       setMessage(tErr("device_login_failed"));
     } finally {
       setDeviceLoginLoading(false);
     }
   }
+
+  async function enrollNativeDeviceLogin() {
+    setNativeEnrollMsg(null);
+    setNativeEnrollLoading(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.registerPasskey();
+      if (error) {
+        if (isWebAuthnUserCancel(error)) return;
+        setNativeEnrollMsg(tErr(nativePasskeyErrorKey(error) as "device_login_failed"));
+        return;
+      }
+      const { data, error: listError } = await supabase.auth.passkey.list();
+      if (listError || !Array.isArray(data)) {
+        setNativePasskeyCount(1);
+        setNativePasskeyReady(true);
+        return;
+      }
+      setNativePasskeyCount(data.length);
+      setNativePasskeyReady(true);
+    } catch (err) {
+      if (isWebAuthnUserCancel(err)) return;
+      setNativeEnrollMsg(tErr("device_login_failed"));
+    } finally {
+      setNativeEnrollLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!authReady || !user || !isPermanentConfirmedUser(user)) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.passkey.list();
+        if (cancelled) return;
+        if (error) {
+          setNativePasskeyCount(null);
+          setNativePasskeyReady(true);
+          return;
+        }
+        setNativePasskeyCount(Array.isArray(data) ? data.length : 0);
+        setNativePasskeyReady(true);
+      } catch {
+        if (cancelled) return;
+        setNativePasskeyCount(null);
+        setNativePasskeyReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Native list is derived from the current Auth user, not publish eligibility.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady, user?.id, user?.is_anonymous, user?.email_confirmed_at]);
 
   async function signInWithGoogle() {
     setMessage(null);
@@ -539,6 +565,7 @@ export default function ProfilePage() {
           >
             {tIdentity("continue")}
           </button>
+          {message ? <p className="text-sm text-red-600">{message}</p> : null}
         </section>
 
         <button
@@ -716,6 +743,15 @@ export default function ProfilePage() {
       linkGoogle={linkGoogle}
       bindEmail={bindEmail}
     />
+    <NativeDeviceLoginSection
+      user={user}
+      nativePasskeyReady={nativePasskeyReady}
+      nativePasskeyCount={nativePasskeyCount}
+      nativeEnrollLoading={nativeEnrollLoading}
+      nativeEnrollMsg={nativeEnrollMsg}
+      enrollNativeDeviceLogin={enrollNativeDeviceLogin}
+      t={t}
+    />
     </>
   );
 }
@@ -736,6 +772,49 @@ interface IdentitySectionProps {
   setEmailForBinding: (v: string) => void;
   linkGoogle: () => Promise<void>;
   bindEmail: () => Promise<void>;
+}
+
+function NativeDeviceLoginSection({
+  user,
+  nativePasskeyReady,
+  nativePasskeyCount,
+  nativeEnrollLoading,
+  nativeEnrollMsg,
+  enrollNativeDeviceLogin,
+  t,
+}: {
+  user: User;
+  nativePasskeyReady: boolean;
+  nativePasskeyCount: number | null;
+  nativeEnrollLoading: boolean;
+  nativeEnrollMsg: string | null;
+  enrollNativeDeviceLogin: () => Promise<void>;
+  t: TFn;
+}) {
+  if (!isPermanentConfirmedUser(user) || !nativePasskeyReady) return null;
+  if (nativePasskeyCount === null) return null;
+
+  const enrolled = nativePasskeyCount >= 1;
+
+  return (
+    <section className="mx-auto mt-4 max-w-lg rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
+      <h2 className="text-sm font-semibold text-zinc-900">{t("addDeviceLoginTitle")}</h2>
+      <p className="text-xs leading-relaxed text-zinc-600">{t("addDeviceLoginHint")}</p>
+      {enrolled ? (
+        <p className="text-sm font-medium text-emerald-700">{t("deviceLoginAdded")}</p>
+      ) : (
+        <button
+          type="button"
+          disabled={nativeEnrollLoading}
+          onClick={() => void enrollNativeDeviceLogin()}
+          className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:opacity-50"
+        >
+          {t("addDeviceLogin")}
+        </button>
+      )}
+      {nativeEnrollMsg ? <p className="text-sm text-red-600">{nativeEnrollMsg}</p> : null}
+    </section>
+  );
 }
 
 function IdentitySection({

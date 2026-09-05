@@ -226,6 +226,10 @@
     "emailVerificationSent": "验证链接已发送，请查收邮件",
     "draftActivated": "您的待发布帖子已上线！",
     "draftActivatedCount": "{count} 条待发布帖子已发布",
+    "addDeviceLoginTitle": "添加设备登录方式",
+    "addDeviceLoginHint": "以后可使用指纹、面容或设备解锁直接登录。",
+    "addDeviceLogin": "添加设备登录",
+    "deviceLoginAdded": "设备登录已添加",
     "identity": {
       "post_published_after_verification": "身份验证成功——您的帖子已正式发布！",
       "view_post": "查看帖子"

@@ -1,3 +1,8 @@
+/**
+ * DEPRECATED / remove candidate (PHASE 6.4A).
+ * Returning login should use supabase.auth.signInWithPasskey().
+ * Do not apply 20260906000001_passkey_authentication_v86.sql for this path.
+ */
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseAdminClient } from "@supabase/supabase-js";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";

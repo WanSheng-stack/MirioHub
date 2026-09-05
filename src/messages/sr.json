@@ -226,6 +226,10 @@
     "emailVerificationSent": "Link je poslat — proverite inbox",
     "draftActivated": "Vaš oglas je sada aktivan!",
     "draftActivatedCount": "{count} oglas(a) je objavljen",
+    "addDeviceLoginTitle": "Dodajte način prijave uređajem",
+    "addDeviceLoginHint": "Kasnije možete da se prijavite otiskom prsta, prepoznavanjem lica ili otključavanjem uređaja.",
+    "addDeviceLogin": "Dodajte prijavu uređajem",
+    "deviceLoginAdded": "Prijava uređajem je dodata",
     "identity": {
       "post_published_after_verification": "Identitet potvrđen — vaš oglas je objavljen!",
       "view_post": "Pogledaj oglas"

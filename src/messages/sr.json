@@ -144,7 +144,9 @@
     "server_internal_crash": "Privremeni prekid veze sa serverom. Sistem je automatski sačuvao vaš oglas kao skicu",
     "anonymous_auth_failed": "Inicijalizacija anonimne sesije nije uspela. Osvežite stranicu i pokušajte ponovo.",
     "challenge_init_failed": "Pribavljanje sigurnosnog koda nije uspelo. Pokušajte ponovo.",
-    "shadow_draft_failed": "Čuvanje skice nije uspelo. Proverite internet i pokušajte ponovo."
+    "shadow_draft_failed": "Čuvanje skice nije uspelo. Proverite internet i pokušajte ponovo.",
+    "invalid_bump_fee_boundary": "Hitna naknada nije validna. Koristite iznos u centima od 0 do 50,00 EUR.",
+    "invalid_payload_numeric_values": "Nevažeća polja objave. Brojevi, sedišta i vremenski bafer ne smeju biti negativni."
   },
   "success": {
     "posted": "Uspešno objavljeno.",

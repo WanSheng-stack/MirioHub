@@ -280,6 +280,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       const basePayload = {
         ...state,
         associated_user_id: user_id,
+        locale,
       };
 
       if (eligJson.eligible === true) {

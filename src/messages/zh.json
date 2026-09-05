@@ -144,7 +144,9 @@
     "server_internal_crash": "服务器临时连接超时，系统已自动启动自愈通道为您加密保存草稿单",
     "anonymous_auth_failed": "匿名会话初始化失败，请刷新后重试",
     "challenge_init_failed": "安全挑战码获取失败，请重试",
-    "shadow_draft_failed": "草稿暂存失败，请检查网络后重试"
+    "shadow_draft_failed": "草稿暂存失败，请检查网络后重试",
+    "invalid_bump_fee_boundary": "加急费无效。请使用 0 至 50.00 EUR 的整数分值。",
+    "invalid_payload_numeric_values": "发布字段无效。件数、座位和时间缓冲不能为负数。"
   },
   "success": {
     "posted": "发布成功。",

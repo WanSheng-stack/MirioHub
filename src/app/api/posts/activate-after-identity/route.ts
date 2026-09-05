@@ -32,6 +32,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
+import { evaluateStage1ActivePublicationRisk } from '@/lib/auth/stage1ActiveRisk';
 
 // ---------------------------------------------------------------------------
 // Supabase client (anon key — RLS enforces ownership)
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
   // ── Fetch targeted post with ownership check ──────────────────────────────
   const { data: post, error: fetchErr } = await supabase
     .from('posts')
-    .select('id, user_id, status')
+    .select('id, user_id, status, post_type, departure_date, departure_time_window')
     .eq('id', postId)
     .eq('user_id', user.id) // server-enforces ownership — RLS is third layer
     .maybeSingle();
@@ -124,7 +125,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const typedPost = post as { id: string; user_id: string; status: string };
+  const typedPost = post as {
+    id: string;
+    user_id: string;
+    status: string;
+    post_type: string;
+    departure_date: string | null;
+    departure_time_window: string | null;
+  };
 
   // CASE B: already active → idempotent success (no mutation)
   if (typedPost.status === 'active') {
@@ -155,7 +163,15 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── CASE A: Activate the targeted draft in-place ──────────────────────────
+  const risk = await evaluateStage1ActivePublicationRisk(supabase, user.id, typedPost);
+  if (!risk.allowed) {
+    return NextResponse.json(
+      { ok: false, errorKey: risk.errorKey },
+      { status: 400 },
+    );
+  }
+
+  // ── CASE A: Activate the targeted draft in-place (status only) ────────────
   const { error: updateErr } = await supabase
     .from('posts')
     .update({ status: 'active', updated_at: new Date().toISOString() })

@@ -10,9 +10,15 @@ import type {
   AuthenticationResponseJSON,
 } from '@simplewebauthn/server';
 import {
-  generateCanonicalPayloadHashV1,
-  type RawPostInput,
-} from '@/lib/auth/canonicalPayloadHash';
+  buildCanonicalStage1PublishContext,
+  CanonicalStage1Error,
+  toRpcStage1Payload,
+} from '@/lib/auth/buildCanonicalStage1PublishContext';
+import {
+  evaluateStage1ActivePublicationRisk,
+  findPublishIntentByClientRequestId,
+  isIdempotentActiveRetry,
+} from '@/lib/auth/stage1ActiveRisk';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -47,7 +53,7 @@ interface RequestBody {
   response: RegistrationResponseJSON | AuthenticationResponseJSON;
   installationId: string;
   clientRequestId: string;
-  rawPostInput: RawPostInput;
+  rawPostInput: Record<string, unknown>;
   ceremonyType: 'registration' | 'authentication';
 }
 
@@ -103,6 +109,12 @@ export async function POST(request: Request) {
     } = body;
     // Assign to outer-scoped variable so catch can use it.
     clientRequestId = body.clientRequestId;
+    if (!clientRequestId) {
+      return NextResponse.json(
+        { success: false, errorKey: 'error.invalid_client_request_id' },
+        { status: 400 },
+      );
+    }
 
     // 1. Reserve & validate challenge
     const { data: challengeData, error: chErr } = await supabase.rpc(
@@ -122,26 +134,25 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Server-side route distance
-    const waypointsArray = Array.isArray(rawPostInput.waypoints)
-      ? (rawPostInput.waypoints as Record<string, unknown>[])
-      : [];
-
-    const { data: serverKmsData, error: kmsErr } = await supabase.rpc(
-      'calculate_server_route_kms_via_waypoints',
-      {
-        p_origin: rawPostInput.origin_address,
-        p_waypoints: waypointsArray.map((w) => w.address),
-        p_destination: rawPostInput.destination_address,
-      },
+    // 2–3. Shared canonical Stage-1 (validate, ordered route, fee, hash)
+    const ctx = await buildCanonicalStage1PublishContext(rawPostInput);
+    const existing = await findPublishIntentByClientRequestId(
+      supabase,
+      clientRequestId,
     );
-
-    if (kmsErr) throw new Error('Route calculation failed');
-    const server_kms = serverKmsData as number;
-
-    // 3. Canonical payload hash + server fee
-    const { hash: canonicalPayloadHash, serverFeeMinor: serverFeeMinorVal } =
-      generateCanonicalPayloadHashV1(rawPostInput, server_kms);
+    if (!isIdempotentActiveRetry(existing, current_uid, ctx.payloadHash)) {
+      const risk = await evaluateStage1ActivePublicationRisk(
+        supabase,
+        current_uid,
+        ctx.canonicalPayload,
+      );
+      if (!risk.allowed) {
+        return NextResponse.json(
+          { success: false, errorKey: risk.errorKey },
+          { status: 400 },
+        );
+      }
+    }
 
     // 4. WebAuthn verification
     const expectedRPID = process.env.WEBAUTHN_RP_ID!;
@@ -244,7 +255,7 @@ export async function POST(request: Request) {
         p_challenge_id: challengeId,
         p_client_request_id: clientRequestId,
         p_processing_token: challengeRow.processing_token,
-        p_payload_hash: canonicalPayloadHash,
+        p_payload_hash: ctx.payloadHash,
         p_installation_id: installationId,
         p_credential_id: final_credential_id,
         p_public_key: final_public_key,
@@ -252,8 +263,8 @@ export async function POST(request: Request) {
         p_transports: final_transports,
         p_device_type: final_device_type,
         p_backed_up: final_backed_up,
-        p_post_payload: rawPostInput,
-        p_server_fee_minor: serverFeeMinorVal,
+        p_post_payload: toRpcStage1Payload(ctx.canonicalPayload, ctx.serverFeeMinor),
+        p_server_fee_minor: ctx.serverFeeMinor,
         p_ceremony_type: ceremonyType,
       },
     );
@@ -273,6 +284,12 @@ export async function POST(request: Request) {
       isDuplicate: tx.is_duplicate,
     });
   } catch (error: unknown) {
+    if (error instanceof CanonicalStage1Error) {
+      return NextResponse.json(
+        { success: false, errorKey: error.errorKey },
+        { status: 400 },
+      );
+    }
     const msg =
       error instanceof Error ? error.message : 'error.server_internal_crash';
     // Only attempt cleanup when we know which challenge to mark failed.

@@ -144,7 +144,9 @@
     "server_internal_crash": "Server temporary connection timeout, auto-saving draft corridor",
     "anonymous_auth_failed": "Failed to initialize anonymous session. Please refresh and try again.",
     "challenge_init_failed": "Failed to obtain security challenge. Please try again.",
-    "shadow_draft_failed": "Draft save failed. Please check your connection and retry."
+    "shadow_draft_failed": "Draft save failed. Please check your connection and retry.",
+    "invalid_bump_fee_boundary": "Urgency fee is invalid. Use a whole-cent amount from 0 to 50.00 EUR.",
+    "invalid_payload_numeric_values": "One or more publish fields are invalid. Counts, seats, and time buffer cannot be negative."
   },
   "success": {
     "posted": "Published successfully.",

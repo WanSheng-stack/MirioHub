@@ -13,9 +13,15 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getAccountActivationEligibility } from "@/lib/auth/accountActivationEligibility";
 import {
-  generateCanonicalPayloadHashV1,
-  type RawPostInput,
-} from "@/lib/auth/canonicalPayloadHash";
+  buildCanonicalStage1PublishContext,
+  CanonicalStage1Error,
+  toRpcStage1Payload,
+} from "@/lib/auth/buildCanonicalStage1PublishContext";
+import {
+  evaluateStage1ActivePublicationRisk,
+  findPublishIntentByClientRequestId,
+  isIdempotentActiveRetry,
+} from "@/lib/auth/stage1ActiveRisk";
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -39,7 +45,7 @@ async function createClient() {
 
 interface RequestBody {
   clientRequestId?: unknown;
-  rawPostInput?: RawPostInput;
+  rawPostInput?: Record<string, unknown>;
 }
 
 interface PublishResult {
@@ -92,40 +98,33 @@ export async function POST(request: Request) {
   }
 
   try {
-    const waypointsArray = Array.isArray(rawPostInput.waypoints)
-      ? (rawPostInput.waypoints as Record<string, unknown>[])
-      : [];
-
-    const { data: serverKmsData, error: kmsErr } = await supabase.rpc(
-      "calculate_server_route_kms_via_waypoints",
-      {
-        p_origin: rawPostInput.origin_address,
-        p_waypoints: waypointsArray.map((w) => w.address),
-        p_destination: rawPostInput.destination_address,
-      },
+    const ctx = await buildCanonicalStage1PublishContext(rawPostInput);
+    const existing = await findPublishIntentByClientRequestId(
+      supabase,
+      clientRequestId,
     );
-
-    if (kmsErr) {
-      return NextResponse.json(
-        { success: false, errorKey: "error.server_price_calculation_failed" },
-        { status: 500 },
+    if (!isIdempotentActiveRetry(existing, user.id, ctx.payloadHash)) {
+      const risk = await evaluateStage1ActivePublicationRisk(
+        supabase,
+        user.id,
+        ctx.canonicalPayload,
       );
+      if (!risk.allowed) {
+        return NextResponse.json(
+          { success: false, errorKey: risk.errorKey },
+          { status: 400 },
+        );
+      }
     }
-
-    const serverKms = typeof serverKmsData === "number" ? serverKmsData : 0;
-    const { hash, serverFeeMinor } = generateCanonicalPayloadHashV1(
-      rawPostInput,
-      serverKms,
-    );
 
     const { data: txData, error: txErr } = await supabase.rpc(
       "publish_active_post_idempotent_v86",
       {
         p_user_id: user.id,
         p_client_request_id: clientRequestId,
-        p_payload_hash: hash,
-        p_post_payload: rawPostInput,
-        p_server_fee_minor: serverFeeMinor,
+        p_payload_hash: ctx.payloadHash,
+        p_post_payload: toRpcStage1Payload(ctx.canonicalPayload, ctx.serverFeeMinor),
+        p_server_fee_minor: ctx.serverFeeMinor,
       },
     );
 
@@ -154,6 +153,12 @@ export async function POST(request: Request) {
       isDuplicate: Boolean(tx.is_duplicate),
     });
   } catch (error: unknown) {
+    if (error instanceof CanonicalStage1Error) {
+      return NextResponse.json(
+        { success: false, errorKey: error.errorKey },
+        { status: 400 },
+      );
+    }
     const msg = error instanceof Error ? error.message : "error.server_internal_crash";
     const errorKey = msg.startsWith("error.") ? msg : "error.server_internal_crash";
     return NextResponse.json({ success: false, errorKey }, { status: 400 });

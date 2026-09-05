@@ -32,6 +32,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
+import { evaluateStage1ActivePublicationRisk } from '@/lib/auth/stage1ActiveRisk';
 import {
   normalizePhone,
   normalizeLicensePlate,
@@ -342,10 +343,27 @@ export async function POST(request: Request) {
   if (post.status === 'draft') {
     const { eligible } = await getAccountActivationEligibility(supabase, user);
     if (eligible) {
+      const risk = await evaluateStage1ActivePublicationRisk(supabase, user.id, post);
+      if (!risk.allowed) {
+        const { error: contactOnlyErr } = await supabase
+          .from('posts')
+          .update(updatePayload)
+          .eq('id', postId)
+          .eq('user_id', user.id);
+        if (contactOnlyErr) {
+          return NextResponse.json(
+            { ok: false, errorKey: 'error.submit_failed' },
+            { status: 500 },
+          );
+        }
+        return NextResponse.json(
+          { ok: false, errorKey: risk.errorKey },
+          { status: 400 },
+        );
+      }
       updatePayload.status = 'active';
       isActive = true;
     }
-    // No identity → keep status='draft', contact info saved for future use
   }
 
   // ── Persist ───────────────────────────────────────────────────────────────

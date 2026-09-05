@@ -1052,7 +1052,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
                 {errorKey ? (
                   <p className="text-sm text-red-600">
-                    {t(`error.${errorKey}` as "error.post_denied_blurred")}
+                    {t.has(`error.${errorKey}` as "error.device_verification_failed")
+                      ? t(`error.${errorKey}` as "error.device_verification_failed")
+                      : t("error.device_verification_failed")}
                   </p>
                 ) : null}
               </div>

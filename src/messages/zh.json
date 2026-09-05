@@ -140,6 +140,7 @@
     "device_verification_in_progress": "设备验证正在处理中，请稍后重试。",
     "device_verification_invalid": "设备验证无效，请重试。",
     "device_verification_failed": "设备验证失败，请重试。",
+    "device_verification_configuration_error": "设备验证暂时不可用，请稍后再试或使用其他验证方式。",
     "crypto_handshake_failed": "设备生物硬件锁（指纹/刷脸）密钥交换失败",
     "crypto_invalid_signature": "手机指纹/脸部生物锁特征验签失败，请重试",
     "security_boundary_compromised": "安全警报：当前登录会话主体与单据所有者身份不一致",

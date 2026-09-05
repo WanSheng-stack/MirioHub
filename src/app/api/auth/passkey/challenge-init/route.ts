@@ -7,6 +7,10 @@ import {
   generateAuthenticationOptions,
 } from '@simplewebauthn/server';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
+import {
+  getWebAuthnConfig,
+  WebAuthnConfigError,
+} from '@/lib/auth/webauthnConfig';
 
 // ---------------------------------------------------------------------------
 // A. sessionClient — SSR cookie client, anon key, subject to RLS.
@@ -150,8 +154,7 @@ export async function POST(request: Request) {
     const hasKeys = passkeyRows.length > 0;
 
     // ── Generate WebAuthn options ──────────────────────────────────────────
-    const expectedRPID = process.env.WEBAUTHN_RP_ID ?? 'localhost';
-    const rpName = process.env.WEBAUTHN_RP_NAME ?? 'MirioHub Co-Car';
+    const { rpID, rpName } = getWebAuthnConfig();
 
     let ceremonyType: 'registration' | 'authentication';
     let challengeText: string;
@@ -161,7 +164,7 @@ export async function POST(request: Request) {
       ceremonyType = 'registration';
       const opts = await generateRegistrationOptions({
         rpName,
-        rpID: expectedRPID,
+        rpID,
         userName: user.email ?? `user_${userId.slice(0, 8)}`,
         userID: new TextEncoder().encode(userId),
         userDisplayName: user.email ?? 'MirioHub Traveler',
@@ -176,7 +179,7 @@ export async function POST(request: Request) {
     } else {
       ceremonyType = 'authentication';
       const opts = await generateAuthenticationOptions({
-        rpID: expectedRPID,
+        rpID,
         allowCredentials: passkeyRows.map((k) => ({
           id: k.credential_id,
           transports: k.transports ?? undefined,
@@ -227,6 +230,16 @@ export async function POST(request: Request) {
     });
   } catch (err: unknown) {
     const e = err instanceof Error ? err : new Error(String(err));
+    if (err instanceof WebAuthnConfigError) {
+      console.error('[webauthn] configuration error', {
+        name: e.name,
+        message: e.message,
+      });
+      return NextResponse.json(
+        { success: false, errorKey: err.errorKey },
+        { status: 500 },
+      );
+    }
     console.error('[challenge-init] unexpected error:', {
       name: e.name,
       message: e.message,

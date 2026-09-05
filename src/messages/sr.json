@@ -140,6 +140,7 @@
     "device_verification_in_progress": "Verifikacija uređajem je već u toku. Pokušajte ponovo za koji trenutak.",
     "device_verification_invalid": "Verifikacija uređajem nije važeća. Pokušajte ponovo.",
     "device_verification_failed": "Verifikacija uređajem nije uspela. Pokušajte ponovo.",
+    "device_verification_configuration_error": "Verifikacija uređajem trenutno nije dostupna. Pokušajte kasnije ili koristite drugi način verifikacije.",
     "crypto_handshake_failed": "Neuspešna razmena ključeva sa biometrijskim modulom uređaja",
     "crypto_invalid_signature": "Neuspešna biometrijska verifikacija otiskom prsta ili licem, pokušajte ponovo",
     "security_boundary_compromised": "Sigurnosno upozorenje: Identitet sesije se ne poklapa sa vlasnikom naloga",

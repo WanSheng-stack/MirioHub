@@ -28,6 +28,11 @@ import {
   isUsableReserveChallengeRow,
   normalizeReserveChallengeRow,
 } from '@/lib/auth/normalizeReserveChallengeRow';
+import {
+  clientErrorKeyFromUnknownVerifyError,
+  getWebAuthnConfig,
+  WebAuthnConfigError,
+} from '@/lib/auth/webauthnConfig';
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -108,6 +113,8 @@ export async function POST(request: Request) {
       return jsonError('error.device_verification_invalid');
     }
 
+    const { rpID, origin } = getWebAuthnConfig();
+
     const { data: challengeData, error: chErr } = await supabase.rpc(
       'reserve_challenge_with_lease_v86',
       {
@@ -156,9 +163,6 @@ export async function POST(request: Request) {
       }
     }
 
-    const expectedRPID = process.env.WEBAUTHN_RP_ID!;
-    const expectedOrigin = process.env.WEBAUTHN_ORIGIN!;
-
     let verified = false;
     let regInfo: Awaited<ReturnType<typeof verifyRegistrationResponse>>['registrationInfo'] =
       undefined;
@@ -171,8 +175,8 @@ export async function POST(request: Request) {
       const verifyRes = await verifyRegistrationResponse({
         response: response as RegistrationResponseJSON,
         expectedChallenge: challengeRow.challenge_text,
-        expectedOrigin,
-        expectedRPID,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
         requireUserVerification: true,
       });
       verified = verifyRes.verified;
@@ -194,8 +198,8 @@ export async function POST(request: Request) {
       const verifyRes = await verifyAuthenticationResponse({
         response: response as AuthenticationResponseJSON,
         expectedChallenge: challengeRow.challenge_text,
-        expectedOrigin,
-        expectedRPID,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
         credential: {
           id: dbKey.credential_id,
           publicKey: Buffer.from(dbKey.public_key, 'base64'),
@@ -283,14 +287,25 @@ export async function POST(request: Request) {
       await markChallengeFailed(supabase, fence, 'canonical_rejected');
       return jsonError(error.errorKey);
     }
-    const msg =
-      error instanceof Error ? error.message : 'error.server_internal_crash';
+    const e = error instanceof Error ? error : new Error(String(error));
+    if (error instanceof WebAuthnConfigError) {
+      console.error('[webauthn] configuration error', {
+        name: e.name,
+        message: e.message,
+        client_request_id: fence?.clientRequestId,
+        ceremony_type: ceremonyType,
+      });
+      await markChallengeFailed(supabase, fence, 'configuration_error');
+      return jsonError(error.errorKey, 500);
+    }
     console.error('[verify] unexpected error', {
+      name: e.name,
+      message: e.message,
       client_request_id: fence?.clientRequestId,
       ceremony_type: ceremonyType,
       category: 'internal_exception',
     });
     await markChallengeFailed(supabase, fence, 'internal_exception');
-    return NextResponse.json({ success: false, errorKey: msg }, { status: 500 });
+    return jsonError(clientErrorKeyFromUnknownVerifyError(error));
   }
 }

@@ -140,6 +140,7 @@
     "device_verification_in_progress": "Device verification is already being processed. Please try again shortly.",
     "device_verification_invalid": "Device verification is invalid. Please try again.",
     "device_verification_failed": "Device verification failed. Please try again.",
+    "device_verification_configuration_error": "Device verification is temporarily unavailable. Please try again later or use another verification method.",
     "crypto_handshake_failed": "Biometric hardware signature exchange failed",
     "crypto_invalid_signature": "Biometric passkey signature verification failed",
     "security_boundary_compromised": "Security alert: session identity mismatched",

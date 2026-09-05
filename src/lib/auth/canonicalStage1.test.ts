@@ -18,6 +18,7 @@ import {
   processDemandPostIntercept,
   processSupplyPostIntercept,
 } from "@/lib/post-intercept";
+import { mapChallengeReserveReason } from "@/lib/auth/markChallengeFailed";
 
 const baseRaw: Record<string, unknown> = {
   post_type: "demand",
@@ -152,5 +153,10 @@ assert.equal(
   }).allowed,
   true,
 );
+
+assert.equal(mapChallengeReserveReason("expired"), "error.device_verification_expired");
+assert.equal(mapChallengeReserveReason("in_progress"), "error.device_verification_in_progress");
+assert.equal(mapChallengeReserveReason("failed"), "error.device_verification_failed");
+assert.equal(mapChallengeReserveReason("missing"), "error.device_verification_invalid");
 
 console.log("PHASE 6 canonical/risk unit tests passed");

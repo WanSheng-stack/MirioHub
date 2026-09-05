@@ -101,6 +101,9 @@ export function DraftIdentityCompletion({
         </svg>
         {t("identity.retry_passkey")}
       </button>
+      <p className="text-xs leading-relaxed text-amber-800">
+        {t("identity.verify_with_device_helper")}
+      </p>
 
       {/* ── Path B/C: Google + Email — only with a valid activation context */}
       {allowIdentityUpgrade ? (

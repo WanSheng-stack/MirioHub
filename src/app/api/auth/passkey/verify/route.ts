@@ -19,10 +19,11 @@ import {
   findPublishIntentByClientRequestId,
   isIdempotentActiveRetry,
 } from '@/lib/auth/stage1ActiveRisk';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import {
+  classifyChallengeReserveFailure,
+  markChallengeFailed,
+  type ChallengeFence,
+} from '@/lib/auth/markChallengeFailed';
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -43,10 +44,6 @@ async function createClient() {
     },
   });
 }
-
-// ---------------------------------------------------------------------------
-// POST /api/auth/passkey/verify
-// ---------------------------------------------------------------------------
 
 interface RequestBody {
   challengeId: string;
@@ -79,6 +76,10 @@ interface TxResult {
   is_duplicate?: boolean;
 }
 
+function jsonError(errorKey: string, status = 400) {
+  return NextResponse.json({ success: false, errorKey }, { status });
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
 
@@ -87,36 +88,28 @@ export async function POST(request: Request) {
   } = await supabase.auth.getSession();
 
   if (!session?.user?.id) {
-    return NextResponse.json(
-      { success: false, errorKey: 'error.unauthorized_anonymous_session' },
-      { status: 401 },
-    );
+    return jsonError('error.unauthorized_anonymous_session', 401);
   }
 
   const current_uid = session.user.id;
-
-  // Declare outside try so catch can reference it for challenge cleanup.
-  let clientRequestId: string | undefined;
+  let fence: ChallengeFence | null = null;
+  let ceremonyType: 'registration' | 'authentication' | undefined;
 
   try {
     const body = (await request.json()) as RequestBody;
-    const {
-      challengeId,
-      response,
-      installationId,
-      rawPostInput,
-      ceremonyType,
-    } = body;
-    // Assign to outer-scoped variable so catch can use it.
-    clientRequestId = body.clientRequestId;
+    const { challengeId, response, installationId, rawPostInput } = body;
+    ceremonyType = body.ceremonyType;
+    const clientRequestId = body.clientRequestId;
     if (!clientRequestId) {
-      return NextResponse.json(
-        { success: false, errorKey: 'error.invalid_client_request_id' },
-        { status: 400 },
-      );
+      return jsonError('error.invalid_client_request_id');
+    }
+    if (!challengeId || !response) {
+      return jsonError('error.device_verification_invalid');
+    }
+    if (ceremonyType !== 'registration' && ceremonyType !== 'authentication') {
+      return jsonError('error.device_verification_invalid');
     }
 
-    // 1. Reserve & validate challenge
     const { data: challengeData, error: chErr } = await supabase.rpc(
       'reserve_challenge_with_lease_v86',
       {
@@ -128,13 +121,26 @@ export async function POST(request: Request) {
     const challengeRow = challengeData as ChallengeRow | null;
 
     if (chErr || !challengeRow?.is_valid) {
-      return NextResponse.json(
-        { success: false, errorKey: 'error.invalid_or_consumed_challenge' },
-        { status: 400 },
+      const errorKey = await classifyChallengeReserveFailure(
+        supabase,
+        challengeId,
+        clientRequestId,
       );
+      console.error('[verify] reserve rejected', {
+        challenge_id: challengeId,
+        client_request_id: clientRequestId,
+        ceremony_type: ceremonyType,
+        category: 'reserve_rejected',
+      });
+      return jsonError(errorKey);
     }
 
-    // 2–3. Shared canonical Stage-1 (validate, ordered route, fee, hash)
+    fence = {
+      challengeId,
+      clientRequestId,
+      processingToken: challengeRow.processing_token,
+    };
+
     const ctx = await buildCanonicalStage1PublishContext(rawPostInput);
     const existing = await findPublishIntentByClientRequestId(
       supabase,
@@ -147,14 +153,11 @@ export async function POST(request: Request) {
         ctx.canonicalPayload,
       );
       if (!risk.allowed) {
-        return NextResponse.json(
-          { success: false, errorKey: risk.errorKey },
-          { status: 400 },
-        );
+        await markChallengeFailed(supabase, fence, 'risk_rejected');
+        return jsonError(risk.errorKey);
       }
     }
 
-    // 4. WebAuthn verification
     const expectedRPID = process.env.WEBAUTHN_RP_ID!;
     const expectedOrigin = process.env.WEBAUTHN_ORIGIN!;
 
@@ -184,10 +187,8 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (keyErr || !keyData) {
-        return NextResponse.json(
-          { success: false, errorKey: 'error.authentication_credential_not_found' },
-          { status: 400 },
-        );
+        await markChallengeFailed(supabase, fence, 'credential_not_found');
+        return jsonError('error.authentication_credential_not_found');
       }
 
       dbKey = keyData as DbPasskey;
@@ -209,14 +210,10 @@ export async function POST(request: Request) {
     }
 
     if (!verified) {
-      return NextResponse.json(
-        { success: false, errorKey: 'error.crypto_invalid_signature' },
-        { status: 400 },
-      );
+      await markChallengeFailed(supabase, fence, 'crypto_unverified');
+      return jsonError('error.device_verification_failed');
     }
 
-    // Extract post-verification fields
-    // registrationInfo.credential holds id/publicKey/counter/transports
     const final_counter =
       ceremonyType === 'registration'
         ? regInfo?.credential.counter
@@ -247,7 +244,6 @@ export async function POST(request: Request) {
         ? regInfo!.credential.id
         : dbKey!.credential_id;
 
-    // 5. Idempotent commit RPC
     const { data: txData, error: txErr } = await supabase.rpc(
       'commit_phase3_business_idempotent_v86',
       {
@@ -272,10 +268,11 @@ export async function POST(request: Request) {
     const tx = txData as TxResult | null;
 
     if (txErr || !tx?.ok) {
-      return NextResponse.json(
-        { success: false, errorKey: tx?.error_msg ?? 'error.transaction_failed' },
-        { status: 400 },
-      );
+      const commitKey = tx?.error_msg ?? 'error.transaction_failed';
+      if (commitKey !== 'error.challenge_fencing_stale') {
+        await markChallengeFailed(supabase, fence, 'commit_rejected');
+      }
+      return jsonError(commitKey);
     }
 
     return NextResponse.json({
@@ -285,20 +282,17 @@ export async function POST(request: Request) {
     });
   } catch (error: unknown) {
     if (error instanceof CanonicalStage1Error) {
-      return NextResponse.json(
-        { success: false, errorKey: error.errorKey },
-        { status: 400 },
-      );
+      await markChallengeFailed(supabase, fence, 'canonical_rejected');
+      return jsonError(error.errorKey);
     }
     const msg =
       error instanceof Error ? error.message : 'error.server_internal_crash';
-    // Only attempt cleanup when we know which challenge to mark failed.
-    if (clientRequestId) {
-      await supabase
-        .from('auth_challenges')
-        .update({ status: 'failed' })
-        .eq('client_request_id', clientRequestId);
-    }
+    console.error('[verify] unexpected error', {
+      client_request_id: fence?.clientRequestId,
+      ceremony_type: ceremonyType,
+      category: 'internal_exception',
+    });
+    await markChallengeFailed(supabase, fence, 'internal_exception');
     return NextResponse.json({ success: false, errorKey: msg }, { status: 500 });
   }
 }

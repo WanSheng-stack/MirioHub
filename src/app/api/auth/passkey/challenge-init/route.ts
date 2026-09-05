@@ -66,11 +66,6 @@ interface DbPasskeyRow {
   transports: AuthenticatorTransportFuture[] | null;
 }
 
-interface AuthChallengeRow {
-  id: string;
-  status: string;
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/auth/passkey/challenge-init
 // ---------------------------------------------------------------------------
@@ -129,22 +124,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    // ── Guard: refuse to overwrite a processing/consumed challenge ─────────
-    const { data: existing } = await adminClient
-      .from('auth_challenges')
-      .select('id, status')
-      .eq('client_request_id', clientRequestId)
-      .maybeSingle();
-
-    if (existing) {
-      const row = existing as AuthChallengeRow;
-      if (row.status === 'processing' || row.status === 'consumed') {
-        return NextResponse.json(
-          { success: false, errorKey: 'error.invalid_or_consumed_challenge' },
-          { status: 409 },
-        );
-      }
-    }
+    // Retry always INSERTs a new challenge_id for the SAME client_request_id.
+    // Old issued/processing/consumed/failed/expired rows are kept for audit.
 
     // ── B. Read passkeys via adminClient (bypasses RLS) ────────────────────
     const { data: dbKeys, error: passkeysError } = await adminClient
@@ -209,19 +190,16 @@ export async function POST(request: Request) {
     // ── B. Write auth_challenges via adminClient (bypasses RLS) ───────────
     const { data: challengeRow, error: chErr } = await adminClient
       .from('auth_challenges')
-      .upsert(
-        {
-          user_id: userId,
-          client_request_id: clientRequestId,
-          challenge_text: challengeText,
-          type: ceremonyType === 'registration' ? 'register' : 'login',
-          purpose:
-            ceremonyType === 'registration' ? 'anonymous_register' : 'login',
-          status: 'issued',
-          expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-        },
-        { onConflict: 'client_request_id' },
-      )
+      .insert({
+        user_id: userId,
+        client_request_id: clientRequestId,
+        challenge_text: challengeText,
+        type: ceremonyType === 'registration' ? 'register' : 'login',
+        purpose:
+          ceremonyType === 'registration' ? 'anonymous_register' : 'login',
+        status: 'issued',
+        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      })
       .select()
       .single();
 

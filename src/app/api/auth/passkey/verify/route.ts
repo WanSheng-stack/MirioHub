@@ -24,6 +24,10 @@ import {
   markChallengeFailed,
   type ChallengeFence,
 } from '@/lib/auth/markChallengeFailed';
+import {
+  isUsableReserveChallengeRow,
+  normalizeReserveChallengeRow,
+} from '@/lib/auth/normalizeReserveChallengeRow';
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -61,12 +65,6 @@ interface DbPasskey {
   transports: string[] | null;
   credential_device_type: string;
   credential_backed_up: boolean;
-}
-
-interface ChallengeRow {
-  is_valid: boolean;
-  challenge_text: string;
-  processing_token: string;
 }
 
 interface TxResult {
@@ -118,9 +116,9 @@ export async function POST(request: Request) {
       },
     );
 
-    const challengeRow = challengeData as ChallengeRow | null;
+    const challengeRow = normalizeReserveChallengeRow(challengeData);
 
-    if (chErr || !challengeRow?.is_valid) {
+    if (chErr || !isUsableReserveChallengeRow(challengeRow)) {
       const errorKey = await classifyChallengeReserveFailure(
         supabase,
         challengeId,

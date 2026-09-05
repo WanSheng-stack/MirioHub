@@ -178,7 +178,12 @@
   "account": {
     "title": "Nalog",
     "welcome": "Prijavite se da otključate kontakte i objavite vožnje",
+    "loadingAccount": "Učitavanje naloga…",
+    "accessTitle": "Pristupite MirioHub nalogu",
     "continueWithGoogle": "Nastavi sa Google nalogom",
+    "continueWithEmail": "Nastavi e-poštom",
+    "secureTitle": "Zaštitite nalog",
+    "secureHint": "Dodajte način prijave da biste mogli da pristupite objavama i nalogu sa drugih uređaja.",
     "googleLoading": "Preusmeravanje…",
     "orDivider": "Ili",
     "email": "Email",

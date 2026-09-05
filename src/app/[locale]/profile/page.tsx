@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
+import { readWithClockSkewRetry } from "@/lib/auth/readWithClockSkewRetry";
+import {
+  isProfileFullNameEmpty,
+  resolveGoogleDisplayName,
+} from "@/lib/auth/googleProfileName";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -144,9 +149,9 @@ type ExtendedProfile = Profile & {
 
 export default function ProfilePage() {
   const t = useTranslations("account");
-  const tApp = useTranslations("app");
   const tErr = useTranslations("error");
   const locale = useLocale();
+  const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<ExtendedProfile | null>(null);
   const [config, setConfig] = useState<SystemConfig | null>(null);
@@ -162,6 +167,7 @@ export default function ProfilePage() {
   // postId of a draft that was activated after Google/Email identity verification.
   // Populated from the server response (not from client URL).
   const [activatedPostId, setActivatedPostId] = useState<string | null>(null);
+  const nameFillAttemptedRef = useRef(false);
 
   const bankRef = useMemo(
     () => profile?.bank_reference_code ?? (user ? bankRefFromUuid(user.id) : "------"),
@@ -169,127 +175,147 @@ export default function ProfilePage() {
   );
 
   useEffect(() => {
-    if (!hasSupabaseEnv()) return;
-    const supabase = createClient();
-    void supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
-      if (data.user) void loadProfile(data.user.id);
-    });
-    void supabase
-      .from("system_configs")
-      .select("*")
-      .eq("id", 1)
-      .maybeSingle()
-      .then(({ data }) => setConfig(data as SystemConfig | null));
-
-    // ── Handle auth callback URL params ──────────────────────────────────────
-    // After Google linking or email verification, the callback redirects back
-    // with ?error=account_identity_continuity_broken  or  ?identity_linked=...
-    if (typeof window !== "undefined") {
-      // Remove legacy Phase 5.1 key immediately — it has no nonce and cannot
-      // be trusted as an activation signal.
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
-
-      const params = new URLSearchParams(window.location.search);
-      const cbError = params.get("error");
-      const linked = params.get("identity_linked");
-      // activation_nonce is emitted ONLY by Draft Identity Completion
-      // (linkGoogleForDraftActivation / bindEmailForDraftActivation).
-      // Account-only linkGoogle / bindEmail never attach this param.
-      const urlNonce = params.get("activation_nonce");
-
-      if (cbError === "account_identity_continuity_broken") {
-        setIdentityMsg(tErr("account_identity_continuity_broken"));
-      } else if (linked) {
-        // ── Activation Gate ──────────────────────────────────────────────────
-        // TWO independent signals must align for automatic activation:
-        //   Signal 1: URL carries activation_nonce  (set by linkGoogle/bindEmail
-        //             only when a Draft activation flow is in progress)
-        //   Signal 2: sessionStorage context is valid AND nonce matches AND TTL ok
-        //
-        // If EITHER signal is absent, this is treated as Account-only identity
-        // management → ZERO activation.
-        if (urlNonce) {
-          const ctx = validateActivationContext(urlNonce);
-          if (ctx) {
-            // All 10 gates passed — attempt targeted activation
-            void (async () => {
-              let clearCtx = false;
-              try {
-                const res = await fetch("/api/posts/activate-after-identity", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ postId: ctx.postId }),
-                });
-                const json = (await res.json()) as {
-                  ok: boolean;
-                  postId?: string;
-                  isActive?: boolean;
-                  alreadyActive?: boolean;
-                  errorKey?: string;
-                };
-                if (res.ok && json.ok) {
-                  // CASE A/B: success or already-active → clear context
-                  if (json.isActive) {
-                    setActivatedCount(1);
-                    // Store server-returned postId for the "View post" link.
-                    // Never trust URL params for this — only the server response.
-                    if (json.postId) setActivatedPostId(json.postId);
-                  }
-                  clearCtx = true;
-                } else if (
-                  res.status === 403 &&
-                  json.errorKey === "error.identity_verification_required"
-                ) {
-                  // CASE D: identity not yet verified server-side — this branch
-                  // MUST come before the generic 403 branch below, otherwise the
-                  // generic branch would always catch it first (branch-order bug).
-                  // Preserve context until TTL so user can retry after verification.
-                  clearCtx = false;
-                } else if (res.status === 403 || res.status === 404) {
-                  // Permanent ownership / target failure
-                  clearCtx = true;
-                } else if (res.status === 400) {
-                  // Malformed request — clear to avoid loop
-                  clearCtx = true;
-                } else {
-                  // 5xx / unexpected temporary failure → preserve until TTL
-                  clearCtx = false;
-                }
-              } catch {
-                // Network failure → preserve context until TTL (user can retry)
-                clearCtx = false;
-              } finally {
-                if (clearCtx) clearActivationContext();
-              }
-            })();
-          } else {
-            // Context invalid / expired / nonce mismatch (all cleared inside
-            // validateActivationContext) → ZERO activation
-            if (urlNonce) {
-              // Provide non-fatal feedback for expired context
-              setIdentityMsg(tErr("identity_activation_context_expired"));
-            }
-          }
-        }
-        // No urlNonce → Account-only linking → ZERO automatic activation (correct).
-      }
-
-      // Clean up ALL identity-callback URL params to prevent re-triggering on reload
-      if (cbError ?? linked) {
-        const clean = new URL(window.location.href);
-        clean.searchParams.delete("error");
-        clean.searchParams.delete("identity_linked");
-        clean.searchParams.delete("activation_nonce");
-        window.history.replaceState({}, "", clean.toString());
-      }
+    if (!hasSupabaseEnv()) {
+      return;
     }
+
+    const supabase = createClient();
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+    }
+
+    void (async () => {
+      const { data } = await supabase.auth.getUser();
+      const resolved = data.user ?? null;
+      // Auth session is the only source of unauthenticated. Data API errors never clear user.
+      setUser(resolved);
+      setAuthReady(true);
+
+      if (resolved) {
+        const loaded = await loadProfile(resolved.id);
+        await loadSystemConfig();
+        if (loaded) {
+          await maybeFillGoogleFullName(resolved, loaded);
+        }
+      }
+
+      handleIdentityCallbackParams();
+    })();
+    // Mount-once auth bootstrap. Identity callback reads the current URL only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tErr]);
 
-  async function loadProfile(id: string) {
+  function handleIdentityCallbackParams() {
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const cbError = params.get("error");
+    const linked = params.get("identity_linked");
+    const urlNonce = params.get("activation_nonce");
+
+    if (cbError === "account_identity_continuity_broken") {
+      setIdentityMsg(tErr("account_identity_continuity_broken"));
+    } else if (linked && urlNonce) {
+      const ctx = validateActivationContext(urlNonce);
+      if (ctx) {
+        void (async () => {
+          let clearCtx = false;
+          try {
+            const res = await fetch("/api/posts/activate-after-identity", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ postId: ctx.postId }),
+            });
+            const json = (await res.json()) as {
+              ok: boolean;
+              postId?: string;
+              isActive?: boolean;
+              alreadyActive?: boolean;
+              errorKey?: string;
+            };
+            if (res.ok && json.ok) {
+              if (json.isActive) {
+                setActivatedCount(1);
+                if (json.postId) setActivatedPostId(json.postId);
+              }
+              clearCtx = true;
+            } else if (
+              res.status === 403 &&
+              json.errorKey === "error.identity_verification_required"
+            ) {
+              clearCtx = false;
+            } else if (res.status === 403 || res.status === 404 || res.status === 400) {
+              clearCtx = true;
+            } else {
+              clearCtx = false;
+            }
+          } catch {
+            clearCtx = false;
+          } finally {
+            if (clearCtx) clearActivationContext();
+          }
+        })();
+      } else if (urlNonce) {
+        setIdentityMsg(tErr("identity_activation_context_expired"));
+      }
+    }
+
+    if (cbError ?? linked) {
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete("error");
+      clean.searchParams.delete("identity_linked");
+      clean.searchParams.delete("activation_nonce");
+      window.history.replaceState({}, "", clean.toString());
+    }
+  }
+
+  async function loadProfile(id: string): Promise<ExtendedProfile | null> {
     const supabase = createClient();
-    const { data } = await supabase.from("profiles").select("*").eq("id", id).maybeSingle();
-    setProfile(data as ExtendedProfile | null);
+    const { data, error } = await readWithClockSkewRetry(supabase, async () => {
+      const result = await supabase.from("profiles").select("*").eq("id", id).maybeSingle();
+      return { data: result.data, error: result.error };
+    });
+    if (error) {
+      console.error("[profile] profiles read failed", error);
+      return null;
+    }
+    const row = data as ExtendedProfile | null;
+    setProfile(row);
+    return row;
+  }
+
+  async function loadSystemConfig(): Promise<void> {
+    const supabase = createClient();
+    const { data, error } = await readWithClockSkewRetry(supabase, async () => {
+      const result = await supabase.from("system_configs").select("*").eq("id", 1).maybeSingle();
+      return { data: result.data, error: result.error };
+    });
+    if (error) {
+      console.error("[profile] system_configs read failed", error);
+      return;
+    }
+    setConfig(data as SystemConfig | null);
+  }
+
+  async function maybeFillGoogleFullName(resolved: User, current: ExtendedProfile) {
+    if (nameFillAttemptedRef.current) return;
+    if (!isProfileFullNameEmpty(current.full_name)) return;
+    const suggestion = resolveGoogleDisplayName(resolved);
+    if (!suggestion) return;
+    nameFillAttemptedRef.current = true;
+    const supabase = createClient();
+    const { data } = await supabase.rpc("update_my_profile", {
+      p_full_name: suggestion,
+      p_phone: current.phone,
+      p_plate: current.plate,
+      p_vehicle: current.vehicle,
+      p_facebook: current.facebook,
+      p_viber: current.viber,
+    });
+    const json = data as { ok?: boolean };
+    if (json?.ok) {
+      setProfile((p) => (p ? { ...p, full_name: suggestion } : { ...current, full_name: suggestion }));
+    }
   }
 
   async function signInWithGoogle() {
@@ -407,6 +433,14 @@ export default function ProfilePage() {
     return <p className="text-sm">{tErr("missing_env")}</p>;
   }
 
+  if (!authReady) {
+    return (
+      <p className="mx-auto mt-16 max-w-sm text-center text-sm text-zinc-500">
+        {t("loadingAccount")}
+      </p>
+    );
+  }
+
   if (!user) {
     return (
       <div className="mx-auto w-full max-w-sm px-1">
@@ -417,7 +451,7 @@ export default function ProfilePage() {
           >
             <span className="text-2xl font-bold tracking-tight text-white">M</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">{tApp("name")}</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">{t("accessTitle")}</h1>
           <p className="mt-2 text-sm leading-relaxed text-zinc-500">{t("welcome")}</p>
         </header>
 
@@ -437,7 +471,7 @@ export default function ProfilePage() {
           </div>
           <div className="relative flex justify-center">
             <span className="bg-zinc-50 px-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
-              {t("orDivider")}
+              {t("continueWithEmail")}
             </span>
           </div>
         </div>
@@ -639,8 +673,12 @@ function IdentitySection({
 
   return (
     <section className="mx-auto mt-4 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-emerald-900">{t("identityTitle")}</h2>
-      <p className="text-xs text-emerald-700">{t("identityHint")}</p>
+      <h2 className="text-sm font-semibold text-emerald-900">
+        {isAnonymous ? t("secureTitle") : t("identityTitle")}
+      </h2>
+      <p className="text-xs text-emerald-700">
+        {isAnonymous ? t("secureHint") : t("identityHint")}
+      </p>
 
       {/* ── Google status / link button ──────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3">
@@ -654,7 +692,11 @@ function IdentitySection({
             onClick={() => void linkGoogle()}
             className="flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:opacity-50"
           >
-            {identityLoading ? t("linkingGoogle") : t("linkGoogle")}
+            {identityLoading
+              ? t("linkingGoogle")
+              : isAnonymous
+                ? t("continueWithGoogle")
+                : t("linkGoogle")}
           </button>
         )}
       </div>

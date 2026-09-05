@@ -178,7 +178,12 @@
   "account": {
     "title": "账户",
     "welcome": "登录后即可查看联系方式并发布互助单",
+    "loadingAccount": "正在确认账户…",
+    "accessTitle": "登录 MirioHub",
     "continueWithGoogle": "使用 Google 登录",
+    "continueWithEmail": "使用邮箱继续",
+    "secureTitle": "保护你的账户",
+    "secureHint": "添加一种登录方式，以便以后在其他设备上继续使用你的帖子和账户。",
     "googleLoading": "正在跳转…",
     "orDivider": "或",
     "email": "邮箱",

@@ -178,7 +178,12 @@
   "account": {
     "title": "Account",
     "welcome": "Sign in to unlock contacts and post rides",
+    "loadingAccount": "Loading your account…",
+    "accessTitle": "Access your MirioHub account",
     "continueWithGoogle": "Continue with Google",
+    "continueWithEmail": "Continue with email",
+    "secureTitle": "Secure your account",
+    "secureHint": "Add a sign-in method so you can access your posts and account on other devices.",
     "googleLoading": "Redirecting…",
     "orDivider": "Or",
     "email": "Email",

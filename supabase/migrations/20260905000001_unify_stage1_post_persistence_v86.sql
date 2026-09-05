@@ -104,9 +104,9 @@ declare
   v_existing_status  TEXT;
   v_existing_owner   UUID;
 begin
-  if p_user_id != auth.uid() then
+  IF p_user_id IS DISTINCT FROM auth.uid() THEN
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
-  end if;
+  END IF;
 
   -- Ownership first — same boundary as trusted + shadow.
   -- Knowing another user's client_request_id must never succeed.

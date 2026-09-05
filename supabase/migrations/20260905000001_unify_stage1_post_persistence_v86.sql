@@ -23,6 +23,10 @@ AS $$
 DECLARE
   v_id uuid;
 BEGIN
+  IF p_status IS DISTINCT FROM 'draft' AND p_status IS DISTINCT FROM 'active' THEN
+    RAISE EXCEPTION 'error.invalid_post_status';
+  END IF;
+
   INSERT INTO public.posts (
     user_id, client_request_id, payload_hash, status,
     post_type, category, title, scope,
@@ -98,38 +102,37 @@ declare
   v_existing_post_id UUID;
   v_existing_hash    TEXT;
   v_existing_status  TEXT;
+  v_existing_owner   UUID;
 begin
   if p_user_id != auth.uid() then
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
   end if;
 
-  BEGIN
-    SELECT id, payload_hash, status
-    INTO v_existing_post_id, v_existing_hash, v_existing_status
-    FROM public.posts
-    WHERE client_request_id = p_client_request_id;
+  -- Ownership first — same boundary as trusted + shadow.
+  -- Knowing another user's client_request_id must never succeed.
+  SELECT id, payload_hash, status, user_id
+  INTO v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner
+  FROM public.posts
+  WHERE client_request_id = p_client_request_id;
 
-    if v_existing_post_id is not null then
-      if v_existing_hash != p_payload_hash then
-        RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
-      end if;
-
-      if v_existing_status = 'active' then
-        RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
-      end if;
+  if v_existing_post_id is not null then
+    if v_existing_owner IS DISTINCT FROM p_user_id then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
     end if;
-  EXCEPTION WHEN unique_violation THEN
-    SELECT id, payload_hash, status
-    INTO v_existing_post_id, v_existing_hash, v_existing_status
-    FROM public.posts
-    WHERE client_request_id = p_client_request_id;
 
-    if v_existing_hash != p_payload_hash then
+    if v_existing_hash IS DISTINCT FROM p_payload_hash then
       RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
-    elsif v_existing_status = 'active' then
+    end if;
+
+    if v_existing_status = 'active' then
       RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
     end if;
-  END;
+
+    if v_existing_status is distinct from 'draft' then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
+    end if;
+    -- draft + same owner + same hash → fencing + credential + in-place activate
+  end if;
 
   UPDATE public.auth_challenges
   SET status = 'consumed', used_at = NOW()
@@ -164,12 +167,35 @@ begin
   end if;
 
   if v_existing_post_id is not null then
+    -- CASE C: SAME owner draft only. 0-row UPDATE must not return success.
     UPDATE public.posts
     SET status = 'active', updated_at = NOW()
-    WHERE id = v_existing_post_id AND user_id = p_user_id;
+    WHERE id = v_existing_post_id
+      AND user_id = p_user_id
+      AND status = 'draft';
 
-    RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
-  else
+    if found then
+      RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
+    end if;
+
+    SELECT id, payload_hash, status, user_id
+    INTO v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner
+    FROM public.posts
+    WHERE client_request_id = p_client_request_id;
+
+    if v_existing_owner IS DISTINCT FROM p_user_id then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
+    elsif v_existing_hash IS DISTINCT FROM p_payload_hash then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
+    elsif v_existing_status = 'active' then
+      RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
+    else
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
+    end if;
+  end if;
+
+  -- CASE A: first insert. unique_violation is on insert_stage1_post_v86, not the SELECT.
+  BEGIN
     v_post_id := public.insert_stage1_post_v86(
       p_user_id,
       p_client_request_id,
@@ -180,7 +206,22 @@ begin
       NULL
     );
     RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_post_id);
-  end if;
+  EXCEPTION WHEN unique_violation THEN
+    SELECT id, payload_hash, status, user_id
+    INTO v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner
+    FROM public.posts
+    WHERE client_request_id = p_client_request_id;
+
+    if v_existing_owner IS DISTINCT FROM p_user_id then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
+    elsif v_existing_hash IS DISTINCT FROM p_payload_hash then
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
+    elsif v_existing_status = 'active' then
+      RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
+    else
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
+    end if;
+  END;
 end;
 $$;
 

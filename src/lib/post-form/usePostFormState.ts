@@ -76,6 +76,7 @@ export type PostFormState = {
 type Action =
   | { type: "SET_POST_TYPE"; post_type: PostType }
   | { type: "SET_CATEGORY"; category: PostCategory }
+  | { type: "RESET_CURRENT_PUBLISH" }
   | { type: "SET_FIELD"; field: keyof PostFormState; value: PostFormState[keyof PostFormState] }
   | { type: "SET_SHARE_MODE"; share_mode: ShareMode }
   | { type: "ADD_WAYPOINT" }
@@ -159,6 +160,13 @@ function reducer(state: PostFormState, action: Action): PostFormState {
     }
     case "SET_CATEGORY":
       return { ...state, category: action.category };
+    case "RESET_CURRENT_PUBLISH":
+      return {
+        ...initialFormState,
+        post_type: state.post_type,
+        category: state.category,
+        departure_date: new Date().toISOString().slice(0, 10),
+      };
     case "SET_FIELD":
       return { ...state, [action.field]: action.value };
     case "SET_SHARE_MODE": {
@@ -233,6 +241,10 @@ export function usePostFormState() {
 
   const setShareMode = useCallback((share_mode: ShareMode) => {
     dispatch({ type: "SET_SHARE_MODE", share_mode });
+  }, []);
+
+  const resetCurrentPublishForm = useCallback(() => {
+    dispatch({ type: "RESET_CURRENT_PUBLISH" });
   }, []);
 
   const setEscortSeats = useCallback(
@@ -348,6 +360,7 @@ export function usePostFormState() {
     setPostType,
     setCategory,
     setShareMode,
+    resetCurrentPublishForm,
     setEscortSeats,
     setMaxCompanions,
     visibility,

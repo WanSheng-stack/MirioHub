@@ -69,6 +69,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     computedFee,
     feeReady,
     dispatch,
+    resetCurrentPublishForm,
   } = form;
   const [stage, setStage] = useState<1 | 2>(1);
   const [submitting, setSubmitting] = useState(false);
@@ -102,15 +103,53 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   //
   // LIFECYCLE RULES:
   //   • Generated lazily: first click of Book Now for a new post creates the UUID.
-  //   • NEVER cleared on sheet open/close — closing and reopening resumes the
-  //     same in-flight intent and the same draft post.
-  //   • Only cleared implicitly when the component unmounts (post published,
-  //     navigation away) or when the parent deliberately remounts the component
-  //     with a fresh form for a brand-new post.
+  //   • DRAFT close/reopen keeps the same id so retry can activate the SAME draft.
+  //   • ACTIVE success exit (Skip / View post / X / backdrop) must clear this
+  //     so the next genuine publish gets a NEW client_request_id.
   //
   // Using useRef so reads are synchronous within the same async call, avoiding
   // React state batching races.
   const publishIntentIdRef = useRef<string | null>(null);
+
+  function clearActivationContext() {
+    sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+    sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+  }
+
+  /** End a completed ACTIVE publish intent. Never call for DRAFT resume. */
+  function finishActivePublishIntent() {
+    if (pendingPostStatus !== "active") return;
+    clearActivationContext();
+    publishIntentIdRef.current = null;
+    setPendingPostId(null);
+    setPendingPostStatus(null);
+    setStage(1);
+    setErrorKey(null);
+    setBackupEmail("");
+    setBackupMsg(null);
+    setBackupIsInfo(false);
+    setBackupActivating(false);
+    setPhoneSaved(false);
+    setPhoneSaving(false);
+    setAccountUser(null);
+    setSubmitting(false);
+    setIsPublishing(false);
+    resetCurrentPublishForm();
+  }
+
+  function handleSheetDismiss() {
+    if (pendingPostStatus === "active" && pendingPostId) {
+      finishActivePublishIntent();
+    }
+    onClose();
+  }
+
+  function handleViewPublishedPost() {
+    const postId = pendingPostId;
+    finishActivePublishIntent();
+    onClose();
+    if (postId) router.push(`/posts/${postId}`);
+  }
 
   /** Read + validate IdentityActivationContext for this postId.
    *  Clears stale/expired/mismatched context. Returns whether Google/Email
@@ -786,7 +825,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         type="button"
         aria-label={t("home.sheet.close")}
         className="absolute inset-0 bg-zinc-950/40 backdrop-blur-[2px]"
-        onClick={onClose}
+        onClick={handleSheetDismiss}
       />
       <div className="relative z-10 flex h-auto max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-[#f7f7f5] shadow-2xl">
         <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-zinc-300" />
@@ -801,7 +840,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           <button
             type="button"
             aria-label={t("home.sheet.close")}
-            onClick={onClose}
+            onClick={handleSheetDismiss}
             className="rounded-full px-2 py-1 text-zinc-500 hover:bg-zinc-200/60"
           >
             ×
@@ -1041,7 +1080,8 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     onSavePhone={() => void saveActivePhone()}
                     phoneSaving={phoneSaving}
                     phoneSaved={phoneSaved}
-                    onSkip={onClose}
+                    onSkip={handleSheetDismiss}
+                    onViewPost={handleViewPublishedPost}
                   />
                 ) : null}
                 {/* ── Draft Identity Completion UI (Channel B only) ────────── */}

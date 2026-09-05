@@ -10,7 +10,6 @@
  */
 
 import { useTranslations } from "next-intl";
-import { Link } from "@/i18n/navigation";
 import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
 
 interface PublishedPostSuccessProps {
@@ -33,6 +32,7 @@ interface PublishedPostSuccessProps {
   phoneSaving: boolean;
   phoneSaved: boolean;
   onSkip: () => void;
+  onViewPost: () => void;
 }
 
 function GoogleMark() {
@@ -78,6 +78,7 @@ export function PublishedPostSuccess({
   phoneSaving,
   phoneSaved,
   onSkip,
+  onViewPost,
 }: PublishedPostSuccessProps) {
   const t = useTranslations("publishSuccess");
   const needsRecovery = !hasGoogle && !hasVerifiedEmail;
@@ -91,13 +92,13 @@ export function PublishedPostSuccess({
       </div>
 
       {postId ? (
-        <Link
-          href={`/posts/${postId}`}
-          onClick={onSkip}
+        <button
+          type="button"
+          onClick={onViewPost}
           className="inline-flex text-sm font-semibold text-emerald-700 underline underline-offset-2 hover:text-emerald-900"
         >
           {t("viewPost")} →
-        </Link>
+        </button>
       ) : null}
 
       <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">

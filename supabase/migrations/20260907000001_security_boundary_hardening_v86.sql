@@ -70,8 +70,6 @@ SELECT
   scope,
   origin_address,
   destination_address,
-  origin_gps,
-  destination_gps,
   capacity_type,
   transport_mode,
   escort_seats,
@@ -104,13 +102,9 @@ SELECT
   max_budget,
   purchase_price_type,
   bump_fee,
-  service_address,
   service_time_window,
   provider_pay_type,
   completion_type,
-  completion_note,
-  matched_at,
-  auto_melt_deadline,
   fee_amount_minor,
   currency
 FROM public.posts
@@ -325,6 +319,9 @@ $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 6. submit_auto_melt — owner-only, TOCTOU-safe UPDATE, no existence leak
+-- Live confirm_match() sets the target post status to 'completed' before
+-- AutoMeltDialog is shown (PostActions: activeMatch && isProvider).
+-- post_type is not constrained: confirm_match accepts demand or provider.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.submit_auto_melt(
@@ -354,7 +351,8 @@ BEGIN
         auto_melt_deadline = v_deadline,
         updated_at = timezone('utc', now())
     WHERE id = p_post_id
-      AND user_id = v_uid;
+      AND user_id = v_uid
+      AND status = 'completed';
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'error', 'NOT_FOUND');
@@ -383,12 +381,21 @@ GRANT EXECUTE ON FUNCTION public.submit_auto_melt(uuid, text, text) TO authentic
 
 REVOKE ALL ON FUNCTION public.count_asset_bound_accounts_v86(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.count_asset_bound_accounts_v86(text, text) FROM anon;
-GRANT EXECUTE ON FUNCTION public.count_asset_bound_accounts_v86(text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.count_asset_bound_accounts_v86(text, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.count_asset_bound_accounts_v86(text, text) TO service_role;
 
 REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) FROM anon;
-GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) TO authenticated;
+REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) TO service_role;
 
 REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) FROM anon;
-GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) TO service_role;
+
+-- fraud_logs: system audit only. No client INSERT.
+DROP POLICY IF EXISTS fraud_logs_insert_authenticated ON public.fraud_logs;
+REVOKE INSERT ON TABLE public.fraud_logs FROM PUBLIC;
+REVOKE INSERT ON TABLE public.fraud_logs FROM anon;
+REVOKE INSERT ON TABLE public.fraud_logs FROM authenticated;

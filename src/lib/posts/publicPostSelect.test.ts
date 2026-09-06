@@ -30,6 +30,8 @@ assert.equal(publicSelectContainsForbidden(`${PUBLIC_SAFE_POST_SELECT}, raw_phon
 
 assert.ok(OWNER_POST_SELECT.includes("raw_phone"));
 assert.ok(OWNER_POST_SELECT.includes("normalized_phone"));
+assert.ok(OWNER_POST_SELECT.includes("origin_gps"));
+assert.ok(OWNER_POST_SELECT.includes("auto_melt_deadline"));
 assert.ok(OWNER_POST_SELECT.includes("id"));
 
 console.log("publicPostSelect.test.ts: ok");

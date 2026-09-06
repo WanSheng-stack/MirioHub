@@ -16,6 +16,12 @@ export const FORBIDDEN_PUBLIC_POST_COLUMNS = [
   "client_request_id",
   "payload_hash",
   "fallback_reason",
+  "origin_gps",
+  "destination_gps",
+  "service_address",
+  "completion_note",
+  "auto_melt_deadline",
+  "matched_at",
 ] as const;
 
 export const PUBLIC_SAFE_POST_COLUMNS = [
@@ -30,8 +36,6 @@ export const PUBLIC_SAFE_POST_COLUMNS = [
   "scope",
   "origin_address",
   "destination_address",
-  "origin_gps",
-  "destination_gps",
   "capacity_type",
   "transport_mode",
   "escort_seats",
@@ -64,22 +68,22 @@ export const PUBLIC_SAFE_POST_COLUMNS = [
   "max_budget",
   "purchase_price_type",
   "bump_fee",
-  "service_address",
   "service_time_window",
   "provider_pay_type",
   "completion_type",
-  "completion_note",
-  "matched_at",
-  "auto_melt_deadline",
   "fee_amount_minor",
   "currency",
 ] as const;
 
 export const PUBLIC_SAFE_POST_SELECT = PUBLIC_SAFE_POST_COLUMNS.join(", ");
 
-/** Owner / match-participant row. Includes contact fields the public view omits. */
-export const OWNER_POST_SELECT = [
-  PUBLIC_SAFE_POST_SELECT,
+const OWNER_EXTRA_POST_COLUMNS = [
+  "origin_gps",
+  "destination_gps",
+  "service_address",
+  "completion_note",
+  "auto_melt_deadline",
+  "matched_at",
   "raw_phone",
   "normalized_phone",
   "phone_id",
@@ -88,6 +92,12 @@ export const OWNER_POST_SELECT = [
   "normalized_license_plate",
   "pickup_code",
   "delivery_code",
+] as const;
+
+/** Owner / match-participant row. Includes contact and private location fields. */
+export const OWNER_POST_SELECT = [
+  PUBLIC_SAFE_POST_SELECT,
+  ...OWNER_EXTRA_POST_COLUMNS,
 ].join(", ");
 
 export function publicSelectContainsForbidden(select: string): boolean {

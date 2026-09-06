@@ -66,4 +66,27 @@ FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name = 'public_posts_safe'
 ORDER BY ordinal_position;
 -- EXPECT: no raw_phone, normalized_phone, phone_id, contact_email, plate_id,
---         raw_license_plate, normalized_license_plate
+--         raw_license_plate, normalized_license_plate,
+--         origin_gps, destination_gps, service_address, completion_note,
+--         auto_melt_deadline, matched_at
+
+-- H. fraud RPCs: no EXECUTE for anon/authenticated/public
+SELECT p.proname, p.proacl::text
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname IN (
+    'count_asset_bound_accounts_v86',
+    'lookup_foreign_phone_reuse_v86',
+    'gather_window_intercept_metrics_v86'
+  );
+-- EXPECT: no anon=X, authenticated=X, or =X (PUBLIC)
+
+-- I. fraud_logs: no authenticated/anon INSERT
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_schema = 'public'
+  AND table_name = 'fraud_logs'
+  AND grantee IN ('anon', 'authenticated')
+  AND privilege_type = 'INSERT';
+-- EXPECT: 0 rows

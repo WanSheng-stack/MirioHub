@@ -4,31 +4,24 @@ import {
   evaluateRouteAndCapacityMatch,
   resolveDriverOrderedRoute,
 } from "@/lib/post-route-match";
-import { processProviderMatchIntercept } from "@/lib/post-intercept";
 import { totalLuggageUnits } from "@/lib/post-payload";
 import { PUBLIC_SAFE_POST_SELECT } from "@/lib/posts/publicPostSelect";
-import {
-  rpcCountAssetBoundAccounts,
-  rpcGatherWindowInterceptMetrics,
-} from "@/lib/security/fraudLookupRpc";
 import type { Post } from "@/lib/types";
 
 export type ProviderMatchResult =
   | { ok: true; isSpaceWarning: boolean; messageKey: string; showDetourNotice?: boolean; matchRatio?: number }
   | { ok: false; errorKey: string; logFraud?: boolean };
 
-async function countBoundAccounts(
-  supabase: SupabaseClient,
-  field: "normalized_phone" | "normalized_license_plate",
-  value: string,
-): Promise<number | null> {
-  if (!value) return 0;
-  return rpcCountAssetBoundAccounts(
-    supabase,
-    field === "normalized_phone" ? "phone" : "plate",
-    value,
-  );
-}
+type ProviderMatchApiResult = {
+  ok?: boolean;
+  errorKey?: string;
+  isSpaceWarning?: boolean;
+  account_count?: unknown;
+  reused?: unknown;
+  last_post_at?: unknown;
+  has_other_phone?: unknown;
+  has_other_plate?: unknown;
+};
 
 export async function runProviderMatchIntercept(
   supabase: SupabaseClient,
@@ -47,8 +40,6 @@ export async function runProviderMatchIntercept(
   if (!demandPost) return { ok: false, errorKey: "error.not_found" };
 
   const demand = demandPost as unknown as Post;
-  const isPureCargo =
-    demand.category === "deliver" && (demand.escort_seats ?? 0) === 0;
 
   const { data: providerTrip } = await supabase
     .from("posts")
@@ -143,90 +134,31 @@ export async function runProviderMatchIntercept(
     }
   }
 
-  const depDate = demand.departure_date as string;
-  const depWindow = demand.departure_time_window as string;
-  const window = await rpcGatherWindowInterceptMetrics(
-    supabase,
-    providerNormalizedPhone,
-    providerNormalizedLicensePlate,
-    depDate,
-    depWindow,
-  );
+  void providerNormalizedPhone;
+  void providerNormalizedLicensePlate;
+  void isBankVerified;
 
-  const phoneHistoryAccounts = await countBoundAccounts(
-    supabase,
-    "normalized_phone",
-    providerNormalizedPhone,
-  );
-  const plateHistoryAccounts = providerNormalizedLicensePlate
-    ? await countBoundAccounts(
-        supabase,
-        "normalized_license_plate",
-        providerNormalizedLicensePlate,
-      )
-    : 0;
-
-  if (window == null || phoneHistoryAccounts == null || plateHistoryAccounts == null) {
+  const res = await fetch("/api/posts/evaluate-provider-match-intercept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ demandPostId }),
+  });
+  const json = (await res.json()) as ProviderMatchApiResult;
+  if (
+    json.account_count != null ||
+    json.reused != null ||
+    json.last_post_at != null ||
+    json.has_other_phone != null ||
+    json.has_other_plate != null
+  ) {
     return { ok: false, errorKey: "error.submit_failed" };
   }
-
-  const account_count = Math.max(
-    window.window_phone_account_count,
-    phoneHistoryAccounts,
-    plateHistoryAccounts,
-  );
-  const is_phone_duplicated =
-    window.window_phone_account_count > 1 || phoneHistoryAccounts > 1;
-  const is_plate_duplicated =
-    Boolean(providerNormalizedLicensePlate) &&
-    (plateHistoryAccounts > 1 || window.has_other_plate);
-
-  if ((is_phone_duplicated || is_plate_duplicated) && account_count > 1) {
-    await supabase.from("fraud_logs").insert({
-      user_id: providerUserId,
-      scene: "multi_account_spacetime_collision",
-      normalized_phone: providerNormalizedPhone,
-      normalized_license_plate: providerNormalizedLicensePlate,
-      reporter_side: "provider",
-    });
-    return { ok: false, errorKey: "error.match_denied_blurred", logFraud: true };
+  if (!json.ok) {
+    return { ok: false, errorKey: json.errorKey ?? "error.submit_failed" };
   }
-
-  if (!isPureCargo) {
-    return { ok: true, isSpaceWarning: false, messageKey: "success.matched" };
-  }
-
-  const ownCargo = window.own_cargo_in_window;
-
-  const allUnits = currentStackedUnits + newUnits;
-  const allPassengers = currentStackedSeats + newPassengers;
-
-  const decision = processProviderMatchIntercept({
-    is_plate_duplicated: is_plate_duplicated,
-    is_phone_duplicated: is_phone_duplicated,
-    account_count,
-    active_cargo_order_count: ownCargo,
-    current_all_matched_units: allUnits,
-    current_all_passengers_count: allPassengers,
-    is_bank_verified: isBankVerified,
-  });
-
-  if (!decision.allowed) {
-    if (decision.logFraud) {
-      await supabase.from("fraud_logs").insert({
-        user_id: providerUserId,
-        scene: decision.trackerScene,
-        normalized_phone: providerNormalizedPhone,
-        normalized_license_plate: providerNormalizedLicensePlate,
-        reporter_side: "provider",
-      });
-    }
-    return { ok: false, errorKey: decision.messageKey, logFraud: decision.logFraud };
-  }
-
   return {
     ok: true,
-    isSpaceWarning: Boolean(decision.isSpaceWarning),
-    messageKey: decision.messageKey,
+    isSpaceWarning: Boolean(json.isSpaceWarning),
+    messageKey: json.errorKey ?? "success.matched",
   };
 }

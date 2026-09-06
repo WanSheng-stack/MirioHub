@@ -59,7 +59,7 @@ export default async function HomePage({ params }: Props) {
   for (const uid of authorIds) {
     const { data: history } = await supabase
       .from("public_posts_safe")
-      .select("status, completion_type, completion_note")
+      .select("status, completion_type")
       .eq("user_id", uid)
       .eq("post_type", "provider")
       .eq("status", "completed");

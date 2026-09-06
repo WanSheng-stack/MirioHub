@@ -1,19 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildPayloadFromForm } from "@/lib/post-form/buildPayload";
 import type { PostFormState } from "@/lib/post-form/usePostFormState";
-import {
-  processDemandPostIntercept,
-  processSupplyPostIntercept,
-} from "@/lib/post-intercept";
 import { geocodeAddress, toGeographyPointWkt } from "@/lib/route-kms";
 import { haversineKm } from "@/lib/geo";
 import type { AppLocale } from "@/i18n/routing";
 import type { PostScope } from "@/lib/types";
-import {
-  rpcCountAssetBoundAccounts,
-  rpcGatherWindowInterceptMetrics,
-  rpcLookupForeignPhoneReuse,
-} from "@/lib/security/fraudLookupRpc";
 
 async function resolveGeocodePair(
   originAddr: string,
@@ -116,123 +107,46 @@ export async function upsertPlateHistory(
   return inserted.id as number;
 }
 
-export type DemandInterceptMetrics = {
-  is_phone_duplicated: boolean;
-  account_count: number;
-  active_order_count: number;
-  lookupFailed?: boolean;
+type PublishInterceptApiResult = {
+  ok?: boolean;
+  errorKey?: string;
+  account_count?: unknown;
+  reused?: unknown;
+  last_post_at?: unknown;
+  has_other_phone?: unknown;
+  has_other_plate?: unknown;
 };
 
-export type SupplyInterceptMetrics = {
-  is_phone_historically_reused: boolean;
-  last_post_time_delta_months: number;
-  active_supply_posts_count: number;
-  is_premium_member: boolean;
-  lookupFailed?: boolean;
-};
-
-export async function gatherDemandMetrics(
-  supabase: SupabaseClient,
-  _userId: string,
-  normalizedPhone: string,
-  normalizedPlate: string | null,
-  departureDate: string,
-  departureWindow: string,
-): Promise<DemandInterceptMetrics> {
-  const window = await rpcGatherWindowInterceptMetrics(
-    supabase,
-    normalizedPhone,
-    normalizedPlate,
-    departureDate,
-    departureWindow,
+function publishInterceptLeakedMetrics(json: PublishInterceptApiResult): boolean {
+  return (
+    json.account_count != null ||
+    json.reused != null ||
+    json.last_post_at != null ||
+    json.has_other_phone != null ||
+    json.has_other_plate != null
   );
-  const historyPhoneAccounts = await rpcCountAssetBoundAccounts(
-    supabase,
-    "phone",
-    normalizedPhone,
-  );
-  const plateAccounts = normalizedPlate
-    ? await rpcCountAssetBoundAccounts(supabase, "plate", normalizedPlate)
-    : 0;
-
-  if (window == null || historyPhoneAccounts == null || plateAccounts == null) {
-    return {
-      is_phone_duplicated: false,
-      account_count: 1,
-      active_order_count: 0,
-      lookupFailed: true,
-    };
-  }
-
-  const account_count = Math.max(
-    window.window_phone_account_count,
-    historyPhoneAccounts,
-    plateAccounts,
-  );
-  const is_phone_duplicated =
-    window.has_other_phone || historyPhoneAccounts > 1 || plateAccounts > 1;
-
-  return {
-    is_phone_duplicated,
-    account_count,
-    active_order_count: window.own_in_window_count,
-  };
 }
 
-export async function gatherSupplyMetrics(
-  supabase: SupabaseClient,
-  userId: string,
-  normalizedPhone: string,
-  normalizedPlate: string | null,
-  isPremium: boolean,
-): Promise<SupplyInterceptMetrics> {
-  const reuse = await rpcLookupForeignPhoneReuse(supabase, normalizedPhone);
-  const phoneAccounts = await rpcCountAssetBoundAccounts(
-    supabase,
-    "phone",
-    normalizedPhone,
-  );
-  const plateAccounts = normalizedPlate
-    ? await rpcCountAssetBoundAccounts(supabase, "plate", normalizedPlate)
-    : 0;
-
-  if (reuse == null || phoneAccounts == null || plateAccounts == null) {
-    return {
-      is_phone_historically_reused: false,
-      last_post_time_delta_months: 999,
-      active_supply_posts_count: 0,
-      is_premium_member: isPremium,
-      lookupFailed: true,
-    };
+async function requestPublishInterceptDecision(input: {
+  postType: "demand" | "provider";
+  normalizedPhone: string;
+  normalizedPlate: string | null;
+  departureDate: string;
+  departureWindow: string;
+}): Promise<SubmitPostResult | { ok: true }> {
+  const res = await fetch("/api/posts/evaluate-publish-intercept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json()) as PublishInterceptApiResult;
+  if (publishInterceptLeakedMetrics(json)) {
+    return { ok: false, errorKey: "error.submit_failed" };
   }
-
-  let is_phone_historically_reused = reuse.reused;
-  let last_post_time_delta_months = 999;
-  if (reuse.last_post_at) {
-    const last = new Date(reuse.last_post_at);
-    last_post_time_delta_months = Math.floor(
-      (Date.now() - last.getTime()) / (1000 * 60 * 60 * 24 * 30),
-    );
+  if (!json.ok) {
+    return { ok: false, errorKey: json.errorKey ?? "error.submit_failed" };
   }
-
-  if (phoneAccounts > 1 || plateAccounts > 1) {
-    is_phone_historically_reused = true;
-    last_post_time_delta_months = Math.min(last_post_time_delta_months, 0);
-  }
-
-  const { count } = await supabase
-    .from("posts")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("post_type", "provider")
-    .eq("status", "active");
-
-  return {
-    is_phone_historically_reused,
-    last_post_time_delta_months,
-    active_supply_posts_count: count ?? 0,
-    is_premium_member: isPremium,
-  };
+  return { ok: true };
 }
 
 export async function submitPost(
@@ -255,56 +169,15 @@ export async function submitPost(
     : null;
   payload.plate_id = plateId;
 
-  if (payload.post_type === "demand") {
-    const metrics = await gatherDemandMetrics(
-      supabase,
-      userId,
-      payload.normalized_phone,
-      payload.normalized_license_plate ?? null,
-      payload.departure_date,
-      payload.departure_time_window,
-    );
-    if (metrics.lookupFailed) {
-      return { ok: false, errorKey: "error.submit_failed" };
-    }
-    const decision = processDemandPostIntercept(metrics);
-    if (!decision.allowed) {
-      if (decision.logFraud) {
-        await supabase.from("fraud_logs").insert({
-          user_id: userId,
-          scene: decision.trackerScene,
-          normalized_phone: payload.normalized_phone,
-          normalized_license_plate: payload.normalized_license_plate,
-          reporter_side: "demand",
-        });
-      }
-      return { ok: false, errorKey: decision.messageKey, logFraud: decision.logFraud };
-    }
-  } else {
-    const metrics = await gatherSupplyMetrics(
-      supabase,
-      userId,
-      payload.normalized_phone,
-      payload.normalized_license_plate ?? null,
-      isPremium,
-    );
-    if (metrics.lookupFailed) {
-      return { ok: false, errorKey: "error.submit_failed" };
-    }
-    const decision = processSupplyPostIntercept(metrics);
-    if (!decision.allowed) {
-      if (decision.logFraud) {
-        await supabase.from("fraud_logs").insert({
-          user_id: userId,
-          scene: decision.trackerScene,
-          normalized_phone: payload.normalized_phone,
-          normalized_license_plate: payload.normalized_license_plate,
-          reporter_side: "provider",
-        });
-      }
-      return { ok: false, errorKey: decision.messageKey, logFraud: decision.logFraud };
-    }
-  }
+  void isPremium;
+  const intercept = await requestPublishInterceptDecision({
+    postType: payload.post_type,
+    normalizedPhone: payload.normalized_phone,
+    normalizedPlate: payload.normalized_license_plate ?? null,
+    departureDate: payload.departure_date,
+    departureWindow: payload.departure_time_window,
+  });
+  if (!intercept.ok) return intercept;
 
   const originAddr =
     (payload.origin_address as string) ||

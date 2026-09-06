@@ -41,13 +41,8 @@ import {
 import {
   upsertPhoneHistory,
   upsertPlateHistory,
-  gatherDemandMetrics,
-  gatherSupplyMetrics,
 } from '@/lib/post-form/submitPost';
-import {
-  processDemandPostIntercept,
-  processSupplyPostIntercept,
-} from '@/lib/post-intercept';
+import { evaluatePublishIntercept } from '@/lib/security/evaluateFraudIntercept';
 import { geocodeAddress, toGeographyPointWkt } from '@/lib/route-kms';
 import { haversineKm } from '@/lib/geo';
 import type { PostScope } from '@/lib/types';
@@ -196,71 +191,27 @@ export async function POST(request: Request) {
     rawPhoneForPost = buildRawPhone(dial_code ?? '', raw_phone_local!);
 
     // ── Fraud interception (runs before persisting anything) ─────────────────
-    if (post.post_type === 'demand') {
-      const metrics = await gatherDemandMetrics(
-        supabase,
-        user.id,
-        phoneResult.normalized,
-        null, // plate checked separately below
-        post.departure_date ?? '',
-        post.departure_time_window ?? '',
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('is_premium')
+      .eq('id', user.id)
+      .maybeSingle();
+    const intercept = await evaluatePublishIntercept({
+      userId: user.id,
+      postType: post.post_type === 'demand' ? 'demand' : 'provider',
+      normalizedPhone: phoneResult.normalized,
+      normalizedPlate: null,
+      departureDate: post.departure_date ?? '',
+      departureWindow: post.departure_time_window ?? '',
+      isPremium: Boolean(
+        (profileRow as { is_premium?: boolean } | null)?.is_premium,
+      ),
+    });
+    if (!intercept.allowed) {
+      return NextResponse.json(
+        { ok: false, errorKey: intercept.errorKey },
+        { status: 400 },
       );
-      if (metrics.lookupFailed) {
-        return NextResponse.json(
-          { ok: false, errorKey: 'error.submit_failed' },
-          { status: 500 },
-        );
-      }
-      const decision = processDemandPostIntercept(metrics);
-      if (!decision.allowed) {
-        if (decision.logFraud) {
-          await supabase.from('fraud_logs').insert({
-            user_id: user.id,
-            scene: decision.trackerScene,
-            normalized_phone: phoneResult.normalized,
-            reporter_side: 'demand',
-          });
-        }
-        return NextResponse.json(
-          { ok: false, errorKey: decision.messageKey },
-          { status: 400 },
-        );
-      }
-    } else {
-      const { data: profileRow } = await supabase
-        .from('profiles')
-        .select('is_premium')
-        .eq('id', user.id)
-        .maybeSingle();
-      const isPremium = Boolean((profileRow as { is_premium?: boolean } | null)?.is_premium);
-      const metrics = await gatherSupplyMetrics(
-        supabase,
-        user.id,
-        phoneResult.normalized,
-        null,
-        isPremium,
-      );
-      if (metrics.lookupFailed) {
-        return NextResponse.json(
-          { ok: false, errorKey: 'error.submit_failed' },
-          { status: 500 },
-        );
-      }
-      const decision = processSupplyPostIntercept(metrics);
-      if (!decision.allowed) {
-        if (decision.logFraud) {
-          await supabase.from('fraud_logs').insert({
-            user_id: user.id,
-            scene: decision.trackerScene,
-            normalized_phone: phoneResult.normalized,
-            reporter_side: 'provider',
-          });
-        }
-        return NextResponse.json(
-          { ok: false, errorKey: decision.messageKey },
-          { status: 400 },
-        );
-      }
     }
 
     // Persist phone history after fraud check passes

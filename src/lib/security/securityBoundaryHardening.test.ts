@@ -56,6 +56,22 @@ const trustedPublish = readFileSync(
   join(repoRoot, "src/app/api/posts/trusted-publish/route.ts"),
   "utf8",
 );
+const evaluatePublishRoute = readFileSync(
+  join(repoRoot, "src/app/api/posts/evaluate-publish-intercept/route.ts"),
+  "utf8",
+);
+const evaluateMatchRoute = readFileSync(
+  join(repoRoot, "src/app/api/posts/evaluate-provider-match-intercept/route.ts"),
+  "utf8",
+);
+const evaluateHelper = readFileSync(
+  join(repoRoot, "src/lib/security/evaluateFraudIntercept.ts"),
+  "utf8",
+);
+const completeContact = readFileSync(
+  join(repoRoot, "src/app/api/posts/complete-contact/route.ts"),
+  "utf8",
+);
 
 function assertNotRewritten(name: string) {
   assert.equal(
@@ -91,18 +107,21 @@ assert.ok(
 );
 
 // Fraud lookup must not fall back to client full-table SELECT
-assert.ok(submitPost.includes("rpcCountAssetBoundAccounts"));
-assert.ok(submitPost.includes("rpcGatherWindowInterceptMetrics"));
-assert.ok(providerMatch.includes("rpcCountAssetBoundAccounts"));
-assert.ok(providerMatch.includes("rpcGatherWindowInterceptMetrics"));
+assert.equal(submitPost.includes("rpcCountAssetBoundAccounts"), false);
+assert.equal(submitPost.includes("rpcGatherWindowInterceptMetrics"), false);
+assert.equal(providerMatch.includes("rpcCountAssetBoundAccounts"), false);
+assert.equal(providerMatch.includes("rpcGatherWindowInterceptMetrics"), false);
 assert.equal(submitPost.includes('.from("phone_history")\n    .select("user_id")'), false);
 assert.equal(providerMatch.includes('.from("phone_history")'), false);
 assert.equal(providerMatch.includes('.from("plate_history")'), false);
+assert.equal(submitPost.includes('from("fraud_logs")'), false);
+assert.equal(providerMatch.includes('from("fraud_logs")'), false);
+assert.equal(completeContact.includes('from("fraud_logs")'), false);
 
 // TEST 3 — User B submit_auto_melt(User A post) rejected
 assert.ok(migration.includes("CREATE OR REPLACE FUNCTION public.submit_auto_melt"));
 assert.ok(migration.includes("v_uid uuid := auth.uid()"));
-assert.ok(migration.includes("WHERE id = p_post_id\n      AND user_id = v_uid"));
+assert.ok(migration.includes("WHERE id = p_post_id\n      AND user_id = v_uid\n      AND status = 'completed'"));
 assert.ok(migration.includes("RETURN jsonb_build_object('ok', false, 'error', 'NOT_FOUND')"));
 assert.equal(migration.includes("post exists but not yours"), false);
 
@@ -128,6 +147,12 @@ for (const col of [
   "phone_id",
   "contact_email",
   "plate_id",
+  "origin_gps",
+  "destination_gps",
+  "service_address",
+  "completion_note",
+  "auto_melt_deadline",
+  "matched_at",
 ] as const) {
   assert.equal(
     PUBLIC_SAFE_POST_COLUMNS.includes(col as (typeof PUBLIC_SAFE_POST_COLUMNS)[number]),
@@ -181,7 +206,7 @@ assert.equal(
   false,
 );
 assert.equal(migration.includes("reveal_contact"), false);
-assert.equal(migration.includes("confirm_match"), false);
+assert.equal(migration.includes("CREATE OR REPLACE FUNCTION public.confirm_match"), false);
 assert.equal(migration.includes("contact_unlocks"), false);
 assert.ok(migration.includes("DROP POLICY IF EXISTS posts_select_active_or_own"));
 assert.ok(migration.includes("CREATE POLICY posts_select_own"));
@@ -212,5 +237,77 @@ assert.deepEqual(parseForeignPhoneReuse({ reused: true, last_post_at: "2026-01-0
   reused: true,
   last_post_at: "2026-01-01",
 });
+
+function assertNoClientExecute(fn: string) {
+  assert.ok(
+    migration.includes(`REVOKE ALL ON FUNCTION public.${fn} FROM authenticated`),
+    `${fn} must revoke authenticated`,
+  );
+  assert.equal(
+    migration.includes(`GRANT EXECUTE ON FUNCTION public.${fn} TO authenticated`),
+    false,
+    `${fn} must not grant authenticated`,
+  );
+}
+
+// TEST A — browser cannot execute count_asset_bound_accounts_v86
+assertNoClientExecute("count_asset_bound_accounts_v86(text, text)");
+assert.ok(
+  migration.includes(
+    "GRANT EXECUTE ON FUNCTION public.count_asset_bound_accounts_v86(text, text) TO service_role",
+  ),
+);
+
+// TEST B
+assertNoClientExecute("lookup_foreign_phone_reuse_v86(text)");
+assert.ok(
+  migration.includes(
+    "GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) TO service_role",
+  ),
+);
+
+// TEST C
+assertNoClientExecute("gather_window_intercept_metrics_v86(text, text, date, text)");
+assert.ok(
+  migration.includes(
+    "GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) TO service_role",
+  ),
+);
+
+// TEST D — publish fraud decision still works; browser does not receive metrics
+assert.ok(submitPost.includes("/api/posts/evaluate-publish-intercept"));
+assert.ok(evaluateHelper.includes("processDemandPostIntercept"));
+assert.ok(evaluateHelper.includes("processSupplyPostIntercept"));
+assert.ok(evaluatePublishRoute.includes("evaluatePublishIntercept"));
+assert.equal(evaluatePublishRoute.includes("account_count"), false);
+assert.equal(evaluatePublishRoute.includes("last_post_at"), false);
+assert.equal(evaluatePublishRoute.includes("has_other_phone"), false);
+assert.ok(submitPost.includes("publishInterceptLeakedMetrics"));
+
+// TEST E — authenticated browser cannot write fraud_logs
+assert.ok(migration.includes("DROP POLICY IF EXISTS fraud_logs_insert_authenticated"));
+assert.ok(migration.includes("REVOKE INSERT ON TABLE public.fraud_logs FROM authenticated"));
+assert.ok(migration.includes("REVOKE INSERT ON TABLE public.fraud_logs FROM anon"));
+assert.ok(evaluateHelper.includes('admin.from("fraud_logs").insert'));
+
+// TEST F — public_posts_safe excludes extra private fields
+for (const col of [
+  "origin_gps",
+  "destination_gps",
+  "service_address",
+  "completion_note",
+  "auto_melt_deadline",
+  "matched_at",
+] as const) {
+  assert.equal(new RegExp(`\\b${col}\\b`).test(viewBlock), false, col);
+}
+
+// TEST G — owner + invalid status rejected (status fence)
+assert.ok(migration.includes("AND status = 'completed'"));
+
+// TEST H — owner + completed succeeds
+assert.ok(migration.includes("RETURN jsonb_build_object('ok', true, 'deadline', v_deadline)"));
+assert.ok(evaluateMatchRoute.includes("evaluateProviderMatchFraud"));
+assert.ok(providerMatch.includes("/api/posts/evaluate-provider-match-intercept"));
 
 console.log("securityBoundaryHardening.test.ts: ok");

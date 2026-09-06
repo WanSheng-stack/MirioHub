@@ -259,18 +259,18 @@ assert.ok(
 );
 
 // TEST B
-assertNoClientExecute("lookup_foreign_phone_reuse_v86(text)");
+assertNoClientExecute("lookup_foreign_phone_reuse_v86(uuid, text)");
 assert.ok(
   migration.includes(
-    "GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) TO service_role",
+    "GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(uuid, text) TO service_role",
   ),
 );
 
 // TEST C
-assertNoClientExecute("gather_window_intercept_metrics_v86(text, text, date, text)");
+assertNoClientExecute("gather_window_intercept_metrics_v86(uuid, text, text, date, text)");
 assert.ok(
   migration.includes(
-    "GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) TO service_role",
+    "GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(uuid, text, text, date, text) TO service_role",
   ),
 );
 

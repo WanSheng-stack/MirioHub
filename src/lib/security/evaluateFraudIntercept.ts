@@ -44,6 +44,7 @@ export async function evaluatePublishIntercept(input: {
   if (input.postType === "demand") {
     const window = await rpcGatherWindowInterceptMetrics(
       admin,
+      input.userId,
       input.normalizedPhone,
       input.normalizedPlate,
       input.departureDate,
@@ -82,7 +83,11 @@ export async function evaluatePublishIntercept(input: {
     return { allowed: decision.allowed, errorKey: decision.messageKey };
   }
 
-  const reuse = await rpcLookupForeignPhoneReuse(admin, input.normalizedPhone);
+  const reuse = await rpcLookupForeignPhoneReuse(
+    admin,
+    input.userId,
+    input.normalizedPhone,
+  );
   const phoneAccounts = await rpcCountAssetBoundAccounts(
     admin,
     "phone",
@@ -167,6 +172,7 @@ export async function evaluateProviderMatchFraud(input: {
 
   const window = await rpcGatherWindowInterceptMetrics(
     admin,
+    input.userId,
     input.providerNormalizedPhone,
     input.providerNormalizedLicensePlate,
     (demand.departure_date as string) ?? "",

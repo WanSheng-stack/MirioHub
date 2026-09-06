@@ -127,13 +127,8 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_uid uuid := auth.uid();
   v_count integer := 0;
 BEGIN
-  IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'AUTH';
-  END IF;
-
   IF p_value IS NULL OR btrim(p_value) = '' THEN
     RETURN 0;
   END IF;
@@ -171,6 +166,7 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.lookup_foreign_phone_reuse_v86(
+  p_user_id uuid,
   p_normalized_phone text
 )
 RETURNS jsonb
@@ -179,11 +175,10 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_uid uuid := auth.uid();
   v_last timestamptz;
 BEGIN
-  IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'AUTH';
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'INVALID_USER_CONTEXT';
   END IF;
 
   IF p_normalized_phone IS NULL OR btrim(p_normalized_phone) = '' THEN
@@ -194,7 +189,7 @@ BEGIN
     INTO v_last
   FROM public.phone_history h
   WHERE h.normalized_phone = p_normalized_phone
-    AND h.user_id IS DISTINCT FROM v_uid
+    AND h.user_id IS DISTINCT FROM p_user_id
   ORDER BY h.last_post_at DESC NULLS LAST
   LIMIT 1;
 
@@ -206,6 +201,7 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.gather_window_intercept_metrics_v86(
+  p_user_id uuid,
   p_normalized_phone text,
   p_normalized_plate text,
   p_departure_date date,
@@ -217,7 +213,6 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_uid uuid := auth.uid();
   v_center timestamp;
   v_from timestamp;
   v_to timestamp;
@@ -227,8 +222,8 @@ DECLARE
   v_own_in_window_count integer := 0;
   v_own_cargo_in_window integer := 0;
 BEGIN
-  IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'AUTH';
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'INVALID_USER_CONTEXT';
   END IF;
 
   IF p_departure_date IS NULL
@@ -259,18 +254,18 @@ BEGIN
       p.normalized_phone IS NOT NULL
       AND p_normalized_phone IS NOT NULL
       AND p.normalized_phone = p_normalized_phone
-      AND p.user_id IS DISTINCT FROM v_uid
+      AND p.user_id IS DISTINCT FROM p_user_id
     ), false),
     COALESCE(BOOL_OR(
       p_normalized_plate IS NOT NULL
       AND btrim(p_normalized_plate) <> ''
       AND p.normalized_license_plate IS NOT NULL
       AND p.normalized_license_plate = p_normalized_plate
-      AND p.user_id IS DISTINCT FROM v_uid
+      AND p.user_id IS DISTINCT FROM p_user_id
     ), false),
-    COUNT(*) FILTER (WHERE p.user_id = v_uid),
+    COUNT(*) FILTER (WHERE p.user_id = p_user_id),
     COUNT(*) FILTER (
-      WHERE p.user_id = v_uid
+      WHERE p.user_id = p_user_id
         AND p.category = 'deliver'
         AND COALESCE(p.escort_seats, 0) = 0
     )
@@ -294,7 +289,7 @@ BEGIN
     SELECT 1
     FROM public.posts p
     WHERE p.status IN ('active', 'matched', 'pending_completion')
-      AND p.user_id = v_uid
+      AND p.user_id = p_user_id
       AND p.normalized_phone IS NOT NULL
       AND p_normalized_phone IS NOT NULL
       AND p.normalized_phone = p_normalized_phone
@@ -384,15 +379,15 @@ REVOKE ALL ON FUNCTION public.count_asset_bound_accounts_v86(text, text) FROM an
 REVOKE ALL ON FUNCTION public.count_asset_bound_accounts_v86(text, text) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.count_asset_bound_accounts_v86(text, text) TO service_role;
 
-REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) FROM anon;
-REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(text) TO service_role;
+REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(uuid, text) FROM anon;
+REVOKE ALL ON FUNCTION public.lookup_foreign_phone_reuse_v86(uuid, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.lookup_foreign_phone_reuse_v86(uuid, text) TO service_role;
 
-REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) FROM anon;
-REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(text, text, date, text) TO service_role;
+REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(uuid, text, text, date, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(uuid, text, text, date, text) FROM anon;
+REVOKE ALL ON FUNCTION public.gather_window_intercept_metrics_v86(uuid, text, text, date, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.gather_window_intercept_metrics_v86(uuid, text, text, date, text) TO service_role;
 
 -- fraud_logs: system audit only. No client INSERT.
 DROP POLICY IF EXISTS fraud_logs_insert_authenticated ON public.fraud_logs;

@@ -69,9 +69,11 @@ export async function rpcCountAssetBoundAccounts(
 
 export async function rpcLookupForeignPhoneReuse(
   supabase: SupabaseClient,
+  userId: string,
   normalizedPhone: string,
 ): Promise<ForeignPhoneReuse | null> {
   const { data, error } = await supabase.rpc("lookup_foreign_phone_reuse_v86", {
+    p_user_id: userId,
     p_normalized_phone: normalizedPhone,
   });
   if (error) return null;
@@ -80,6 +82,7 @@ export async function rpcLookupForeignPhoneReuse(
 
 export async function rpcGatherWindowInterceptMetrics(
   supabase: SupabaseClient,
+  userId: string,
   normalizedPhone: string,
   normalizedPlate: string | null,
   departureDate: string,
@@ -88,6 +91,7 @@ export async function rpcGatherWindowInterceptMetrics(
   const { data, error } = await supabase.rpc(
     "gather_window_intercept_metrics_v86",
     {
+      p_user_id: userId,
       p_normalized_phone: normalizedPhone,
       p_normalized_plate: normalizedPlate,
       p_departure_date: departureDate || null,

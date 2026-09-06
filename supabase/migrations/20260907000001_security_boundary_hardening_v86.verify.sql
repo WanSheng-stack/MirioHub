@@ -70,8 +70,10 @@ ORDER BY ordinal_position;
 --         origin_gps, destination_gps, service_address, completion_note,
 --         auto_melt_deadline, matched_at
 
--- H. fraud RPCs: no EXECUTE for anon/authenticated/public
-SELECT p.proname, p.proacl::text
+-- H. fraud RPCs: signatures + EXECUTE only for service_role
+SELECT p.proname,
+       pg_get_function_identity_arguments(p.oid) AS args,
+       p.proacl::text
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'
@@ -79,8 +81,15 @@ WHERE n.nspname = 'public'
     'count_asset_bound_accounts_v86',
     'lookup_foreign_phone_reuse_v86',
     'gather_window_intercept_metrics_v86'
-  );
+  )
+ORDER BY p.proname, args;
+-- EXPECT signatures only:
+--   count_asset_bound_accounts_v86(p_kind text, p_value text)
+--   lookup_foreign_phone_reuse_v86(p_user_id uuid, p_normalized_phone text)
+--   gather_window_intercept_metrics_v86(p_user_id uuid, p_normalized_phone text, p_normalized_plate text, p_departure_date date, p_departure_window text)
 -- EXPECT: no anon=X, authenticated=X, or =X (PUBLIC)
+-- EXPECT: service_role=X
+-- EXPECT: lookup/gather defs use p_user_id, not auth.uid()
 
 -- I. fraud_logs: no authenticated/anon INSERT
 SELECT grantee, privilege_type

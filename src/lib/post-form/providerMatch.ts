@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  approximateSegmentKmsForStacking,
-  evaluateRouteAndCapacityMatch,
+  evaluateCapacityOnly,
   resolveDriverOrderedRoute,
+  ROUTE_MATCH_GOOD_SCORE,
+  ROUTE_MATCH_MIN_SCORE,
 } from "@/lib/post-route-match";
 import { totalLuggageUnits } from "@/lib/post-payload";
 import { PUBLIC_SAFE_POST_SELECT } from "@/lib/posts/publicPostSelect";
@@ -76,11 +77,9 @@ export async function runProviderMatchIntercept(
 
   let currentStackedSeats = 0;
   let currentStackedUnits = 0;
-  let stackedOrderCount = 0;
   for (const p of stackedRows ?? []) {
     const row = p as Post;
     if (providerTrip && row.user_id !== (providerTrip as Post).user_id) continue;
-    // Count matches accepted by this provider in the same departure day window
     currentStackedSeats +=
       (row.category === "travel" ? row.max_companions ?? 0 : row.escort_seats ?? 0) || 0;
     currentStackedUnits += totalLuggageUnits({
@@ -89,49 +88,57 @@ export async function runProviderMatchIntercept(
       count_large: row.count_large ?? 0,
       count_xlarge: row.count_xlarge ?? 0,
     });
-    stackedOrderCount += 1;
   }
 
+  let routeSpaceWarning = false;
+  let routeMatchRatio: number | undefined;
   if (providerTrip && driverRoute.length >= 2) {
-    const passengerKms = Math.max(
-      12,
-      Math.max(demand.origin_address.length, demand.destination_address.length) * 2.5,
-    );
-    const driverKms = Math.max(
-      12,
-      Math.max(
-        (providerTrip as Post).origin_address.length,
-        (providerTrip as Post).destination_address.length,
-      ) * 2.5,
-    );
-    const routeEval = evaluateRouteAndCapacityMatch({
-      driver_ordered_route: driverRoute,
-      demand_origin: demand.origin_address,
-      demand_destination: demand.destination_address,
-      new_order_passengers: newPassengers,
-      new_order_units: newUnits,
-      current_total_passengers: currentStackedSeats,
-      current_total_units: currentStackedUnits,
-      isBankVerified,
-      segmentKms: approximateSegmentKmsForStacking({
-        driverStraightKms: driverKms,
-        passengerStraightKms: passengerKms,
-        alreadyStackedOrderCount: stackedOrderCount,
+    const routeRes = await fetch("/api/posts/evaluate-route-match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        demandPostId,
+        providerPostId: (providerTrip as Post).id,
       }),
     });
+    let routeJson: { ok?: boolean; score?: number; errorKey?: string };
+    try {
+      routeJson = (await routeRes.json()) as {
+        ok?: boolean;
+        score?: number;
+        errorKey?: string;
+      };
+    } catch {
+      return { ok: false, errorKey: "error.route_not_compatible" };
+    }
+    if (
+      !routeJson.ok ||
+      typeof routeJson.score !== "number" ||
+      routeJson.score < ROUTE_MATCH_MIN_SCORE
+    ) {
+      return {
+        ok: false,
+        errorKey:
+          typeof routeJson.score === "number" && routeJson.score < ROUTE_MATCH_MIN_SCORE
+            ? "error.low_match_filtered"
+            : (routeJson.errorKey ?? "error.route_not_compatible"),
+      };
+    }
 
-    if (!routeEval.isRouteMatch) {
+    const capacity = evaluateCapacityOnly({
+      newOrderPassengers: newPassengers,
+      newOrderUnits: newUnits,
+      currentTotalPassengers: currentStackedSeats,
+      currentTotalUnits: currentStackedUnits,
+    });
+    if (!capacity.isCapacityAllowed) {
       return {
         ok: false,
-        errorKey: routeEval.messageKey ?? "error.route_not_compatible",
+        errorKey: capacity.messageKey ?? "error.passenger_limit_exceeded",
       };
     }
-    if (!routeEval.isCapacityAllowed) {
-      return {
-        ok: false,
-        errorKey: routeEval.messageKey ?? "error.passenger_limit_exceeded",
-      };
-    }
+    routeSpaceWarning = capacity.showSpaceWarning;
+    routeMatchRatio = routeJson.score;
   }
 
   void providerNormalizedPhone;
@@ -158,7 +165,12 @@ export async function runProviderMatchIntercept(
   }
   return {
     ok: true,
-    isSpaceWarning: Boolean(json.isSpaceWarning),
+    isSpaceWarning: Boolean(json.isSpaceWarning) || routeSpaceWarning,
     messageKey: json.errorKey ?? "success.matched",
+    matchRatio: routeMatchRatio,
+    showDetourNotice:
+      routeMatchRatio != null &&
+      routeMatchRatio >= ROUTE_MATCH_MIN_SCORE &&
+      routeMatchRatio < ROUTE_MATCH_GOOD_SCORE,
   };
 }

@@ -67,9 +67,14 @@ export interface RouteStackingResult {
   messageKey: string;
 }
 
+/** Unchanged product thresholds; now applied to real detour score on the new path. */
+export const ROUTE_MATCH_MIN_SCORE = 0.7;
+export const ROUTE_MATCH_GOOD_SCORE = 0.9;
+
 /**
  * HelloBike / Didi-style rolling-baseline match ratio.
  * Denominator is locked to L_passenger_straight; extra detour = simulated − baseline.
+ * Legacy helper — production route score uses findBestDemandInsertion instead.
  */
 export function evaluateRouteAndOrderStacking(
   metrics: RouteSegmentKms,
@@ -92,7 +97,7 @@ export function evaluateRouteAndOrderStacking(
   }
 
   const matchRatio = 1 - extra_detour_kms / metrics.L_passenger_straight;
-  if (matchRatio < 0.7) {
+  if (matchRatio < ROUTE_MATCH_MIN_SCORE) {
     return {
       isRouteMatch: false,
       matchRatio,
@@ -116,7 +121,8 @@ export function evaluateRouteAndOrderStacking(
   }
 
   const showSpaceWarning = currentStackedUnits + newOrderUnits > 24;
-  const showDetourNotice = matchRatio >= 0.7 && matchRatio < 0.9;
+  const showDetourNotice =
+    matchRatio >= ROUTE_MATCH_MIN_SCORE && matchRatio < ROUTE_MATCH_GOOD_SCORE;
 
   return {
     isRouteMatch: true,
@@ -124,7 +130,7 @@ export function evaluateRouteAndOrderStacking(
     isCapacityAllowed: true,
     showSpaceWarning,
     showDetourNotice,
-    messageKey: matchRatio >= 0.9 ? "ui.perfect_match" : "ui.good_match",
+    messageKey: matchRatio >= ROUTE_MATCH_GOOD_SCORE ? "ui.perfect_match" : "ui.good_match",
   };
 }
 
@@ -150,9 +156,30 @@ export interface RouteMatchResult {
   messageKey?: string;
 }
 
+/** Capacity / space rules only — no string-address gate, no fake km. */
+export function evaluateCapacityOnly(input: {
+  newOrderPassengers: number;
+  newOrderUnits: number;
+  currentTotalPassengers: number;
+  currentTotalUnits: number;
+}): Pick<RouteMatchResult, "isCapacityAllowed" | "showSpaceWarning" | "messageKey"> {
+  const totalPeople = 1 + input.currentTotalPassengers + input.newOrderPassengers;
+  if (totalPeople > 5) {
+    return {
+      isCapacityAllowed: false,
+      showSpaceWarning: false,
+      messageKey: "error.passenger_limit_exceeded",
+    };
+  }
+  return {
+    isCapacityAllowed: true,
+    showSpaceWarning: input.currentTotalUnits + input.newOrderUnits > 24,
+  };
+}
+
 /**
- * Projection-slice gate (ordered indices) + optional rolling-baseline stacking.
- * Without segmentKms, capacity rules still apply with a perfect string-route ratio.
+ * Legacy: string membership gate + optional placeholder stacking.
+ * Production route score must not call this.
  */
 export function evaluateRouteAndCapacityMatch(metrics: RouteMatchMetrics): RouteMatchResult {
   const orderedOk = isOrderedRouteCompatible(
@@ -235,7 +262,7 @@ export function estimateSliceKmsFromRoute(
 }
 
 /**
- * Approximate rolling baseline kms for hall soft-match when only total driver km is known.
+ * @deprecated Legacy hall/soft-match placeholder. Not used by production route score.
  * Treats each stacked order as adding a soft 10% corridor buffer (≤10 km absolute).
  */
 export function approximateSegmentKmsForStacking(opts: {

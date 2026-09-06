@@ -32,13 +32,16 @@ export function toGeographyPointWkt(lat: number, lon: number): string {
   return `SRID=4326;POINT(${lon} ${lat})`;
 }
 
+/** Shared public OSRM host for Route + Table. Do not add a second base URL. */
+export const OSRM_DRIVING_HOST = "https://router.project-osrm.org";
+
 async function osrmRouteKms(points: GeocodeResult[]): Promise<number | null> {
   const valid = points.filter((p): p is { lat: number; lon: number } => p != null);
   if (valid.length < 2) return null;
   const coordStr = valid.map((p) => `${p.lon},${p.lat}`).join(";");
   try {
     const res = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=false`,
+      `${OSRM_DRIVING_HOST}/route/v1/driving/${coordStr}?overview=false`,
       { next: { revalidate: 3600 } },
     );
     if (!res.ok) return null;

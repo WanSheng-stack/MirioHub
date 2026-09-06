@@ -121,6 +121,10 @@ assert.equal(clampRouteMatchScore(10, -1), null);
   const seq = buildInsertedRoute(3, 3, 4, result.pickupInsertIndex, result.dropoffInsertIndex);
   assert.deepEqual(seq, [0, 3, 1, 4, 2]); // A P B Q C
   assert.equal(result.score, 1);
+  assert.equal(result.pickupBeforeProviderOrigin, false);
+  assert.equal(result.dropoffAfterProviderDestination, false);
+  assert.equal(result.pickupExtensionKm, 0);
+  assert.equal(result.dropoffExtensionKm, 0);
 }
 
 // CASE 6: same segment A→P→Q→B
@@ -218,6 +222,108 @@ assert.equal(clampRouteMatchScore(10, -1), null);
   if (result) {
     assert.ok(result.score >= 0 && result.score <= 1);
   }
+}
+
+// TEST 1: P before S0, Q inside
+{
+  const matrix = matrixFromPositions([0, 10, 20, -5, 13]); // A B C P Q
+  const result = findBestDemandInsertion({
+    providerCount: 3,
+    pickupIndex: 3,
+    dropoffIndex: 4,
+    matrix,
+  });
+  assert.ok(result);
+  assert.equal(result.pickupBeforeProviderOrigin, true);
+  assert.equal(result.pickupExtensionKm, 5);
+  assert.equal(result.dropoffAfterProviderDestination, false);
+  assert.equal(result.dropoffExtensionKm, 0);
+  assert.equal(result.pickupInsertIndex, 0);
+}
+
+// TEST 2: P inside, Q after Sn
+{
+  const matrix = matrixFromPositions([0, 10, 20, 4, 25]); // A B C P Q
+  const result = findBestDemandInsertion({
+    providerCount: 3,
+    pickupIndex: 3,
+    dropoffIndex: 4,
+    matrix,
+  });
+  assert.ok(result);
+  assert.equal(result.pickupBeforeProviderOrigin, false);
+  assert.equal(result.pickupExtensionKm, 0);
+  assert.equal(result.dropoffAfterProviderDestination, true);
+  assert.equal(result.dropoffExtensionKm, 5);
+  assert.equal(result.dropoffInsertIndex, 3);
+}
+
+// TEST 3: P before S0 and Q after Sn
+{
+  const matrix = matrixFromPositions([0, 10, 20, -5, 25]); // A B C P Q
+  const result = findBestDemandInsertion({
+    providerCount: 3,
+    pickupIndex: 3,
+    dropoffIndex: 4,
+    matrix,
+  });
+  assert.ok(result);
+  assert.equal(result.pickupBeforeProviderOrigin, true);
+  assert.equal(result.dropoffAfterProviderDestination, true);
+  assert.equal(result.pickupExtensionKm, 5);
+  assert.equal(result.dropoffExtensionKm, 5);
+}
+
+// TEST 4: both inside — already asserted on CASE 5; repeat A-P-Q-B
+{
+  const matrix = matrixFromPositions([0, 21, 3, 13]);
+  const result = findBestDemandInsertion({
+    providerCount: 2,
+    pickupIndex: 2,
+    dropoffIndex: 3,
+    matrix,
+  });
+  assert.ok(result);
+  assert.equal(result.pickupBeforeProviderOrigin, false);
+  assert.equal(result.dropoffAfterProviderDestination, false);
+  assert.equal(result.pickupExtensionKm, 0);
+  assert.equal(result.dropoffExtensionKm, 0);
+}
+
+// TEST 5: same B/N/D → same score whether endpoint extension or internal
+{
+  const internal: DistanceMatrixKm = [
+    [0, 20, 5, 16],
+    [20, 0, 16, 80],
+    [80, 16, 0, 15],
+    [16, 5, 15, 0],
+  ];
+  const endpoint: DistanceMatrixKm = [
+    [0, 20, 5, 10],
+    [20, 0, 25, 10],
+    [5, 25, 0, 15],
+    [10, 10, 15, 0],
+  ];
+  const a = findBestDemandInsertion({
+    providerCount: 2,
+    pickupIndex: 2,
+    dropoffIndex: 3,
+    matrix: internal,
+  });
+  const b = findBestDemandInsertion({
+    providerCount: 2,
+    pickupIndex: 2,
+    dropoffIndex: 3,
+    matrix: endpoint,
+  });
+  assert.ok(a && b);
+  assert.equal(a.baselineKms, b.baselineKms);
+  assert.equal(a.bestRouteKms, b.bestRouteKms);
+  assert.equal(a.demandDirectKms, b.demandDirectKms);
+  assert.equal(a.extraDetourKms, b.extraDetourKms);
+  assert.equal(a.score, b.score);
+  assert.equal(a.pickupBeforeProviderOrigin, false);
+  assert.equal(b.pickupBeforeProviderOrigin, true);
 }
 
 console.log("findBestDemandInsertion.test.ts: ok");

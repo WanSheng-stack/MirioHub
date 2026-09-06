@@ -3,6 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calculateRouteMatchScore } from "@/lib/route/calculateRouteMatchScore";
 import type { RouteScorePost } from "@/lib/route/calculateRouteMatchScore";
+import {
+  evaluateRouteMatchAccess,
+  toRouteMatchApiPayload,
+} from "@/lib/route/routeMatchAccess";
 
 type Body = {
   demandPostId?: string;
@@ -10,7 +14,9 @@ type Body = {
 };
 
 const SCORE_SELECT =
-  "id, post_type, origin_address, destination_address, waypoints, origin_gps, destination_gps";
+  "id, user_id, post_type, status, origin_address, destination_address, waypoints, origin_gps, destination_gps";
+
+const DENIED = { ok: false as const, errorKey: "error.route_not_compatible" };
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -28,10 +34,10 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as Body;
   } catch {
-    return NextResponse.json({ ok: false, errorKey: "error.route_not_compatible" });
+    return NextResponse.json(DENIED);
   }
   if (!body.demandPostId || !body.providerPostId) {
-    return NextResponse.json({ ok: false, errorKey: "error.route_not_compatible" });
+    return NextResponse.json(DENIED);
   }
 
   const admin = createAdminClient();
@@ -39,16 +45,23 @@ export async function POST(request: Request) {
     admin.from("posts").select(SCORE_SELECT).eq("id", body.demandPostId).maybeSingle(),
     admin.from("posts").select(SCORE_SELECT).eq("id", body.providerPostId).maybeSingle(),
   ]);
-  if (!demand || !provider) {
-    return NextResponse.json({ ok: false, errorKey: "error.route_not_compatible" });
+
+  if (
+    !evaluateRouteMatchAccess({
+      userId: user.id,
+      demand: demand as { user_id: string; post_type: string; status: string } | null,
+      provider: provider as { user_id: string; post_type: string; status: string } | null,
+    })
+  ) {
+    return NextResponse.json(DENIED);
   }
 
   const result = await calculateRouteMatchScore({
-    source: demand as RouteScorePost,
-    candidate: provider as RouteScorePost,
+    demand: demand as RouteScorePost,
+    provider: provider as RouteScorePost,
   });
   if (!result.ok) {
-    return NextResponse.json({ ok: false, errorKey: "error.route_not_compatible" });
+    return NextResponse.json(DENIED);
   }
-  return NextResponse.json({ ok: true, score: result.score });
+  return NextResponse.json(toRouteMatchApiPayload(result));
 }

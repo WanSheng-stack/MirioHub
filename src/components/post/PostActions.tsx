@@ -15,9 +15,18 @@ type Props = {
   campaign: boolean;
   config: SystemConfig | null;
   match: MatchRow | null;
+  /** Owned active provider post for this match — never guessed by date. */
+  providerPostId?: string | null;
 };
 
-export function PostActions({ post, userId, campaign, config, match }: Props) {
+export function PostActions({
+  post,
+  userId,
+  campaign,
+  config,
+  match,
+  providerPostId,
+}: Props) {
   const t = useTranslations("post");
   const tRoot = useTranslations();
   const locale = useLocale();
@@ -79,14 +88,18 @@ export function PostActions({ post, userId, campaign, config, match }: Props) {
 
       const normPhone = (me?.phone ?? "").replace(/\D/g, "");
       const normPlate = (me?.plate ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      const intercept = await runProviderMatchIntercept(
-        supabase,
-        userId,
-        post.id,
-        normPhone,
-        normPlate || null,
-        Boolean(me?.is_bank_verified),
-      );
+      if (!providerPostId) {
+        setErrorKey("error.route_not_compatible");
+        return;
+      }
+      const intercept = await runProviderMatchIntercept(supabase, {
+        providerUserId: userId,
+        demandPostId: post.id,
+        providerPostId,
+        providerNormalizedPhone: normPhone,
+        providerNormalizedLicensePlate: normPlate || null,
+        isBankVerified: Boolean(me?.is_bank_verified),
+      });
 
       if (!intercept.ok) {
         setErrorKey(intercept.errorKey);

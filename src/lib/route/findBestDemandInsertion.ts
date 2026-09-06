@@ -8,6 +8,10 @@ export type DemandInsertionResult = {
   demandDirectKms: number;
   pickupInsertIndex: number;
   dropoffInsertIndex: number;
+  pickupBeforeProviderOrigin: boolean;
+  dropoffAfterProviderDestination: boolean;
+  pickupExtensionKm: number;
+  dropoffExtensionKm: number;
   score: number;
 };
 
@@ -58,6 +62,37 @@ export function providerOrderPreserved(seq: number[], providerCount: number): bo
     }
   }
   return expect === providerCount;
+}
+
+/** Explanation only — never applied as extra score penalty. */
+export function endpointExtensionMeta(
+  matrix: DistanceMatrixKm,
+  providerCount: number,
+  pickupIndex: number,
+  dropoffIndex: number,
+  pickupGap: number,
+  dropoffGap: number,
+): Pick<
+  DemandInsertionResult,
+  | "pickupBeforeProviderOrigin"
+  | "dropoffAfterProviderDestination"
+  | "pickupExtensionKm"
+  | "dropoffExtensionKm"
+> {
+  const pickupBeforeProviderOrigin = pickupGap === 0;
+  const dropoffAfterProviderDestination = dropoffGap === providerCount;
+  const pickupExtensionKm = pickupBeforeProviderOrigin
+    ? (edgeKm(matrix, pickupIndex, 0) ?? 0)
+    : 0;
+  const dropoffExtensionKm = dropoffAfterProviderDestination
+    ? (edgeKm(matrix, providerCount - 1, dropoffIndex) ?? 0)
+    : 0;
+  return {
+    pickupBeforeProviderOrigin,
+    dropoffAfterProviderDestination,
+    pickupExtensionKm,
+    dropoffExtensionKm,
+  };
 }
 
 export function clampRouteMatchScore(extraDetourKms: number, demandDirectKms: number): number | null {
@@ -116,6 +151,14 @@ export function findBestDemandInsertion(opts: {
           pickupInsertIndex: pickupGap,
           dropoffInsertIndex: dropoffGap,
           score,
+          ...endpointExtensionMeta(
+            matrix,
+            providerCount,
+            pickupIndex,
+            dropoffIndex,
+            pickupGap,
+            dropoffGap,
+          ),
         };
       }
     }

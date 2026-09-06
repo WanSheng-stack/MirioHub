@@ -26,16 +26,19 @@ type ProviderMatchApiResult = {
 
 export async function runProviderMatchIntercept(
   supabase: SupabaseClient,
-  providerUserId: string,
-  demandPostId: string,
-  providerNormalizedPhone: string,
-  providerNormalizedLicensePlate: string | null,
-  isBankVerified: boolean,
+  input: {
+    providerUserId: string;
+    demandPostId: string;
+    providerPostId: string;
+    providerNormalizedPhone: string;
+    providerNormalizedLicensePlate: string | null;
+    isBankVerified: boolean;
+  },
 ): Promise<ProviderMatchResult> {
   const { data: demandPost } = await supabase
     .from("public_posts_safe")
     .select(PUBLIC_SAFE_POST_SELECT)
-    .eq("id", demandPostId)
+    .eq("id", input.demandPostId)
     .maybeSingle();
 
   if (!demandPost) return { ok: false, errorKey: "error.not_found" };
@@ -45,15 +48,17 @@ export async function runProviderMatchIntercept(
   const { data: providerTrip } = await supabase
     .from("posts")
     .select("*")
-    .eq("user_id", providerUserId)
+    .eq("id", input.providerPostId)
+    .eq("user_id", input.providerUserId)
     .eq("post_type", "provider")
     .eq("status", "active")
-    .eq("departure_date", demand.departure_date)
     .maybeSingle();
 
-  const driverRoute = providerTrip
-    ? resolveDriverOrderedRoute(providerTrip as Post)
-    : [];
+  if (!providerTrip) {
+    return { ok: false, errorKey: "error.route_not_compatible" };
+  }
+
+  const driverRoute = resolveDriverOrderedRoute(providerTrip as Post);
 
   const newPassengers =
     demand.category === "travel"
@@ -72,14 +77,13 @@ export async function runProviderMatchIntercept(
       "user_id, category, escort_seats, max_companions, count_small, count_medium, count_large, count_xlarge",
     )
     .eq("status", "matched")
-    .eq("user_id", providerUserId)
+    .eq("user_id", input.providerUserId)
     .eq("departure_date", demand.departure_date as string);
 
   let currentStackedSeats = 0;
   let currentStackedUnits = 0;
   for (const p of stackedRows ?? []) {
     const row = p as Post;
-    if (providerTrip && row.user_id !== (providerTrip as Post).user_id) continue;
     currentStackedSeats +=
       (row.category === "travel" ? row.max_companions ?? 0 : row.escort_seats ?? 0) || 0;
     currentStackedUnits += totalLuggageUnits({
@@ -92,13 +96,13 @@ export async function runProviderMatchIntercept(
 
   let routeSpaceWarning = false;
   let routeMatchRatio: number | undefined;
-  if (providerTrip && driverRoute.length >= 2) {
+  if (driverRoute.length >= 2) {
     const routeRes = await fetch("/api/posts/evaluate-route-match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        demandPostId,
-        providerPostId: (providerTrip as Post).id,
+        demandPostId: input.demandPostId,
+        providerPostId: input.providerPostId,
       }),
     });
     let routeJson: { ok?: boolean; score?: number; errorKey?: string };
@@ -141,14 +145,14 @@ export async function runProviderMatchIntercept(
     routeMatchRatio = routeJson.score;
   }
 
-  void providerNormalizedPhone;
-  void providerNormalizedLicensePlate;
-  void isBankVerified;
+  void input.providerNormalizedPhone;
+  void input.providerNormalizedLicensePlate;
+  void input.isBankVerified;
 
   const res = await fetch("/api/posts/evaluate-provider-match-intercept", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ demandPostId }),
+    body: JSON.stringify({ demandPostId: input.demandPostId }),
   });
   const json = (await res.json()) as ProviderMatchApiResult;
   if (

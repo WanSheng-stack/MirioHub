@@ -48,6 +48,9 @@ assert.equal(providerMatchSrc.includes("approximateSegmentKmsForStacking"), fals
 assert.equal(providerMatchSrc.includes("* 2.5"), false);
 assert.ok(providerMatchSrc.includes("/api/posts/evaluate-route-match"));
 assert.ok(providerMatchSrc.includes("evaluateCapacityOnly"));
+assert.ok(providerMatchSrc.includes("providerPostId"));
+assert.ok(apiSrc.includes("evaluateRouteMatchAccess"));
+assert.ok(insertionSrc.includes("pickupBeforeProviderOrigin"));
 
 assert.ok(apiSrc.includes("calculateRouteMatchScore"));
 assert.ok(scoreSrc.includes("fetchOsrmDistanceMatrixKm"));

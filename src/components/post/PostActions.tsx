@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { PaywallModal } from "@/components/paywall/PaywallModal";
 import { VerificationShield } from "@/components/post/VerificationShield";
 import { AutoMeltDialog } from "@/components/post/AutoMeltDialog";
+import { Link } from "@/i18n/navigation";
 import { runProviderMatchIntercept } from "@/lib/post-form/providerMatch";
 import type { MatchRow, Post, RevealResult, SystemConfig } from "@/lib/types";
 
@@ -144,7 +145,17 @@ export function PostActions({
   return (
     <div className="mt-6 space-y-4">
       {userId === post.user_id ? (
-        <p className="text-sm text-zinc-500">{t("ownPost")}</p>
+        <div className="space-y-2">
+          <p className="text-sm text-zinc-500">{t("ownPost")}</p>
+          {post.status !== "draft" && post.status !== "canceled" ? (
+            <Link
+              href={`/posts/${post.id}/matches`}
+              className="inline-block rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              {t("viewMatches")}
+            </Link>
+          ) : null}
+        </div>
       ) : null}
 
       <div>
@@ -170,7 +181,7 @@ export function PostActions({
         ) : null}
       </div>
 
-      {userId && userId !== post.user_id && !activeMatch ? (
+      {userId && userId !== post.user_id && !activeMatch && post.status === "active" ? (
         <>
           {spaceWarning ? (
             <p className="animate-pulse rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">

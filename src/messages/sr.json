@@ -321,7 +321,37 @@
     "from": "Od",
     "to": "Do",
     "pickupCode": "Kod preuzimanja",
-    "deliveryCode": "Kod dostave"
+    "deliveryCode": "Kod dostave",
+    "viewMatches": "Pogledaj poklapanja"
+  },
+  "matchHall": {
+    "title": "Poklapanja ruta",
+    "backToPost": "Nazad na objavu",
+    "routeMatchPercent": "Poklapanje rute {percent}%",
+    "fee": "Cena",
+    "companions": "{count} putnika",
+    "escortSeats": "{count} mesta za pratnju",
+    "completedTrips": "{count} završenih vožnji",
+    "extraDrive": "Oko {km} km dodatne vožnje",
+    "pickupBeyondOrigin": "Preuzimanje je oko {km} km van početne tačke",
+    "dropoffBeyondDest": "Dostava je oko {km} km van odredišta",
+    "viewDetails": "Detalji",
+    "match": "Upari",
+    "emptyTitle": "Još nema odgovarajućih ruta.",
+    "emptyBody": "Vaša objava je aktivna. Pozovite nekog ko možda ide istim putem.",
+    "invite": "Pozovi nekog ko ide istim putem",
+    "share": "Podeli",
+    "copyLink": "Kopiraj link",
+    "copied": "Link je kopiran",
+    "status": {
+      "matched": "Upareno",
+      "pending_completion": "U toku",
+      "completed": "Završeno"
+    },
+    "delivery": {
+      "spot": "Mesto preuzimanja",
+      "door": "Do vrata"
+    }
   },
   "publish": {
     "title": "Nova objava",

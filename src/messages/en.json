@@ -321,7 +321,37 @@
     "from": "From",
     "to": "To",
     "pickupCode": "Pickup code",
-    "deliveryCode": "Delivery code"
+    "deliveryCode": "Delivery code",
+    "viewMatches": "View matches"
+  },
+  "matchHall": {
+    "title": "Matching routes",
+    "backToPost": "Back to your post",
+    "routeMatchPercent": "Route match {percent}%",
+    "fee": "Fee",
+    "companions": "{count} traveler(s)",
+    "escortSeats": "{count} escort seat(s)",
+    "completedTrips": "{count} completed trips",
+    "extraDrive": "About {km} km extra driving",
+    "pickupBeyondOrigin": "Pickup is about {km} km beyond the original starting point",
+    "dropoffBeyondDest": "Drop-off is about {km} km beyond the original destination",
+    "viewDetails": "View details",
+    "match": "Match",
+    "emptyTitle": "No matching routes yet.",
+    "emptyBody": "Your post is live. Invite someone who might be going the same way.",
+    "invite": "Invite someone going the same way",
+    "share": "Share",
+    "copyLink": "Copy link",
+    "copied": "Link copied",
+    "status": {
+      "matched": "Matched",
+      "pending_completion": "In progress",
+      "completed": "Completed"
+    },
+    "delivery": {
+      "spot": "Pickup point",
+      "door": "Door"
+    }
   },
   "publish": {
     "title": "New post",

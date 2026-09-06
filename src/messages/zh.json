@@ -321,7 +321,37 @@
     "from": "从",
     "to": "到",
     "pickupCode": "取货码",
-    "deliveryCode": "送达码"
+    "deliveryCode": "送达码",
+    "viewMatches": "查看匹配"
+  },
+  "matchHall": {
+    "title": "顺路匹配",
+    "backToPost": "返回你的帖子",
+    "routeMatchPercent": "路线匹配 {percent}%",
+    "fee": "价格",
+    "companions": "{count} 人",
+    "escortSeats": "押货座位 {count}",
+    "completedTrips": "已完成 {count} 单",
+    "extraDrive": "预计额外行驶约 {km} km",
+    "pickupBeyondOrigin": "接取点在原起点之外约 {km} km",
+    "dropoffBeyondDest": "送达点超出原终点约 {km} km",
+    "viewDetails": "查看详情",
+    "match": "匹配",
+    "emptyTitle": "暂时还没有合适的路线。",
+    "emptyBody": "你的帖子已经发布，可以邀请可能顺路的人加入。",
+    "invite": "邀请可能顺路的人",
+    "share": "分享",
+    "copyLink": "复制链接",
+    "copied": "已复制链接",
+    "status": {
+      "matched": "已匹配",
+      "pending_completion": "进行中",
+      "completed": "已完成"
+    },
+    "delivery": {
+      "spot": "定点交接",
+      "door": "上门"
+    }
   },
   "publish": {
     "title": "发布互助单",

@@ -69,6 +69,8 @@ export async function calculateRouteMatchScore(input: {
   /** Either role; normalized internally to Demand + Provider. */
   source?: RouteScorePost;
   candidate?: RouteScorePost;
+  /** Reuse Nominatim results across candidates. */
+  geocodeCache?: Map<string, { lat: number; lon: number } | null>;
 }): Promise<RouteMatchScoreResult> {
   const pair =
     input.demand && input.provider
@@ -87,7 +89,8 @@ export async function calculateRouteMatchScore(input: {
   });
   if (providerLabels.length < 2) return { ok: false, reason: "unscorable" };
 
-  const cache = new Map<string, { lat: number; lon: number } | null>();
+  const cache =
+    input.geocodeCache ?? new Map<string, { lat: number; lon: number } | null>();
   const providerCoords: { lat: number; lon: number }[] = [];
   for (let i = 0; i < providerLabels.length; i += 1) {
     const label = providerLabels[i]!;

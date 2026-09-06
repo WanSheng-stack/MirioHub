@@ -7,14 +7,15 @@ import {
   computeDemandMatchInfo,
   computeProviderMatchInfo,
 } from "@/lib/hall-route-match";
+import {
+  OWNER_POST_SELECT,
+  PUBLIC_SAFE_POST_SELECT,
+} from "@/lib/posts/publicPostSelect";
 import type { Post } from "@/lib/types";
 
 type Props = { params: Promise<{ locale: string }> };
 
 export const dynamic = "force-dynamic";
-
-const POST_SELECT =
-  "id, user_id, title, description, status, locale, post_type, category, scope, origin_address, destination_address, origin_gps, destination_gps, capacity_type, transport_mode, escort_seats, max_companions, fee_amount, estimated_item_cost, translations, created_at, updated_at, waypoints, count_small, count_medium, count_large, count_xlarge, completion_type, completion_note, departure_date, departure_time_window, pickup_code, delivery_code, auto_melt_deadline, matched_at, provider_name, vehicle_brand, vehicle_color, raw_phone, raw_license_plate, normalized_license_plate, service_address";
 
 export default async function HomePage({ params }: Props) {
   const { locale } = await params;
@@ -35,13 +36,13 @@ export default async function HomePage({ params }: Props) {
   } = await supabase.auth.getUser();
 
   const { data: posts } = await supabase
-    .from("posts")
-    .select(POST_SELECT)
+    .from("public_posts_safe")
+    .select(PUBLIC_SAFE_POST_SELECT)
     .eq("status", "active")
     .order("created_at", { ascending: false })
     .limit(120);
 
-  const rows = (posts ?? []) as Post[];
+  const rows = (posts ?? []) as unknown as Post[];
   const demands = rows.filter((p) => p.post_type === "demand");
   const providers = rows.filter((p) => p.post_type === "provider");
 
@@ -57,12 +58,12 @@ export default async function HomePage({ params }: Props) {
   const creditByUser = new Map<string, ReturnType<typeof computeCreditStats>>();
   for (const uid of authorIds) {
     const { data: history } = await supabase
-      .from("posts")
+      .from("public_posts_safe")
       .select("status, completion_type, completion_note")
       .eq("user_id", uid)
       .eq("post_type", "provider")
-      .in("status", ["completed", "pending_completion"]);
-    creditByUser.set(uid, computeCreditStats((history ?? []) as Post[]));
+      .eq("status", "completed");
+    creditByUser.set(uid, computeCreditStats((history ?? []) as unknown as Post[]));
   }
 
   const hallBundles = rows.map((post) => ({
@@ -94,20 +95,20 @@ export default async function HomePage({ params }: Props) {
     if (peerIds.length) {
       const { data } = await supabase
         .from("posts")
-        .select(POST_SELECT)
+        .select(OWNER_POST_SELECT)
         .in("id", peerIds)
         .in("status", ["matched", "pending_completion"]);
-      compliancePosts = (data ?? []) as Post[];
+      compliancePosts = (data ?? []) as unknown as Post[];
     }
 
     const { data: ownedPending } = await supabase
       .from("posts")
-      .select(POST_SELECT)
+      .select(OWNER_POST_SELECT)
       .eq("user_id", user.id)
       .in("status", ["matched", "pending_completion"]);
 
     const map = new Map<string, Post>();
-    for (const p of [...compliancePosts, ...((ownedPending ?? []) as Post[])]) {
+    for (const p of [...compliancePosts, ...((ownedPending ?? []) as unknown as Post[])]) {
       map.set(p.id, p);
     }
     compliancePosts = [...map.values()];

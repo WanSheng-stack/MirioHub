@@ -4,9 +4,8 @@
  * Published Success — Stage 2 when pendingPostStatus === "active".
  * Account backup (Google / Email) and phone are optional and independent.
  *
- * STOP GATE — PHONE PRIVACY NOT YET ENFORCED:
- * Do not claim confirmed-order-only phone visibility. Public post reads
- * still select raw_phone / normalized_phone for any active row.
+ * Public hall/detail reads use public_posts_safe (no raw_phone).
+ * reveal_contact remains the old premium/free-view model until a later phase.
  */
 
 import { useTranslations } from "next-intl";

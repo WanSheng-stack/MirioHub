@@ -205,6 +205,12 @@ export async function POST(request: Request) {
         post.departure_date ?? '',
         post.departure_time_window ?? '',
       );
+      if (metrics.lookupFailed) {
+        return NextResponse.json(
+          { ok: false, errorKey: 'error.submit_failed' },
+          { status: 500 },
+        );
+      }
       const decision = processDemandPostIntercept(metrics);
       if (!decision.allowed) {
         if (decision.logFraud) {
@@ -234,6 +240,12 @@ export async function POST(request: Request) {
         null,
         isPremium,
       );
+      if (metrics.lookupFailed) {
+        return NextResponse.json(
+          { ok: false, errorKey: 'error.submit_failed' },
+          { status: 500 },
+        );
+      }
       const decision = processSupplyPostIntercept(metrics);
       if (!decision.allowed) {
         if (decision.logFraud) {

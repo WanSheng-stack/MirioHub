@@ -6,7 +6,11 @@ import {
 } from "@/lib/post-route-match";
 import { processProviderMatchIntercept } from "@/lib/post-intercept";
 import { totalLuggageUnits } from "@/lib/post-payload";
-import { buildDepartureTimestamp, demandInterceptRange } from "@/lib/post-time-windows";
+import { PUBLIC_SAFE_POST_SELECT } from "@/lib/posts/publicPostSelect";
+import {
+  rpcCountAssetBoundAccounts,
+  rpcGatherWindowInterceptMetrics,
+} from "@/lib/security/fraudLookupRpc";
 import type { Post } from "@/lib/types";
 
 export type ProviderMatchResult =
@@ -17,26 +21,13 @@ async function countBoundAccounts(
   supabase: SupabaseClient,
   field: "normalized_phone" | "normalized_license_plate",
   value: string,
-): Promise<number> {
+): Promise<number | null> {
   if (!value) return 0;
-  const accounts = new Set<string>();
-  const historyTable = field === "normalized_phone" ? "phone_history" : "plate_history";
-  const historyCol =
-    field === "normalized_phone" ? "normalized_phone" : "normalized_license_plate";
-
-  const { data: history } = await supabase
-    .from(historyTable)
-    .select("user_id")
-    .eq(historyCol, value);
-  for (const row of history ?? []) accounts.add(row.user_id as string);
-
-  const { data: posts } = await supabase
-    .from("posts")
-    .select("user_id")
-    .eq(field, value)
-    .in("status", ["active", "matched", "pending_completion"]);
-  for (const row of posts ?? []) accounts.add(row.user_id as string);
-  return accounts.size;
+  return rpcCountAssetBoundAccounts(
+    supabase,
+    field === "normalized_phone" ? "phone" : "plate",
+    value,
+  );
 }
 
 export async function runProviderMatchIntercept(
@@ -48,14 +39,14 @@ export async function runProviderMatchIntercept(
   isBankVerified: boolean,
 ): Promise<ProviderMatchResult> {
   const { data: demandPost } = await supabase
-    .from("posts")
-    .select("*")
+    .from("public_posts_safe")
+    .select(PUBLIC_SAFE_POST_SELECT)
     .eq("id", demandPostId)
     .maybeSingle();
 
   if (!demandPost) return { ok: false, errorKey: "error.not_found" };
 
-  const demand = demandPost as Post;
+  const demand = demandPost as unknown as Post;
   const isPureCargo =
     demand.category === "deliver" && (demand.escort_seats ?? 0) === 0;
 
@@ -85,8 +76,11 @@ export async function runProviderMatchIntercept(
 
   const { data: stackedRows } = await supabase
     .from("posts")
-    .select("*")
+    .select(
+      "user_id, category, escort_seats, max_companions, count_small, count_medium, count_large, count_xlarge",
+    )
     .eq("status", "matched")
+    .eq("user_id", providerUserId)
     .eq("departure_date", demand.departure_date as string);
 
   let currentStackedSeats = 0;
@@ -149,30 +143,15 @@ export async function runProviderMatchIntercept(
     }
   }
 
-  // Cross-account phone/plate collision in ±30min absolute window
   const depDate = demand.departure_date as string;
   const depWindow = demand.departure_time_window as string;
-  const { from, to } = demandInterceptRange(depDate, depWindow);
-
-  const { data: windowPosts } = await supabase
-    .from("posts")
-    .select(
-      "user_id, normalized_phone, normalized_license_plate, status, departure_date, departure_time_window, escort_seats, category, count_small, count_medium, count_large, count_xlarge, max_companions",
-    )
-    .in("status", ["active", "matched", "pending_completion"]);
-
-  const inWindow = (windowPosts ?? []).filter((r) => {
-    if (!r.departure_date || !r.departure_time_window) return false;
-    const ts = buildDepartureTimestamp(r.departure_date, r.departure_time_window);
-    return ts >= from && ts <= to;
-  });
-
-  const phoneAccountsLive = new Set(
-    inWindow
-      .filter((r) => r.normalized_phone === providerNormalizedPhone)
-      .map((r) => r.user_id as string),
+  const window = await rpcGatherWindowInterceptMetrics(
+    supabase,
+    providerNormalizedPhone,
+    providerNormalizedLicensePlate,
+    depDate,
+    depWindow,
   );
-  phoneAccountsLive.add(providerUserId);
 
   const phoneHistoryAccounts = await countBoundAccounts(
     supabase,
@@ -187,21 +166,20 @@ export async function runProviderMatchIntercept(
       )
     : 0;
 
+  if (window == null || phoneHistoryAccounts == null || plateHistoryAccounts == null) {
+    return { ok: false, errorKey: "error.submit_failed" };
+  }
+
   const account_count = Math.max(
-    phoneAccountsLive.size,
+    window.window_phone_account_count,
     phoneHistoryAccounts,
     plateHistoryAccounts,
   );
   const is_phone_duplicated =
-    phoneAccountsLive.size > 1 || phoneHistoryAccounts > 1;
+    window.window_phone_account_count > 1 || phoneHistoryAccounts > 1;
   const is_plate_duplicated =
     Boolean(providerNormalizedLicensePlate) &&
-    (plateHistoryAccounts > 1 ||
-      inWindow.some(
-        (r) =>
-          r.normalized_license_plate === providerNormalizedLicensePlate &&
-          r.user_id !== providerUserId,
-      ));
+    (plateHistoryAccounts > 1 || window.has_other_plate);
 
   if ((is_phone_duplicated || is_plate_duplicated) && account_count > 1) {
     await supabase.from("fraud_logs").insert({
@@ -218,10 +196,7 @@ export async function runProviderMatchIntercept(
     return { ok: true, isSpaceWarning: false, messageKey: "success.matched" };
   }
 
-  const overlapping = inWindow.filter(
-    (p) => p.category === "deliver" && (p.escort_seats ?? 0) === 0,
-  );
-  const ownCargo = overlapping.filter((p) => p.user_id === providerUserId).length;
+  const ownCargo = window.own_cargo_in_window;
 
   const allUnits = currentStackedUnits + newUnits;
   const allPassengers = currentStackedSeats + newPassengers;

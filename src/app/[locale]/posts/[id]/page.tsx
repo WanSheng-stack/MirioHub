@@ -4,12 +4,13 @@ import type { AppLocale } from "@/i18n/routing";
 import { PostCard } from "@/components/hall/PostCard";
 import { PostActions } from "@/components/post/PostActions";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/server";
+import {
+  OWNER_POST_SELECT,
+  PUBLIC_SAFE_POST_SELECT,
+} from "@/lib/posts/publicPostSelect";
 import type { MatchRow, Post, SystemConfig } from "@/lib/types";
 
 type Props = { params: Promise<{ locale: string; id: string }> };
-
-const POST_SELECT =
-  "id, user_id, title, description, status, locale, post_type, category, scope, origin_address, destination_address, origin_gps, destination_gps, capacity_type, transport_mode, escort_seats, max_companions, fee_amount, estimated_item_cost, translations, created_at, updated_at, delivery_mode, share_mode, item_condition, raw_phone, normalized_phone, raw_license_plate, normalized_license_plate, provider_name, vehicle_brand, vehicle_color, departure_date, departure_time_window, waypoints, item_quantity, item_unit, count_small, count_medium, count_large, count_xlarge, bump_fee, service_address, completion_type, completion_note";
 
 export default async function PostDetailPage({ params }: Props) {
   const { locale, id } = await params;
@@ -19,12 +20,21 @@ export default async function PostDetailPage({ params }: Props) {
   if (!hasSupabaseEnv()) notFound();
 
   const supabase = await createClient();
-  const { data: post } = await supabase
+  const { data: ownedOrParticipant } = await supabase
     .from("posts")
-    .select(POST_SELECT)
+    .select(OWNER_POST_SELECT)
     .eq("id", id)
     .maybeSingle();
 
+  const { data: publicPost } = ownedOrParticipant
+    ? { data: null }
+    : await supabase
+        .from("public_posts_safe")
+        .select(PUBLIC_SAFE_POST_SELECT)
+        .eq("id", id)
+        .maybeSingle();
+
+  const post = ownedOrParticipant ?? publicPost;
   if (!post) notFound();
 
   const [{ data: auth }, { data: config }, { data: match }] = await Promise.all([
@@ -39,7 +49,7 @@ export default async function PostDetailPage({ params }: Props) {
       .maybeSingle(),
   ]);
 
-  const row = post as Post;
+  const row = post as unknown as Post;
   const cfg = (config ?? null) as SystemConfig | null;
   const matchRow = (match ?? null) as MatchRow | null;
 

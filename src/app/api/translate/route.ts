@@ -19,11 +19,19 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "AUTH" }, { status: 401 });
   }
 
-  const { data: post } = await supabase
+  const { data: owned } = await supabase
     .from("posts")
     .select("translations")
     .eq("id", body.postId)
     .maybeSingle();
+  const { data: publicPost } = owned
+    ? { data: null }
+    : await supabase
+        .from("public_posts_safe")
+        .select("translations")
+        .eq("id", body.postId)
+        .maybeSingle();
+  const post = owned ?? publicPost;
 
   const cached = (post?.translations as Record<string, string> | null)?.[body.locale];
   if (cached) {

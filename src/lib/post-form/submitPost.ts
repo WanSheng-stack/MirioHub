@@ -5,11 +5,15 @@ import {
   processDemandPostIntercept,
   processSupplyPostIntercept,
 } from "@/lib/post-intercept";
-import { buildDepartureTimestamp, demandInterceptRange } from "@/lib/post-time-windows";
 import { geocodeAddress, toGeographyPointWkt } from "@/lib/route-kms";
 import { haversineKm } from "@/lib/geo";
 import type { AppLocale } from "@/i18n/routing";
 import type { PostScope } from "@/lib/types";
+import {
+  rpcCountAssetBoundAccounts,
+  rpcGatherWindowInterceptMetrics,
+  rpcLookupForeignPhoneReuse,
+} from "@/lib/security/fraudLookupRpc";
 
 async function resolveGeocodePair(
   originAddr: string,
@@ -112,89 +116,66 @@ export async function upsertPlateHistory(
   return inserted.id as number;
 }
 
-/** Distinct UUID count bound to a phone across history + live posts. */
-async function countPhoneBoundAccounts(
-  supabase: SupabaseClient,
-  normalizedPhone: string,
-): Promise<number> {
-  const accounts = new Set<string>();
-  const { data: history } = await supabase
-    .from("phone_history")
-    .select("user_id")
-    .eq("normalized_phone", normalizedPhone);
-  for (const row of history ?? []) accounts.add(row.user_id as string);
+export type DemandInterceptMetrics = {
+  is_phone_duplicated: boolean;
+  account_count: number;
+  active_order_count: number;
+  lookupFailed?: boolean;
+};
 
-  const { data: posts } = await supabase
-    .from("posts")
-    .select("user_id")
-    .eq("normalized_phone", normalizedPhone)
-    .in("status", ["active", "matched", "pending_completion"]);
-  for (const row of posts ?? []) accounts.add(row.user_id as string);
-  return accounts.size;
-}
-
-async function countPlateBoundAccounts(
-  supabase: SupabaseClient,
-  normalizedPlate: string,
-): Promise<number> {
-  if (!normalizedPlate) return 0;
-  const accounts = new Set<string>();
-  const { data: history } = await supabase
-    .from("plate_history")
-    .select("user_id")
-    .eq("normalized_license_plate", normalizedPlate);
-  for (const row of history ?? []) accounts.add(row.user_id as string);
-
-  const { data: posts } = await supabase
-    .from("posts")
-    .select("user_id")
-    .eq("normalized_license_plate", normalizedPlate)
-    .in("status", ["active", "matched", "pending_completion"]);
-  for (const row of posts ?? []) accounts.add(row.user_id as string);
-  return accounts.size;
-}
+export type SupplyInterceptMetrics = {
+  is_phone_historically_reused: boolean;
+  last_post_time_delta_months: number;
+  active_supply_posts_count: number;
+  is_premium_member: boolean;
+  lookupFailed?: boolean;
+};
 
 export async function gatherDemandMetrics(
   supabase: SupabaseClient,
-  userId: string,
+  _userId: string,
   normalizedPhone: string,
   normalizedPlate: string | null,
   departureDate: string,
   departureWindow: string,
-) {
-  const { from, to } = demandInterceptRange(departureDate, departureWindow);
-  const { data: rows } = await supabase
-    .from("posts")
-    .select(
-      "user_id, normalized_phone, normalized_license_plate, status, departure_date, departure_time_window",
-    )
-    .in("status", ["active", "matched", "pending_completion"]);
-
-  const inWindow = (rows ?? []).filter((r) => {
-    if (!r.departure_date || !r.departure_time_window) return false;
-    const ts = buildDepartureTimestamp(r.departure_date, r.departure_time_window);
-    return ts >= from && ts <= to;
-  });
-
-  const phoneMatches = inWindow.filter((r) => r.normalized_phone === normalizedPhone);
-  const phoneAccountIds = new Set(phoneMatches.map((r) => r.user_id as string));
-  phoneAccountIds.add(userId);
-
-  const historyPhoneAccounts = await countPhoneBoundAccounts(supabase, normalizedPhone);
+): Promise<DemandInterceptMetrics> {
+  const window = await rpcGatherWindowInterceptMetrics(
+    supabase,
+    normalizedPhone,
+    normalizedPlate,
+    departureDate,
+    departureWindow,
+  );
+  const historyPhoneAccounts = await rpcCountAssetBoundAccounts(
+    supabase,
+    "phone",
+    normalizedPhone,
+  );
   const plateAccounts = normalizedPlate
-    ? await countPlateBoundAccounts(supabase, normalizedPlate)
+    ? await rpcCountAssetBoundAccounts(supabase, "plate", normalizedPlate)
     : 0;
 
-  const account_count = Math.max(phoneAccountIds.size, historyPhoneAccounts, plateAccounts);
-  const is_phone_duplicated =
-    phoneMatches.some((r) => r.user_id !== userId) || historyPhoneAccounts > 1 || plateAccounts > 1;
+  if (window == null || historyPhoneAccounts == null || plateAccounts == null) {
+    return {
+      is_phone_duplicated: false,
+      account_count: 1,
+      active_order_count: 0,
+      lookupFailed: true,
+    };
+  }
 
-  const activeOwn = inWindow.filter((r) => r.user_id === userId).length;
+  const account_count = Math.max(
+    window.window_phone_account_count,
+    historyPhoneAccounts,
+    plateAccounts,
+  );
+  const is_phone_duplicated =
+    window.has_other_phone || historyPhoneAccounts > 1 || plateAccounts > 1;
 
   return {
     is_phone_duplicated,
     account_count,
-    active_order_count: activeOwn,
+    active_order_count: window.own_in_window_count,
   };
 }
 
@@ -204,31 +185,36 @@ export async function gatherSupplyMetrics(
   normalizedPhone: string,
   normalizedPlate: string | null,
   isPremium: boolean,
-) {
-  const { data: history } = await supabase
-    .from("phone_history")
-    .select("user_id, last_post_at, created_at")
-    .eq("normalized_phone", normalizedPhone)
-    .neq("user_id", userId)
-    .order("last_post_at", { ascending: false })
-    .limit(1);
+): Promise<SupplyInterceptMetrics> {
+  const reuse = await rpcLookupForeignPhoneReuse(supabase, normalizedPhone);
+  const phoneAccounts = await rpcCountAssetBoundAccounts(
+    supabase,
+    "phone",
+    normalizedPhone,
+  );
+  const plateAccounts = normalizedPlate
+    ? await rpcCountAssetBoundAccounts(supabase, "plate", normalizedPlate)
+    : 0;
 
-  let is_phone_historically_reused = false;
+  if (reuse == null || phoneAccounts == null || plateAccounts == null) {
+    return {
+      is_phone_historically_reused: false,
+      last_post_time_delta_months: 999,
+      active_supply_posts_count: 0,
+      is_premium_member: isPremium,
+      lookupFailed: true,
+    };
+  }
+
+  let is_phone_historically_reused = reuse.reused;
   let last_post_time_delta_months = 999;
-  if (history && history.length > 0) {
-    is_phone_historically_reused = true;
-    const last = new Date(
-      (history[0].last_post_at as string) ?? (history[0].created_at as string),
-    );
+  if (reuse.last_post_at) {
+    const last = new Date(reuse.last_post_at);
     last_post_time_delta_months = Math.floor(
       (Date.now() - last.getTime()) / (1000 * 60 * 60 * 24 * 30),
     );
   }
 
-  const phoneAccounts = await countPhoneBoundAccounts(supabase, normalizedPhone);
-  const plateAccounts = normalizedPlate
-    ? await countPlateBoundAccounts(supabase, normalizedPlate)
-    : 0;
   if (phoneAccounts > 1 || plateAccounts > 1) {
     is_phone_historically_reused = true;
     last_post_time_delta_months = Math.min(last_post_time_delta_months, 0);
@@ -278,6 +264,9 @@ export async function submitPost(
       payload.departure_date,
       payload.departure_time_window,
     );
+    if (metrics.lookupFailed) {
+      return { ok: false, errorKey: "error.submit_failed" };
+    }
     const decision = processDemandPostIntercept(metrics);
     if (!decision.allowed) {
       if (decision.logFraud) {
@@ -299,6 +288,9 @@ export async function submitPost(
       payload.normalized_license_plate ?? null,
       isPremium,
     );
+    if (metrics.lookupFailed) {
+      return { ok: false, errorKey: "error.submit_failed" };
+    }
     const decision = processSupplyPostIntercept(metrics);
     if (!decision.allowed) {
       if (decision.logFraud) {

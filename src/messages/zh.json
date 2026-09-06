@@ -446,7 +446,7 @@
     },
     "sheet": {
       "stage1_title": "场景微调与精算",
-      "stage2_title": "隐私绑定与风控落袋",
+      "stage2_title": "再完成一步即可发布",
       "departure_time": "精确出发时间",
       "time_buffer": "愿等分钟数",
       "passengers": "乘客人数",
@@ -472,7 +472,6 @@
     "connectGoogle": "使用 Google 绑定",
     "googleConnected": "✓ Google 已绑定",
     "emailVerified": "✓ 邮箱已验证",
-    "notifyEmail": "通知邮箱：{email}",
     "orOtherEmail": "或使用其他邮箱",
     "emailAddress": "邮箱地址",
     "emailPlaceholder": "email@example.com",

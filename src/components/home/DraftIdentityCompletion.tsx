@@ -68,17 +68,16 @@ export function DraftIdentityCompletion({
       {/* Header */}
       <div className="space-y-1">
         <p className="text-sm font-semibold text-amber-900">
-          {t("identity.verify_with_device")}
-        </p>
-        <p className="text-xs leading-relaxed text-amber-800">
-          {t("identity.verify_with_device_helper")}
+          {t("identity.complete_to_publish")}
         </p>
         <p className="text-xs leading-relaxed text-amber-800">
           {t("identity.draft_saved_not_published")}
         </p>
       </div>
 
-      {/* ── Path A: Retry Passkey ───────────────────────────────────────── */}
+      <p className="text-xs font-medium text-amber-900">
+        {t("identity.verify_with_device")}
+      </p>
       <button
         type="button"
         disabled={isRetrying || activating}
@@ -169,10 +168,6 @@ export function DraftIdentityCompletion({
         </p>
       )}
 
-      {/* Disclaimer: phone is NOT identity verification */}
-      <p className="text-xs leading-relaxed text-zinc-400">
-        {t("identity.phone_not_identity_verification")}
-      </p>
     </div>
   );
 }

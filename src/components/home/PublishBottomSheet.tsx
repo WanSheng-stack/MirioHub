@@ -13,6 +13,7 @@ import { LuggageCounters } from "@/components/post-form/DeliverTravelFields";
 import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteFields";
 import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompletion";
 import { PublishedPostSuccess } from "@/components/home/PublishedPostSuccess";
+import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -274,8 +275,8 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const isTravel = state.category === "travel";
   const isDeliver = state.category === "deliver";
   const isActiveSuccess = pendingPostStatus === "active";
-  const hasGoogleIdentity =
-    accountUser?.identities?.some((i) => i.provider === "google") ?? false;
+  const isDraftIdentity = pendingPostStatus === "draft";
+  const accountIdentity = resolveAccountIdentityState(accountUser);
 
   // ---------------------------------------------------------------------------
   // Dual-channel WebAuthn submit (Channel A: verify, Channel B: shadow-draft)
@@ -835,7 +836,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
               ? t("home.sheet.stage1_title")
               : isActiveSuccess
                 ? t("publishSuccess.title")
-                : t("home.sheet.stage2_title")}
+                : t("identity.complete_to_publish")}
           </h2>
           <button
             type="button"
@@ -1063,9 +1064,10 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                 {isActiveSuccess ? (
                   <PublishedPostSuccess
                     postId={pendingPostId}
-                    hasGoogle={hasGoogleIdentity}
-                    hasVerifiedEmail={Boolean(accountUser?.email_confirmed_at)}
-                    googleEmail={accountUser?.email ?? null}
+                    hasGoogle={accountIdentity.hasGoogle}
+                    hasVerifiedEmail={accountIdentity.hasVerifiedEmail}
+                    googleIdentityEmail={accountIdentity.googleIdentityEmail}
+                    verifiedAccountEmail={accountIdentity.verifiedAccountEmail}
                     connecting={backupActivating}
                     backupEmail={backupEmail}
                     onBackupEmailChange={setBackupEmail}
@@ -1100,7 +1102,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     allowIdentityUpgrade
                   />
                 )}
-                {!isActiveSuccess ? (state.post_type === "demand" ? (
+                {!isActiveSuccess && !isDraftIdentity ? (state.post_type === "demand" ? (
                   <>
                     <label className="block text-sm font-medium">
                       {t("home.sheet.email")}
@@ -1233,7 +1235,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           </div>
         </div>
 
-        {stage === 2 && isActiveSuccess ? null : (
+        {stage === 2 && (isActiveSuccess || isDraftIdentity) ? null : (
         <div className="absolute inset-x-0 bottom-0 space-y-2 border-t border-zinc-200/80 bg-[#f7f7f5]/95 px-5 py-3 backdrop-blur">
           {stage === 1 && visibility.showFeeDemand ? (
             <div className="space-y-1 rounded-xl bg-emerald-50/90 px-3 py-2.5 text-sm text-emerald-950 ring-1 ring-emerald-200/70">

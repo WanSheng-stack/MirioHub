@@ -446,7 +446,7 @@
     },
     "sheet": {
       "stage1_title": "Fino podesavanje i procena",
-      "stage2_title": "Privatnost i rizik",
+      "stage2_title": "Još jedan korak do objave",
       "departure_time": "Tacno vreme polaska",
       "time_buffer": "Minute cekanja",
       "passengers": "Putnici",
@@ -472,7 +472,6 @@
     "connectGoogle": "Povežite Google",
     "googleConnected": "✓ Google je povezan",
     "emailVerified": "✓ Email je verifikovan",
-    "notifyEmail": "Email za obaveštenja: {email}",
     "orOtherEmail": "Ili koristite drugi email",
     "emailAddress": "Email adresa",
     "emailPlaceholder": "email@example.com",

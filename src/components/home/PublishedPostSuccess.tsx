@@ -16,7 +16,8 @@ interface PublishedPostSuccessProps {
   postId: string | null;
   hasGoogle: boolean;
   hasVerifiedEmail: boolean;
-  googleEmail: string | null;
+  googleIdentityEmail: string | null;
+  verifiedAccountEmail: string | null;
   connecting: boolean;
   backupEmail: string;
   onBackupEmailChange: (value: string) => void;
@@ -62,7 +63,8 @@ export function PublishedPostSuccess({
   postId,
   hasGoogle,
   hasVerifiedEmail,
-  googleEmail,
+  googleIdentityEmail,
+  verifiedAccountEmail,
   connecting,
   backupEmail,
   onBackupEmailChange,
@@ -82,6 +84,10 @@ export function PublishedPostSuccess({
 }: PublishedPostSuccessProps) {
   const t = useTranslations("publishSuccess");
   const needsRecovery = !hasGoogle && !hasVerifiedEmail;
+  const emailsMatch =
+    Boolean(googleIdentityEmail) &&
+    Boolean(verifiedAccountEmail) &&
+    googleIdentityEmail!.toLowerCase() === verifiedAccountEmail!.toLowerCase();
 
   return (
     <div className="space-y-5">
@@ -112,21 +118,25 @@ export function PublishedPostSuccess({
         {hasGoogle ? (
           <div className="space-y-1 rounded-xl bg-emerald-50/80 px-3 py-2.5">
             <p className="text-sm font-medium text-emerald-800">{t("googleConnected")}</p>
-            {googleEmail ? (
-              <p className="text-xs text-emerald-700">{googleEmail}</p>
+            {googleIdentityEmail ? (
+              <p className="text-xs text-emerald-700">{googleIdentityEmail}</p>
             ) : null}
-            {hasVerifiedEmail ? (
+            {emailsMatch ? (
               <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
             ) : null}
           </div>
-        ) : hasVerifiedEmail ? (
+        ) : null}
+
+        {hasVerifiedEmail && !emailsMatch ? (
           <div className="space-y-1 rounded-xl bg-emerald-50/80 px-3 py-2.5">
             <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
-            {googleEmail ? (
-              <p className="text-xs text-emerald-700">{googleEmail}</p>
+            {verifiedAccountEmail ? (
+              <p className="text-xs text-emerald-700">{verifiedAccountEmail}</p>
             ) : null}
           </div>
-        ) : (
+        ) : null}
+
+        {!hasGoogle ? (
           <button
             type="button"
             disabled={connecting}
@@ -136,7 +146,7 @@ export function PublishedPostSuccess({
             <GoogleMark />
             {t("connectGoogle")}
           </button>
-        )}
+        ) : null}
 
         {needsRecovery ? (
           <>

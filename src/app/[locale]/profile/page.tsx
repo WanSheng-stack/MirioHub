@@ -9,6 +9,7 @@ import {
   isProfileFullNameEmpty,
   resolveGoogleDisplayName,
 } from "@/lib/auth/googleProfileName";
+import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -652,15 +653,6 @@ interface IdentitySectionProps {
   bindEmail: () => Promise<void>;
 }
 
-function googleIdentityEmail(user: User): string {
-  const google = user.identities?.find((i) => i.provider === "google");
-  const fromIdentity = String(
-    (google?.identity_data as { email?: unknown } | undefined)?.email ?? "",
-  ).trim();
-  if (fromIdentity) return fromIdentity;
-  return String(user.email ?? "").trim();
-}
-
 function IdentitySection({
   user,
   profile,
@@ -671,18 +663,16 @@ function IdentitySection({
   linkGoogle,
   bindEmail,
 }: IdentitySectionProps) {
-  const hasPasskey = Boolean(profile?.has_passkey);
-  const hasGoogle = user.identities?.some((i) => i.provider === "google") ?? false;
-  const hasVerifiedEmail = Boolean(user.email_confirmed_at);
+  const identity = resolveAccountIdentityState(user, profile);
+  const {
+    hasGoogle,
+    googleIdentityEmail,
+    hasVerifiedEmail,
+    verifiedAccountEmail,
+    emailsMatch,
+    hasPasskey,
+  } = identity;
   const isAnonymous = user.is_anonymous === true;
-  const googleEmail = hasGoogle ? googleIdentityEmail(user) : "";
-  const verifiedEmail = String(user.email ?? "").trim();
-  const sameEmail =
-    hasGoogle &&
-    hasVerifiedEmail &&
-    Boolean(googleEmail) &&
-    Boolean(verifiedEmail) &&
-    googleEmail.toLowerCase() === verifiedEmail.toLowerCase();
   const customOnly = hasPasskey && !hasGoogle && !hasVerifiedEmail;
   const needsGoogle = !hasGoogle;
   const needsEmail = !hasVerifiedEmail;
@@ -706,17 +696,21 @@ function IdentitySection({
       {hasGoogle ? (
         <div className="space-y-1 rounded-lg bg-emerald-50 px-3 py-2.5">
           <p className="text-sm font-medium text-emerald-800">{t("googleBound")}</p>
-          {googleEmail ? <p className="text-xs text-emerald-700">{googleEmail}</p> : null}
-          {sameEmail ? (
+          {googleIdentityEmail ? (
+            <p className="text-xs text-emerald-700">{googleIdentityEmail}</p>
+          ) : null}
+          {emailsMatch ? (
             <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
           ) : null}
         </div>
       ) : null}
 
-      {hasVerifiedEmail && !sameEmail ? (
+      {hasVerifiedEmail && !emailsMatch ? (
         <div className="space-y-1 rounded-lg bg-emerald-50 px-3 py-2.5">
           <p className="text-sm font-medium text-emerald-800">{t("emailVerified")}</p>
-          {verifiedEmail ? <p className="text-xs text-emerald-700">{verifiedEmail}</p> : null}
+          {verifiedAccountEmail ? (
+            <p className="text-xs text-emerald-700">{verifiedAccountEmail}</p>
+          ) : null}
         </div>
       ) : null}
 

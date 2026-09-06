@@ -446,7 +446,7 @@
     },
     "sheet": {
       "stage1_title": "Scene fine-tune & fee estimate",
-      "stage2_title": "Privacy bind & risk gate",
+      "stage2_title": "One more step to publish",
       "departure_time": "Exact departure time",
       "time_buffer": "Willing-to-wait minutes",
       "passengers": "Passengers",
@@ -472,7 +472,6 @@
     "connectGoogle": "Connect Google",
     "googleConnected": "✓ Google connected",
     "emailVerified": "✓ Email verified",
-    "notifyEmail": "Notification email: {email}",
     "orOtherEmail": "Or use another email",
     "emailAddress": "Email address",
     "emailPlaceholder": "email@example.com",

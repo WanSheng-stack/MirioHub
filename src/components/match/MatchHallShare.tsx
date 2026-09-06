@@ -46,13 +46,6 @@ export function MatchHallShare({ shareUrl, title }: Props) {
         onClick={() => void share()}
         className="rounded-md bg-zinc-900 px-3 py-2 text-sm text-white"
       >
-        {t("invite")}
-      </button>
-      <button
-        type="button"
-        onClick={() => void share()}
-        className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
-      >
         {t("share")}
       </button>
       <button

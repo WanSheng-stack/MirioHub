@@ -14,6 +14,7 @@ import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteF
 import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompletion";
 import { PublishedPostSuccess } from "@/components/home/PublishedPostSuccess";
 import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
+import { resolvePostPublishReadiness } from "@/lib/auth/postPublishReadiness";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -98,6 +99,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const [backupIsInfo, setBackupIsInfo] = useState(false);
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [phoneSaved, setPhoneSaved] = useState(false);
+  const [profilePhone, setProfilePhone] = useState<string | null>(null);
 
   // Publish-intent anchor — ONE uuid per logical post, persists across:
   //   Passkey cancel, Passkey retry, Channel B fallback, sheet close/reopen.
@@ -117,9 +119,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
   }
 
-  /** End a completed ACTIVE publish intent. Never call for DRAFT resume. */
-  function finishActivePublishIntent() {
-    if (pendingPostStatus !== "active") return;
+  function resetPublishSessionAfterActive() {
     clearActivationContext();
     publishIntentIdRef.current = null;
     setPendingPostId(null);
@@ -132,10 +132,17 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setBackupActivating(false);
     setPhoneSaved(false);
     setPhoneSaving(false);
+    setProfilePhone(null);
     setAccountUser(null);
     setSubmitting(false);
     setIsPublishing(false);
     resetCurrentPublishForm();
+  }
+
+  /** End a completed ACTIVE publish intent. Never call for DRAFT resume. */
+  function finishActivePublishIntent() {
+    if (pendingPostStatus !== "active") return;
+    resetPublishSessionAfterActive();
   }
 
   function handleSheetDismiss() {
@@ -145,11 +152,51 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     onClose();
   }
 
+  function handleViewMatches() {
+    const postId = pendingPostId;
+    finishActivePublishIntent();
+    onClose();
+    if (postId) router.push(`/posts/${postId}/matches`);
+  }
+
   function handleViewPublishedPost() {
     const postId = pendingPostId;
     finishActivePublishIntent();
     onClose();
     if (postId) router.push(`/posts/${postId}`);
+  }
+
+  async function completeActivePublish(postId: string) {
+    setPendingPostId(postId);
+    setPendingPostStatus("active");
+    setDraftActivationMsg(null);
+    setDraftActivationIsInfo(false);
+    sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
+    sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+
+    const supabase = createClient();
+    const { data: auth } = await supabase.auth.getUser();
+    setAccountUser(auth.user ?? null);
+    const { data: profile } = auth.user
+      ? await supabase
+          .from("profiles")
+          .select("phone")
+          .eq("id", auth.user.id)
+          .maybeSingle()
+      : { data: null };
+    const phone = (profile as { phone?: string | null } | null)?.phone ?? null;
+    setProfilePhone(phone);
+    const ready = resolvePostPublishReadiness({
+      identity: resolveAccountIdentityState(auth.user),
+      profilePhone: phone,
+    });
+    if (ready.shouldGoDirectlyToMatches) {
+      resetPublishSessionAfterActive();
+      onClose();
+      router.push(`/posts/${postId}/matches`);
+      return;
+    }
+    setStage(2);
   }
 
   /** Read + validate IdentityActivationContext for this postId.
@@ -210,10 +257,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         isActive?: boolean;
       };
       if (actRes.ok && act.ok && act.isActive) {
-        setPendingPostStatus("active");
-        setDraftActivationMsg(null);
-        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-        sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
+        await completeActivePublish(postId);
         return true;
       }
     } catch {
@@ -277,6 +321,10 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const isActiveSuccess = pendingPostStatus === "active";
   const isDraftIdentity = pendingPostStatus === "draft";
   const accountIdentity = resolveAccountIdentityState(accountUser);
+  const publishReadiness = resolvePostPublishReadiness({
+    identity: accountIdentity,
+    profilePhone,
+  });
 
   // ---------------------------------------------------------------------------
   // Dual-channel WebAuthn submit (Channel A: verify, Channel B: shadow-draft)
@@ -361,13 +409,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           setErrorKey(raw.replace(/^error\./, ""));
           return;
         }
-        setPendingPostId(pubResult.postId ?? null);
-        setPendingPostStatus("active");
-        setDraftActivationMsg(null);
-        setDraftActivationIsInfo(false);
-        sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-        sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
-        setStage(2);
+        if (!pubResult.postId) {
+          setErrorKey("submit_failed");
+          return;
+        }
+        await completeActivePublish(pubResult.postId);
         return;
       }
 
@@ -455,7 +501,6 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           // → activate SAME draft. Do not ask the user to re-link identity.
           const activated = await tryActivateEligibleDraft(draftPostId);
           if (activated) {
-            setStage(2);
             return;
           }
 
@@ -516,15 +561,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
       // Channel A success (includes Passkey retry from Stage 2):
       // post committed as active via commit_phase3 CASE C → UPDATE same draft.
-      setPendingPostId(verifyResult.postId ?? null);
-      // Mark as active — Stage 2 will show the contact form, not the identity UI
-      setPendingPostStatus("active");
-      setDraftActivationMsg(null);
-      setDraftActivationIsInfo(false);
-      // Clear activation context — no identity-upgrade path needed
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_CONTEXT_KEY);
-      sessionStorage.removeItem(IDENTITY_ACTIVATION_LEGACY_KEY);
-      setStage(2);
+      if (!verifyResult.postId) {
+        setErrorKey("submit_failed");
+        return;
+      }
+      await completeActivePublish(verifyResult.postId);
     } catch {
       setErrorKey("server_internal_crash");
     } finally {
@@ -726,6 +767,8 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         return;
       }
       setPhoneSaved(true);
+      const savedDigits = `${state.dial_code}${state.raw_phone_local}`.replace(/\D/g, "");
+      if (savedDigits.length >= 9) setProfilePhone(savedDigits);
     } finally {
       setPhoneSaving(false);
     }
@@ -1082,7 +1125,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     onSavePhone={() => void saveActivePhone()}
                     phoneSaving={phoneSaving}
                     phoneSaved={phoneSaved}
-                    onSkip={handleSheetDismiss}
+                    hasContactPhone={publishReadiness.hasContactPhone}
+                    onViewMatches={handleViewMatches}
+                    onSkip={handleViewMatches}
                     onViewPost={handleViewPublishedPost}
                   />
                 ) : null}
@@ -1235,7 +1280,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           </div>
         </div>
 
-        {stage === 2 && (isActiveSuccess || isDraftIdentity) ? null : (
+        {stage === 2 && isActiveSuccess ? null : (
         <div className="absolute inset-x-0 bottom-0 space-y-2 border-t border-zinc-200/80 bg-[#f7f7f5]/95 px-5 py-3 backdrop-blur">
           {stage === 1 && visibility.showFeeDemand ? (
             <div className="space-y-1 rounded-xl bg-emerald-50/90 px-3 py-2.5 text-sm text-emerald-950 ring-1 ring-emerald-200/70">
@@ -1253,7 +1298,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
             </div>
           ) : null}
           <div className="flex gap-2">
-            {stage === 2 ? (
+            {stage === 2 && !isActiveSuccess ? (
               <button
                 type="button"
                 onClick={() => setStage(1)}

@@ -342,7 +342,7 @@
     "invite": "邀请可能顺路的人",
     "share": "分享",
     "copyLink": "复制链接",
-    "copied": "已复制链接",
+    "copied": "链接已复制",
     "status": {
       "matched": "已匹配",
       "pending_completion": "进行中",
@@ -496,6 +496,7 @@
     "body": "你的帖子已经上线。",
     "hint": "你可以继续完善账户和联系方式，也可以暂时跳过，稍后再设置。",
     "viewPost": "查看已发布的帖子",
+    "viewMatches": "查看匹配",
     "protectTitle": "保护账户并接收订单动态",
     "protectHint": "建议添加 Google 或邮箱，避免更换设备或浏览器后无法访问账户，并及时接收订单状态更新和重要通知。",
     "customOnlyHint": "你的账户目前只有设备验证。建议添加 Google 或邮箱，避免更换设备或浏览器后无法访问账户，并及时接收订单状态更新和重要通知。",
@@ -512,6 +513,6 @@
     "savePhone": "保存手机号",
     "savingPhone": "保存中…",
     "phoneSaved": "手机号已保存",
-    "skip": "暂时跳过"
+    "skip": "暂时跳过，查看匹配"
   }
 }

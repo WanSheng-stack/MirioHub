@@ -31,6 +31,8 @@ interface PublishedPostSuccessProps {
   onSavePhone: () => void;
   phoneSaving: boolean;
   phoneSaved: boolean;
+  hasContactPhone: boolean;
+  onViewMatches: () => void;
   onSkip: () => void;
   onViewPost: () => void;
 }
@@ -78,6 +80,8 @@ export function PublishedPostSuccess({
   onSavePhone,
   phoneSaving,
   phoneSaved,
+  hasContactPhone,
+  onViewMatches,
   onSkip,
   onViewPost,
 }: PublishedPostSuccessProps) {
@@ -99,10 +103,10 @@ export function PublishedPostSuccess({
       {postId ? (
         <button
           type="button"
-          onClick={onViewPost}
-          className="inline-flex text-sm font-semibold text-emerald-700 underline underline-offset-2 hover:text-emerald-900"
+          onClick={onViewMatches}
+          className="w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-800"
         >
-          {t("viewPost")} →
+          {t("viewMatches")}
         </button>
       ) : null}
 
@@ -189,6 +193,7 @@ export function PublishedPostSuccess({
         ) : null}
       </section>
 
+      {!hasContactPhone ? (
       <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold text-zinc-900">{t("phoneTitle")}</h3>
@@ -225,6 +230,7 @@ export function PublishedPostSuccess({
           <p className="text-xs font-medium text-emerald-700">{t("phoneSaved")}</p>
         ) : null}
       </section>
+      ) : null}
 
       <button
         type="button"
@@ -233,6 +239,15 @@ export function PublishedPostSuccess({
       >
         {t("skip")}
       </button>
+      {postId ? (
+        <button
+          type="button"
+          onClick={onViewPost}
+          className="w-full text-center text-sm font-medium text-zinc-600 underline underline-offset-2 hover:text-zinc-900"
+        >
+          {t("viewPost")}
+        </button>
+      ) : null}
     </div>
   );
 }

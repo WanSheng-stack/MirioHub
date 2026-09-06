@@ -15,7 +15,6 @@ import {
 import type { Post, PostType } from "@/lib/types";
 
 const SCORE_SELECT = `${PUBLIC_SAFE_POST_SELECT}, origin_gps, destination_gps`;
-const HALL_LIMIT = 32;
 
 type ScoreRow = Post & { origin_gps?: unknown; destination_gps?: unknown };
 
@@ -83,8 +82,7 @@ export async function buildMatchHall(input: {
     .in("status", [...MATCH_HALL_STATUSES])
     .eq("post_type", oppositePostType(sourceType))
     .neq("id", input.source.id)
-    .neq("user_id", input.source.user_id)
-    .limit(HALL_LIMIT);
+    .neq("user_id", input.source.user_id);
 
   const candidates = ((rawCandidates ?? []) as unknown as ScoreRow[]).filter((row) =>
     isMatchHallStatus(row.status),

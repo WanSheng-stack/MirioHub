@@ -52,12 +52,12 @@ assert.deepEqual([...MATCH_HALL_EXCLUDED_STATUSES], ["draft", "canceled"]);
   );
 }
 
-// TEST 2 — same-day beats other-day even when other-day is active 99%
+// TEST 2 / TEST 13 — same-day 60% completed ranks before other-day 99% active
 {
   const rows = sortMatchHallRows(
     [
       { id: "hot", departure_date: "2026-09-08", score: 0.99, status: "active" },
-      { id: "done", departure_date: "2026-09-07", score: 0.7, status: "completed" },
+      { id: "done", departure_date: "2026-09-07", score: 0.6, status: "completed" },
     ],
     "2026-09-07",
   );
@@ -86,6 +86,15 @@ assert.equal(compareMatchHallRows(
   { id: "y", departure_date: "d", score: 0.5, status: "active" },
   "d",
 ) < 0, true); // id tie-break only
+
+{
+  const hallSrc = read("src/lib/route/matchHall.ts");
+  const compareFn = hallSrc.slice(
+    hallSrc.indexOf("export function compareMatchHallRows"),
+    hallSrc.indexOf("export function sortMatchHallRows"),
+  );
+  assert.equal(compareFn.includes("status"), false);
+}
 
 // TEST 4 — active card
 assert.equal(matchCardTone("active"), "active");
@@ -121,6 +130,8 @@ assert.ok(loaderSrc.includes("calculateRouteMatchScore"));
 assert.equal(loaderSrc.includes("* 2.5"), false);
 assert.equal(loaderSrc.includes("isOrderedRouteCompatible"), false);
 assert.ok(loaderSrc.includes("shouldComputeRealRouteScore"));
+assert.equal(loaderSrc.includes(".limit("), false);
+assert.equal(loaderSrc.includes("HALL_LIMIT"), false);
 
 // TEST 10 — backend rejects non-active match
 const confirmSql = read("supabase/migrate_orders_to_posts.sql");
@@ -165,8 +176,8 @@ const dto = {
 assert.equal(matchHallDtoHasPrivateField(dto), false);
 
 const cardSrc = read("src/components/match/MatchPostCard.tsx");
-assert.ok(cardSrc.includes("canOfferMatchAction"));
 assert.ok(cardSrc.includes("viewDetails"));
+assert.equal(cardSrc.includes('t("match")'), false);
 assert.equal(cardSrc.includes("New member"), false);
 assert.equal(cardSrc.includes("created_at"), false);
 assert.equal(cardSrc.includes("Posted"), false);
@@ -174,6 +185,13 @@ assert.equal(cardSrc.includes("Posted"), false);
 const pageSrc = read("src/app/[locale]/posts/[id]/matches/page.tsx");
 assert.equal(pageSrc.includes("Same day"), false);
 assert.equal(pageSrc.includes("Available"), false);
+assert.equal(pageSrc.includes("backToPost"), false);
+assert.equal(pageSrc.includes('t("title")'), false);
 assert.ok(pageSrc.includes("isMatchHallEmpty"));
+assert.ok(pageSrc.includes("dynamic = \"force-dynamic\""));
+
+const loaderSrc2 = read("src/lib/route/buildMatchHall.ts");
+assert.equal(loaderSrc2.includes(".limit("), false);
+assert.equal(loaderSrc2.includes("HALL_LIMIT"), false);
 
 console.log("matchHall.test.ts: ok");

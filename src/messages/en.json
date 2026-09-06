@@ -496,6 +496,7 @@
     "body": "Your post is now live.",
     "hint": "You can add account and contact details now, or skip and complete them later.",
     "viewPost": "View published post",
+    "viewMatches": "View matches",
     "protectTitle": "Protect your account and receive order updates",
     "protectHint": "Add Google or a verified email so you can access your account after changing devices or browsers, and receive order status updates and important notifications.",
     "customOnlyHint": "Your account currently only has device verification. Add Google or a verified email so you can access your account after changing devices or browsers, and receive order status updates and important notifications.",
@@ -512,6 +513,6 @@
     "savePhone": "Save phone number",
     "savingPhone": "Saving…",
     "phoneSaved": "Phone number saved",
-    "skip": "Skip for now"
+    "skip": "Skip for now · View matches"
   }
 }

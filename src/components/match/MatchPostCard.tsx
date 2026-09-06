@@ -4,7 +4,6 @@ import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { resolveDriverOrderedRoute } from "@/lib/post-route-match";
 import {
-  canOfferMatchAction,
   formatRoutePercent,
   matchCardMetaClass,
   matchCardShellClass,
@@ -23,7 +22,6 @@ export function MatchPostCard({ card, sourcePostId, sourcePostType }: Props) {
   const t = useTranslations("matchHall");
   const tone = matchCardTone(card.status);
   const percent = formatRoutePercent(card.score);
-  const canMatch = canOfferMatchAction(card.status);
   const href =
     sourcePostType === "provider"
       ? `/posts/${card.id}?providerPostId=${sourcePostId}`
@@ -99,9 +97,11 @@ export function MatchPostCard({ card, sourcePostId, sourcePostType }: Props) {
         </p>
       ) : null}
 
-      <p className={`mt-2 text-xs ${matchCardMetaClass(tone)}`}>
-        {t("extraDrive", { km: card.extraDetourKm.toFixed(1) })}
-      </p>
+      {card.extraDetourKm > 0 ? (
+        <p className={`mt-2 text-xs ${matchCardMetaClass(tone)}`}>
+          {t("extraDrive", { km: card.extraDetourKm.toFixed(1) })}
+        </p>
+      ) : null}
       {card.pickupBeforeProviderOrigin && card.pickupExtensionKm > 0 ? (
         <p className={`text-xs ${matchCardMetaClass(tone)}`}>
           {t("pickupBeyondOrigin", { km: card.pickupExtensionKm.toFixed(1) })}
@@ -113,21 +113,13 @@ export function MatchPostCard({ card, sourcePostId, sourcePostType }: Props) {
         </p>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3">
         <Link
           href={href}
-          className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-800"
+          className="inline-block rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-800"
         >
           {t("viewDetails")}
         </Link>
-        {canMatch ? (
-          <Link
-            href={href}
-            className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white"
-          >
-            {t("match")}
-          </Link>
-        ) : null}
       </div>
     </article>
   );

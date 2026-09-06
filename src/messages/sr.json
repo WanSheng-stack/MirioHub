@@ -496,6 +496,7 @@
     "body": "Vaš oglas je sada aktivan.",
     "hint": "Možete sada dodati podatke o nalogu i kontaktu, ili to uraditi kasnije.",
     "viewPost": "Pogledaj objavljeni oglas",
+    "viewMatches": "Pogledaj poklapanja",
     "protectTitle": "Zaštitite nalog i primajte novosti o porudžbinama",
     "protectHint": "Dodajte Google ili potvrđen email da biste mogli da pristupite nalogu posle promene uređaja ili pregledača, i da primate obaveštenja o statusu porudžbine.",
     "customOnlyHint": "Vaš nalog trenutno ima samo verifikaciju uređajem. Dodajte Google ili potvrđen email da biste mogli da pristupite nalogu posle promene uređaja ili pregledača, i da primate obaveštenja o statusu porudžbine.",
@@ -512,6 +513,6 @@
     "savePhone": "Sačuvaj broj",
     "savingPhone": "Čuvanje…",
     "phoneSaved": "Broj telefona je sačuvan",
-    "skip": "Preskoči za sada"
+    "skip": "Preskoči za sada · Pogledaj poklapanja"
   }
 }

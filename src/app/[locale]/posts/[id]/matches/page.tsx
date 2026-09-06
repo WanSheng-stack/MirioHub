@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { AppLocale } from "@/i18n/routing";
-import { Link } from "@/i18n/navigation";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/server";
 import { OWNER_POST_SELECT } from "@/lib/posts/publicPostSelect";
 import { buildMatchHall } from "@/lib/route/buildMatchHall";
@@ -41,17 +40,7 @@ export default async function MatchHallPage({ params }: Props) {
   const sharePath = `/${locale}/posts/${id}`;
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-zinc-500">
-        <Link href={`/posts/${id}`} className="underline-offset-2 hover:underline">
-          {t("backToPost")}
-        </Link>
-      </p>
-      <h1 className="text-lg font-semibold text-zinc-950">{t("title")}</h1>
-      <p className="text-sm text-zinc-600">
-        {sourcePost.origin_address} → {sourcePost.destination_address}
-      </p>
-
+    <div className="space-y-3">
       {empty ? (
         <div className="space-y-3 rounded-xl border border-zinc-200 bg-white px-4 py-5">
           <p className="text-sm text-zinc-800">{t("emptyTitle")}</p>

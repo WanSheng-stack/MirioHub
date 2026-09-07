@@ -40,7 +40,7 @@ BEGIN
   END IF;
 
   -- Phone is never taken from auth metadata. Metadata is unvalidated and
-  -- would bypass parseUserPhone / the service-only writer, and can fail CHECK.
+  -- would bypass parseUserPhone / the service-only writer.
   INSERT INTO public.profiles (id, full_name, phone)
   VALUES (
     new.id,
@@ -173,18 +173,3 @@ REVOKE ALL ON FUNCTION public.set_profile_phone_v87(uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.set_profile_phone_v87(uuid, text) FROM anon;
 REVOKE ALL ON FUNCTION public.set_profile_phone_v87(uuid, text) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.set_profile_phone_v87(uuid, text) TO service_role;
-
--- Historical profiles.phone values are not assumed canonical. NOT VALID
--- applies the check to new/updated rows only. Do not VALIDATE until an
--- independent backfill has audited and converted existing numbers.
-ALTER TABLE public.profiles
-  DROP CONSTRAINT IF EXISTS profiles_phone_canonical_digits;
-
-ALTER TABLE public.profiles
-  ADD CONSTRAINT profiles_phone_canonical_digits
-  CHECK (
-    phone IS NULL
-    OR btrim(phone) = ''
-    OR phone ~ '^[1-9][0-9]{6,14}$'
-  )
-  NOT VALID;

@@ -107,6 +107,7 @@
   "error": {
     "invalid_phone": "请输入有效的手机号码。",
     "phone_save_failed": "手机号保存失败，请稍后重试。",
+    "server_configuration": "服务暂时不可用，请稍后重试。",
     "name_required": "请输入姓名。",
     "invalid_plate": "车牌号格式无效。",
     "address_required": "请填写起点与终点地址。",

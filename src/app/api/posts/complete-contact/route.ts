@@ -43,6 +43,11 @@ import {
 } from '@/lib/post-validation';
 import { parseUserPhone, resolvePhoneCountry } from '@/lib/phone/phoneNumber';
 import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  clientJsonForPhoneWriteFailure,
+  formatSafePhoneWriteLog,
+  type AccountPhoneWriteResult,
+} from '@/lib/profile/accountPhoneWrite';
 import { writeAccountPhone } from '@/lib/profile/writeAccountPhone';
 import {
   upsertPhoneHistory,
@@ -84,9 +89,8 @@ async function createClient() {
 async function persistAccountCurrentPhone(
   userId: string,
   normalizedPhone: string,
-): Promise<boolean> {
-  const result = await writeAccountPhone(createAdminClient(), userId, normalizedPhone);
-  return result.ok;
+): Promise<AccountPhoneWriteResult> {
+  return writeAccountPhone(createAdminClient(), userId, normalizedPhone);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,15 +351,16 @@ export async function POST(request: Request) {
           );
         }
         if (hasPhone && normalizedPhoneForPost) {
-          const profileOk = await persistAccountCurrentPhone(
+          const profileWrite = await persistAccountCurrentPhone(
             user.id,
             normalizedPhoneForPost,
           );
-          if (!profileOk) {
-            return NextResponse.json(
-              { ok: false, errorKey: 'error.phone_save_failed' },
-              { status: 500 },
+          if (!profileWrite.ok) {
+            console.error(
+              '[complete-contact] set_profile_phone_v87 failed',
+              formatSafePhoneWriteLog(profileWrite),
             );
+            return NextResponse.json(clientJsonForPhoneWriteFailure(), { status: 500 });
           }
         }
         return NextResponse.json(
@@ -387,15 +392,16 @@ export async function POST(request: Request) {
   }
 
   if (hasPhone && normalizedPhoneForPost) {
-    const profileOk = await persistAccountCurrentPhone(
+    const profileWrite = await persistAccountCurrentPhone(
       user.id,
       normalizedPhoneForPost,
     );
-    if (!profileOk) {
-      return NextResponse.json(
-        { ok: false, errorKey: 'error.phone_save_failed' },
-        { status: 500 },
+    if (!profileWrite.ok) {
+      console.error(
+        '[complete-contact] set_profile_phone_v87 failed',
+        formatSafePhoneWriteLog(profileWrite),
       );
+      return NextResponse.json(clientJsonForPhoneWriteFailure(), { status: 500 });
     }
     return NextResponse.json({
       ok: true,

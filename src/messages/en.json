@@ -107,6 +107,7 @@
   "error": {
     "invalid_phone": "Enter a valid phone number.",
     "phone_save_failed": "Failed to save the phone number. Please try again.",
+    "server_configuration": "The service is temporarily unavailable. Please try again later.",
     "name_required": "Enter a name.",
     "invalid_plate": "Invalid license plate.",
     "address_required": "Origin and destination are required.",

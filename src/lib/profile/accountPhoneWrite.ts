@@ -50,28 +50,42 @@ export function interpretProfilePhoneRpc(input: {
   return { ok: true };
 }
 
+const STABLE_RPC_ERROR = /^[A-Z][A-Z0-9_]{0,39}$/;
+
+function stabilizeLogMessage(message: string | undefined): string | undefined {
+  if (!message) return undefined;
+  const trimmed = message.trim();
+  if (!trimmed) return undefined;
+  if (/failing row/i.test(trimmed)) return undefined;
+  if (/\d{6,}/.test(trimmed)) return undefined;
+  return trimmed.slice(0, 300);
+}
+
 export function formatSafePhoneWriteLog(
   result: Extract<AccountPhoneWriteResult, { ok: false }>,
 ): {
   reason: "rpc_error" | "rpc_rejected";
-  error?: {
-    code?: string;
-    message?: string;
-    details?: string;
-    hint?: string;
-  };
+  error?: { code?: string; message?: string };
   rpcError?: string;
 } {
   if (result.reason === "rpc_error") {
+    const message = stabilizeLogMessage(result.error.message);
     return {
       reason: "rpc_error",
       error: {
         code: result.error.code,
-        message: result.error.message,
-        details: result.error.details,
-        hint: result.error.hint,
+        ...(message ? { message } : {}),
       },
     };
   }
-  return { reason: "rpc_rejected", rpcError: result.rpcError };
+  const rpcError =
+    result.rpcError && STABLE_RPC_ERROR.test(result.rpcError) ? result.rpcError : undefined;
+  return { reason: "rpc_rejected", ...(rpcError ? { rpcError } : {}) };
+}
+
+export function clientJsonForPhoneWriteFailure(): {
+  ok: false;
+  errorKey: typeof PHONE_SAVE_FAILED_KEY;
+} {
+  return { ok: false, errorKey: PHONE_SAVE_FAILED_KEY };
 }

@@ -29,15 +29,13 @@ function sliceFn(src: string, startNeedle: string, nextNeedles: string[]): strin
   return src.slice(start, end);
 }
 
-// TEST K — CHECK is NOT VALID; no VALIDATE CONSTRAINT
-assert.ok(migration.includes("NOT VALID"));
-assert.ok(migration.includes("profiles_phone_canonical_digits"));
-assert.ok(
-  migration.includes(
-    "Historical profiles.phone values are not assumed canonical. NOT VALID",
-  ),
-);
+// TEST I — no phone CHECK / trigger; handle_new_user + ACL remain
+assert.equal(migration.includes("profiles_phone_canonical_digits"), false);
+assert.equal(migration.includes("ADD CONSTRAINT"), false);
+assert.equal(migration.includes("NOT VALID"), false);
 assert.equal(migration.includes("VALIDATE CONSTRAINT"), false);
+assert.equal(/CREATE\s+(OR\s+REPLACE\s+)?TRIGGER/i.test(migration), false);
+assert.equal(/phone.*TRIGGER/i.test(migration), false);
 
 // TEST L — handle_new_user does not read metadata phone
 const handleNew = sliceFn(migration, "CREATE OR REPLACE FUNCTION public.handle_new_user()", [

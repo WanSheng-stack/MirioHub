@@ -106,22 +106,28 @@ async function main() {
     assert.equal("error" in result.json, false);
   }
 
-  // TEST E — safe log has no phone / token / service key
+  // TEST E — formatter never emits details/hint/failing row/phone
   {
     const log = formatSafePhoneWriteLog({
       ok: false,
       reason: "rpc_error",
-      error: { code: "42501", message: "permission denied", details: "acl", hint: "grant" },
+      error: {
+        code: "23514",
+        message: "new row for relation profiles violates check constraint",
+        details: "Failing row contains (..., 381653228255, ...)",
+        hint: "retry with 381653228255",
+      },
     });
     const serialized = JSON.stringify(log);
     assert.equal(log.reason, "rpc_error");
-    assert.equal(log.error?.code, "42501");
-    assert.equal(serialized.includes("653228255"), false);
+    assert.equal(log.error?.code, "23514");
+    assert.equal("details" in (log.error ?? {}), false);
+    assert.equal("hint" in log, false);
+    assert.equal(serialized.includes("details"), false);
+    assert.equal(serialized.includes("hint"), false);
     assert.equal(serialized.includes("381653228255"), false);
-    assert.equal(serialized.includes("raw_phone"), false);
-    assert.equal(serialized.includes("Authorization"), false);
-    assert.equal(serialized.includes("service_role"), false);
-    assert.equal(serialized.includes("cookie"), false);
+    assert.equal(serialized.includes("Failing row"), false);
+    assert.equal(serialized.includes("653228255"), false);
 
     const route = read("src/app/api/profile/phone/route.ts");
     assert.ok(route.includes('[api/profile/phone] set_profile_phone_v87 failed'));

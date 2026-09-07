@@ -64,8 +64,18 @@ assert.ok(routeSrc.includes("return NextResponse.json({ ok: true, postId, isActi
 
 // Profile failure after post success is not reported as ok:true
 assert.ok(routeSrc.includes("writeAccountPhone"));
-assert.ok(routeSrc.includes("if (!profileOk)"));
+assert.ok(routeSrc.includes("if (!profileWrite.ok)"));
+assert.ok(routeSrc.includes("formatSafePhoneWriteLog(profileWrite)"));
+assert.ok(routeSrc.includes("[complete-contact] set_profile_phone_v87 failed"));
+assert.ok(routeSrc.includes("clientJsonForPhoneWriteFailure"));
 assert.ok(routeSrc.includes("If profile persist fails after post update"));
+{
+  const fraud = routeSrc.indexOf("const intercept = await evaluatePublishIntercept");
+  const history = routeSrc.indexOf("phoneId = await upsertPhoneHistory");
+  const persist = routeSrc.indexOf("// ── Persist");
+  const profile = routeSrc.lastIndexOf("await persistAccountCurrentPhone");
+  assert.ok(fraud > 0 && history > fraud && persist > history && profile > persist);
+}
 
 // TEST 2/3/4 — next publish still reads profiles.phone, not post snapshot
 assert.ok(readinessSrc.includes("hasValidContactPhone(input.profilePhone)"));

@@ -23,9 +23,14 @@
  *   Current code handles it safely: the RLS check (user_id = auth.uid()) returns
  *   404 for cross-UUID access, preventing any silent data corruption.
  *
- * Returns: { ok: true, postId: string, isActive: boolean }
+ * Returns: { ok: true, postId, isActive, normalizedPhone? }
  *   isActive = true  → post is active, caller should route to /posts/:id
  *   isActive = false → draft saved, contact info written, identity not yet verified
+ *   normalizedPhone  → Account current phone after a successful phone save
+ *
+ * Consistency: fraud → phone_history → post update → profiles.phone.
+ * Not a single DB transaction. If profile persist fails after post update,
+ * this API returns ok:false (not a fake full success). Retry is safe.
  */
 
 import { NextResponse } from 'next/server';
@@ -69,6 +74,41 @@ async function createClient() {
       },
     },
   });
+}
+
+/**
+ * Persist Account current/default phone. profiles has no client UPDATE grant;
+ * update_my_profile is the existing owner-only writer (WHERE id = auth.uid()).
+ * Never accepts a browser-supplied user_id.
+ */
+async function persistAccountCurrentPhone(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  normalizedPhone: string,
+): Promise<boolean> {
+  const { data: current, error: readErr } = await supabase
+    .from('profiles')
+    .select('full_name, plate, vehicle, facebook, viber')
+    .eq('id', userId)
+    .maybeSingle();
+  if (readErr || !current) return false;
+
+  const { data, error } = await supabase.rpc('update_my_profile', {
+    p_full_name: current.full_name,
+    p_phone: normalizedPhone,
+    p_plate: current.plate,
+    p_vehicle: current.vehicle,
+    p_facebook: current.facebook,
+    p_viber: current.viber,
+  });
+  if (error) {
+    console.error('[complete-contact] profile phone persist error:', {
+      message: error.message,
+      code: error.code,
+    });
+    return false;
+  }
+  return Boolean((data as { ok?: boolean } | null)?.ok);
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +359,19 @@ export async function POST(request: Request) {
             { status: 500 },
           );
         }
+        if (hasPhone && normalizedPhoneForPost) {
+          const profileOk = await persistAccountCurrentPhone(
+            supabase,
+            user.id,
+            normalizedPhoneForPost,
+          );
+          if (!profileOk) {
+            return NextResponse.json(
+              { ok: false, errorKey: 'error.submit_failed' },
+              { status: 500 },
+            );
+          }
+        }
         return NextResponse.json(
           { ok: false, errorKey: risk.errorKey },
           { status: 400 },
@@ -345,6 +398,26 @@ export async function POST(request: Request) {
       { ok: false, errorKey: 'error.submit_failed' },
       { status: 500 },
     );
+  }
+
+  if (hasPhone && normalizedPhoneForPost) {
+    const profileOk = await persistAccountCurrentPhone(
+      supabase,
+      user.id,
+      normalizedPhoneForPost,
+    );
+    if (!profileOk) {
+      return NextResponse.json(
+        { ok: false, errorKey: 'error.submit_failed' },
+        { status: 500 },
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      postId,
+      isActive,
+      normalizedPhone: normalizedPhoneForPost,
+    });
   }
 
   return NextResponse.json({ ok: true, postId, isActive });

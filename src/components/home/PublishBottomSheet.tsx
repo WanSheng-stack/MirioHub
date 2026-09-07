@@ -760,15 +760,18 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           locale,
         }),
       });
-      const result = (await res.json()) as { ok?: boolean; errorKey?: string };
+      const result = (await res.json()) as {
+        ok?: boolean;
+        errorKey?: string;
+        normalizedPhone?: string | null;
+      };
       if (!result.ok) {
         const raw = result.errorKey ?? "error.submit_failed";
         setErrorKey(raw.replace(/^error\./, ""));
         return;
       }
       setPhoneSaved(true);
-      const savedDigits = `${state.dial_code}${state.raw_phone_local}`.replace(/\D/g, "");
-      if (savedDigits.length >= 9) setProfilePhone(savedDigits);
+      if (result.normalizedPhone) setProfilePhone(result.normalizedPhone);
     } finally {
       setPhoneSaving(false);
     }

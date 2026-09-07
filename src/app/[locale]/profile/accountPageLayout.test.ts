@@ -31,12 +31,13 @@ const order = [
   "avatarUrl",
   "headerName",
   '{t("premiumBadge")}',
+  '{t("editName")}',
+  '{t("fullName")}',
   "IdentitySection",
   '{t("phoneCardTitle")}',
   '{t("phoneCardBody")}',
+  "PhoneCountryPicker",
   "savePhone",
-  '{t("personalSection")}',
-  '{t("fullName")}',
   '{t("vehicleSection")}',
   '{t("plate")}',
   '{t("vehicle")}',
@@ -55,8 +56,7 @@ for (const token of order) {
 }
 
 assert.ok(loggedIn.indexOf("IdentitySection") < loggedIn.indexOf('{t("phoneCardTitle")}'));
-assert.ok(loggedIn.indexOf('{t("phoneCardTitle")}') < loggedIn.indexOf('{t("personalSection")}'));
-assert.ok(loggedIn.indexOf('{t("personalSection")}') < loggedIn.indexOf('{t("vehicleSection")}'));
+assert.ok(loggedIn.indexOf('{t("phoneCardTitle")}') < loggedIn.indexOf('{t("vehicleSection")}'));
 assert.ok(loggedIn.indexOf('{t("vehicleSection")}') < loggedIn.indexOf('{t("otherContactsSection")}'));
 assert.ok(loggedIn.indexOf('{t("otherContactsSection")}') < loggedIn.indexOf('{t("bankVerification")}'));
 assert.ok(loggedIn.indexOf('{t("signOut")}') > loggedIn.indexOf('{t("bankVerification")}'));
@@ -69,9 +69,9 @@ assert.equal(page.includes('t("signInSection")'), false);
 assert.equal(page.includes('t("phoneHelper")'), false);
 assert.equal(page.includes("Premium: —"), false);
 assert.equal(page.includes('t("premium")}:'), false);
+assert.equal(page.includes('label={t("personalSection")}'), false);
 
-assert.equal((page.match(/<SettingRow/g) ?? []).length, 4);
-assert.ok(page.includes('label={t("personalSection")}'));
+assert.equal((page.match(/<SettingRow/g) ?? []).length, 3);
 assert.ok(page.includes('label={t("vehicleSection")}'));
 assert.ok(page.includes('label={t("otherContactsSection")}'));
 assert.ok(page.includes('label={t("bankVerification")}'));
@@ -80,10 +80,13 @@ assert.ok(page.includes("settingSummaryClass"));
 
 assert.ok(page.includes('text-sm leading-relaxed text-zinc-600">{t("phoneCardBody")}'));
 assert.ok(page.includes("flex flex-wrap gap-2"));
-assert.ok(page.includes("COUNTRY_DIAL_CODES"));
-assert.ok(page.includes("splitStoredPhone"));
+assert.ok(page.includes("PhoneCountryPicker"));
+assert.ok(page.includes("parseStoredPhone"));
+assert.ok(page.includes("parseUserPhone"));
 assert.ok(page.includes("savePhone"));
-assert.ok(page.includes("normalizePhone(dialCode, phoneLocal)"));
+assert.equal(page.includes("COUNTRY_DIAL_CODES"), false);
+assert.equal(page.includes("splitStoredPhone"), false);
+assert.equal(page.includes("normalizePhone(dialCode"), false);
 
 assert.ok(page.includes("needsRecovery"));
 assert.ok(page.includes("recoveryTitle"));
@@ -104,7 +107,9 @@ assert.ok(page.includes("p_plate: current.plate"));
 assert.ok(page.includes("p_vehicle: current.vehicle"));
 assert.ok(page.includes("p_facebook: current.facebook"));
 assert.ok(page.includes("p_viber: current.viber"));
-assert.ok(page.includes("persistProfile({ phone: result.normalized })"));
+assert.ok(page.includes("persistProfile({ phone: parsed.normalizedDigits })"));
+assert.ok(page.includes("saveName"));
+assert.ok(page.includes('p_phone: next.phone'));
 
 assert.ok(page.includes("is_premium === true"));
 assert.ok(page.includes("<details"));
@@ -131,6 +136,7 @@ assert.equal(zh.account.bankVerification, "银行验证");
 assert.equal(zh.account.bankStatusUnverified, "未验证");
 assert.equal(zh.account.bankStatusVerified, "已验证");
 assert.equal(zh.account.signOut, "退出登录");
+assert.equal(zh.account.editName, "编辑");
 assert.equal(zh.account.premiumBadge, "Premium");
 
 assert.equal(en.account.recoveryTitle, "Keep your account");

@@ -9,7 +9,8 @@
  */
 
 import { useTranslations } from "next-intl";
-import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
+import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
+import type { PhoneCountryCode } from "@/lib/phone/phoneNumber";
 
 interface PublishedPostSuccessProps {
   postId: string | null;
@@ -24,9 +25,9 @@ interface PublishedPostSuccessProps {
   onSendEmail: () => void;
   backupMsg: string | null;
   backupIsInfo: boolean;
-  dialCode: string;
+  phoneCountry: string;
   phoneLocal: string;
-  onDialCodeChange: (value: string) => void;
+  onPhoneCountryChange: (value: PhoneCountryCode) => void;
   onPhoneLocalChange: (value: string) => void;
   onSavePhone: () => void;
   phoneSaving: boolean;
@@ -73,9 +74,9 @@ export function PublishedPostSuccess({
   onSendEmail,
   backupMsg,
   backupIsInfo,
-  dialCode,
+  phoneCountry,
   phoneLocal,
-  onDialCodeChange,
+  onPhoneCountryChange,
   onPhoneLocalChange,
   onSavePhone,
   phoneSaving,
@@ -199,18 +200,11 @@ export function PublishedPostSuccess({
           <h3 className="text-sm font-semibold text-zinc-900">{t("phoneTitle")}</h3>
           <p className="text-xs leading-relaxed text-zinc-600">{t("phoneHint")}</p>
         </div>
-        <div className="flex gap-2">
-          <select
-            className="rounded-xl border border-zinc-200 bg-white px-2 py-2.5 text-sm"
-            value={dialCode}
-            onChange={(e) => onDialCodeChange(e.target.value)}
-          >
-            {COUNTRY_DIAL_CODES.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code}
-              </option>
-            ))}
-          </select>
+        <div className="flex min-w-0 flex-wrap gap-2">
+          <PhoneCountryPicker
+            value={phoneCountry}
+            onChange={onPhoneCountryChange}
+          />
           <input
             className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
             value={phoneLocal}

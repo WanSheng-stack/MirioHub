@@ -8,7 +8,7 @@ import type { PostFormController } from "@/lib/post-form/usePostFormState";
 import { submitPost } from "@/lib/post-form/submitPost";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
-import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
+import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
 import { LuggageCounters } from "@/components/post-form/DeliverTravelFields";
 import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteFields";
 import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompletion";
@@ -755,6 +755,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           postId: pendingPostId,
+          phone_country: state.phone_country,
           dial_code: state.dial_code,
           raw_phone_local: state.raw_phone_local,
           locale,
@@ -807,6 +808,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           postId: pendingPostId,
+          phone_country: state.phone_country,
           dial_code: state.dial_code,
           raw_phone_local: state.raw_phone_local,
           provider_name: state.provider_name,
@@ -1121,9 +1123,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     onSendEmail={() => void bindEmailForAccountBackup()}
                     backupMsg={backupMsg}
                     backupIsInfo={backupIsInfo}
-                    dialCode={state.dial_code}
+                    phoneCountry={state.phone_country}
                     phoneLocal={state.raw_phone_local}
-                    onDialCodeChange={(value) => setField("dial_code", value)}
+                    onPhoneCountryChange={(value) => setField("phone_country", value)}
                     onPhoneLocalChange={(value) => setField("raw_phone_local", value)}
                     onSavePhone={() => void saveActivePhone()}
                     phoneSaving={phoneSaving}
@@ -1163,20 +1165,13 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     </label>
                     <label className="block text-sm font-medium">
                       {t("home.sheet.phone")}
-                      <div className="mt-1 flex gap-2">
-                        <select
-                          className="rounded-xl border border-zinc-200 bg-white px-2 py-2.5 text-sm"
-                          value={state.dial_code}
-                          onChange={(e) => setField("dial_code", e.target.value)}
-                        >
-                          {COUNTRY_DIAL_CODES.map((c) => (
-                            <option key={c.code} value={c.code}>
-                              {c.code}
-                            </option>
-                          ))}
-                        </select>
+                      <div className="mt-1 flex min-w-0 flex-wrap gap-2">
+                        <PhoneCountryPicker
+                          value={state.phone_country}
+                          onChange={(country) => setField("phone_country", country)}
+                        />
                         <input
-                          className={`${inputClass} mt-0 flex-1`}
+                          className={`${inputClass} mt-0 min-w-0 flex-1`}
                           value={state.raw_phone_local}
                           onChange={(e) => setField("raw_phone_local", e.target.value)}
                           inputMode="tel"
@@ -1196,20 +1191,13 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     </label>
                     <label className="block text-sm font-medium">
                       {t("home.sheet.phone")}
-                      <div className="mt-1 flex gap-2">
-                        <select
-                          className="rounded-xl border border-zinc-200 bg-white px-2 py-2.5 text-sm"
-                          value={state.dial_code}
-                          onChange={(e) => setField("dial_code", e.target.value)}
-                        >
-                          {COUNTRY_DIAL_CODES.map((c) => (
-                            <option key={c.code} value={c.code}>
-                              {c.code}
-                            </option>
-                          ))}
-                        </select>
+                      <div className="mt-1 flex min-w-0 flex-wrap gap-2">
+                        <PhoneCountryPicker
+                          value={state.phone_country}
+                          onChange={(country) => setField("phone_country", country)}
+                        />
                         <input
-                          className={`${inputClass} mt-0 flex-1`}
+                          className={`${inputClass} mt-0 min-w-0 flex-1`}
                           value={state.raw_phone_local}
                           onChange={(e) => setField("raw_phone_local", e.target.value)}
                           inputMode="tel"

@@ -14,7 +14,7 @@ export function buildPayloadFromForm(
   phoneId: number,
   plateId: number | null,
 ): BuildPayloadResult {
-  const phoneResult = normalizePhone(state.dial_code, state.raw_phone_local);
+  const phoneResult = normalizePhone(state.phone_country, state.raw_phone_local);
   if (!phoneResult.ok) return { ok: false, errorKey: phoneResult.errorKey };
 
   const route = isDeliverOrTravel(state.category);
@@ -36,7 +36,7 @@ export function buildPayloadFromForm(
     post_type: state.post_type,
     category: state.category,
     phone_id: phoneId,
-    raw_phone: buildRawPhone(state.dial_code, state.raw_phone_local),
+    raw_phone: buildRawPhone(state.phone_country, state.raw_phone_local),
     normalized_phone: phoneResult.normalized,
     departure_date: state.departure_date,
     departure_time_window: fusedWindow,

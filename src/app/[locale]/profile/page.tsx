@@ -10,8 +10,13 @@ import {
   resolveGoogleDisplayName,
 } from "@/lib/auth/googleProfileName";
 import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
-import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
-import { normalizePhone } from "@/lib/post-validation";
+import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
+import {
+  DEFAULT_PHONE_COUNTRY,
+  parseStoredPhone,
+  parseUserPhone,
+  type PhoneCountryCode,
+} from "@/lib/phone/phoneNumber";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -69,19 +74,6 @@ function SettingRow({
       <div className="space-y-3 border-t border-zinc-100 px-4 py-3">{children}</div>
     </details>
   );
-}
-
-function splitStoredPhone(stored: string | null | undefined): { dial: string; local: string } {
-  const digits = String(stored ?? "").replace(/\D/g, "");
-  const codes = [...COUNTRY_DIAL_CODES]
-    .map((c) => c.code.replace(/\D/g, ""))
-    .sort((a, b) => b.length - a.length);
-  for (const code of codes) {
-    if (digits.startsWith(code) && digits.length > code.length) {
-      return { dial: `+${code}`, local: digits.slice(code.length) };
-    }
-  }
-  return { dial: "+381", local: digits };
 }
 
 function resolveAvatarUrl(user: User): string | null {
@@ -246,9 +238,11 @@ export default function ProfilePage() {
   const [activatedPostId, setActivatedPostId] = useState<string | null>(null);
   const [phoneOverride, setPhoneOverride] = useState<{
     stored: string;
-    dial: string;
+    country: string;
     local: string;
   } | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
   const [avatarBroken, setAvatarBroken] = useState(false);
   const nameFillAttemptedRef = useRef(false);
 
@@ -497,12 +491,16 @@ export default function ProfilePage() {
   }
 
   const storedPhone = profile?.phone ?? "";
-  const splitPhone = splitStoredPhone(profile?.phone);
+  const storedParsed = parseStoredPhone(profile?.phone);
   const phoneFields =
     phoneOverride && phoneOverride.stored === storedPhone
       ? phoneOverride
-      : { stored: storedPhone, dial: splitPhone.dial, local: splitPhone.local };
-  const dialCode = phoneFields.dial;
+      : {
+          stored: storedPhone,
+          country: storedParsed.valid ? storedParsed.countryCode : DEFAULT_PHONE_COUNTRY,
+          local: storedParsed.valid ? storedParsed.nationalDisplay : "",
+        };
+  const phoneCountry = phoneFields.country;
   const phoneLocal = phoneFields.local;
 
   async function persistProfile(patch: Partial<ExtendedProfile> = {}) {
@@ -531,12 +529,17 @@ export default function ProfilePage() {
       await persistProfile({ phone: "" });
       return;
     }
-    const result = normalizePhone(dialCode, phoneLocal);
-    if (!result.ok) {
+    const parsed = parseUserPhone({ countryCode: phoneCountry, nationalInput: phoneLocal });
+    if (!parsed.valid) {
       setMessage(tErr("invalid_phone"));
       return;
     }
-    await persistProfile({ phone: result.normalized });
+    await persistProfile({ phone: parsed.normalizedDigits });
+  }
+
+  async function saveName() {
+    await persistProfile({ full_name: nameDraft.trim() });
+    setEditingName(false);
   }
 
   const headerName = user ? resolveHeaderName(profile, user) : "";
@@ -689,8 +692,40 @@ export default function ProfilePage() {
               {t("premiumBadge")}
             </span>
           ) : null}
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+            aria-label={t("editName")}
+            onClick={() => {
+              setNameDraft(profile?.full_name ?? headerName);
+              setEditingName((open) => !open);
+            }}
+          >
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M12.3 4.2 15.8 7.7M3 17l3.4-.6L16 6.8a1.5 1.5 0 0 0 0-2.1L15.3 4a1.5 1.5 0 0 0-2.1 0L3.6 13.6 3 17Z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </div>
       </div>
+      {editingName ? (
+        <div className="mt-3 space-y-2">
+          <label className="block text-sm text-zinc-800">
+            {t("fullName")}
+            <input
+              className={fieldClass}
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
+            onClick={() => void saveName()}
+          >
+            {t("save")}
+          </button>
+        </div>
+      ) : null}
     </header>
 
     <IdentitySection
@@ -712,24 +747,17 @@ export default function ProfilePage() {
       <h2 className="text-sm font-semibold text-zinc-900">{t("phoneCardTitle")}</h2>
       <p className="mt-1 text-sm leading-relaxed text-zinc-600">{t("phoneCardBody")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <select
-          className="h-11 w-[4.75rem] shrink-0 rounded-xl border border-zinc-200 bg-white px-2 text-sm"
-          value={dialCode}
-          onChange={(e) =>
+        <PhoneCountryPicker
+          value={phoneCountry}
+          ariaLabel={t("phone")}
+          onChange={(country: PhoneCountryCode) =>
             setPhoneOverride({
               stored: storedPhone,
-              dial: e.target.value,
+              country,
               local: phoneLocal,
             })
           }
-          aria-label={t("phone")}
-        >
-          {COUNTRY_DIAL_CODES.map((c) => (
-            <option key={c.code} value={c.code}>
-              {c.code}
-            </option>
-          ))}
-        </select>
+        />
         <input
           className="h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
           value={phoneLocal}
@@ -738,7 +766,7 @@ export default function ProfilePage() {
           onChange={(e) =>
             setPhoneOverride({
               stored: storedPhone,
-              dial: dialCode,
+              country: phoneCountry,
               local: e.target.value,
             })
           }
@@ -754,26 +782,6 @@ export default function ProfilePage() {
     </section>
 
     <div className="mt-4 space-y-2">
-      <SettingRow label={t("personalSection")}>
-        <label className="block text-sm text-zinc-800">
-          {t("fullName")}
-          <input
-            className={fieldClass}
-            value={profile?.full_name ?? ""}
-            onChange={(e) =>
-              setProfile((p) => (p ? { ...p, full_name: e.target.value } : p))
-            }
-          />
-        </label>
-        <button
-          type="button"
-          className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
-          onClick={() => void persistProfile()}
-        >
-          {t("save")}
-        </button>
-      </SettingRow>
-
       <SettingRow label={t("vehicleSection")}>
         <label className="block text-sm text-zinc-800">
           {t("plate")}

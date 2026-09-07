@@ -2,7 +2,8 @@
 
 import { useTranslations } from "next-intl";
 import type { PostFormController } from "@/lib/post-form/usePostFormState";
-import { COUNTRY_DIAL_CODES, TIME_WINDOWS } from "@/lib/post-time-windows";
+import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
+import { TIME_WINDOWS } from "@/lib/post-time-windows";
 
 const inputClass =
   "mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900/10";
@@ -47,21 +48,14 @@ export function BaseFields({ form }: Props) {
 
       <div className="block text-sm">
         <span>{t("publish.phone")}</span>
-        <div className="mt-1 flex gap-2">
-          <select
-            className="w-28 shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-2.5 text-sm"
-            value={state.dial_code}
-            onChange={(e) => setField("dial_code", e.target.value)}
-          >
-            {COUNTRY_DIAL_CODES.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code} {t(c.key)}
-              </option>
-            ))}
-          </select>
+        <div className="mt-1 flex min-w-0 flex-wrap gap-2">
+          <PhoneCountryPicker
+            value={state.phone_country}
+            onChange={(country) => setField("phone_country", country)}
+          />
           <input
             type="tel"
-            className={`${inputClass} mt-0`}
+            className={`${inputClass} mt-0 min-w-0 flex-1`}
             value={state.raw_phone_local}
             onChange={(e) => setField("raw_phone_local", e.target.value)}
             placeholder={t("publish.phonePlaceholder")}

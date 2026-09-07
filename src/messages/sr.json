@@ -105,7 +105,7 @@
     "oversizeWarning": "⚠️ Upozorenje: pogrešne dimenzije/količina — vozač može odbiti prevoz na licu mesta."
   },
   "error": {
-    "invalid_phone": "Neispravan broj telefona (9–14 cifara posle normalizacije).",
+    "invalid_phone": "Unesite važeći broj telefona.",
     "invalid_plate": "Neispravne tablice.",
     "address_required": "Polazak i destinacija su obavezni.",
     "service_address_required": "Adresa usluge je obavezna.",
@@ -181,6 +181,10 @@
       "other": "Ostalo (vidi napomene)"
     }
   },
+  "phone": {
+    "countryPicker": "Država i pozivni broj",
+    "searchCountry": "Pretraži državu"
+  },
   "account": {
     "title": "Nalog",
     "welcome": "Prijavite se da otključate kontakte i objavite vožnje",
@@ -218,6 +222,7 @@
     "bankStatusUnverified": "Nije verifikovano",
     "benefitsSection": "Plan i pogodnosti",
     "fullName": "Ime",
+    "editName": "Izmeni",
     "phone": "Broj telefona",
     "plate": "Tablice",
     "vehicle": "Model vozila",

@@ -1,3 +1,4 @@
+import { parseStoredPhone } from "@/lib/phone/phoneNumber";
 import {
   resolveAccountIdentityState,
   type AccountIdentityState,
@@ -10,10 +11,9 @@ export type PostPublishReadiness = {
   shouldGoDirectlyToMatches: boolean;
 };
 
-/** profiles.phone / stored E.164-ish digits. Passkey is not recovery. */
+/** profiles.phone stored as canonical digits. Passkey is not recovery. */
 export function hasValidContactPhone(phone: string | null | undefined): boolean {
-  const digits = String(phone ?? "").replace(/\D/g, "");
-  return digits.length >= 9 && digits.length <= 14;
+  return parseStoredPhone(phone).valid;
 }
 
 export function resolvePostPublishReadiness(input: {

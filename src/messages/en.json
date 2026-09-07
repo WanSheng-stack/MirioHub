@@ -105,7 +105,7 @@
     "oversizeWarning": "Warning: if luggage size/count is misstated, the Provider may refuse carriage on site."
   },
   "error": {
-    "invalid_phone": "Invalid phone number (9–14 digits after normalization).",
+    "invalid_phone": "Enter a valid phone number.",
     "invalid_plate": "Invalid license plate.",
     "address_required": "Origin and destination are required.",
     "service_address_required": "Service address is required.",
@@ -181,6 +181,10 @@
       "other": "Other (see notes)"
     }
   },
+  "phone": {
+    "countryPicker": "Country and calling code",
+    "searchCountry": "Search country"
+  },
   "account": {
     "title": "Account",
     "welcome": "Sign in to unlock contacts and post rides",
@@ -218,6 +222,7 @@
     "bankStatusUnverified": "Not verified",
     "benefitsSection": "Plan & benefits",
     "fullName": "Name",
+    "editName": "Edit",
     "phone": "Phone number",
     "plate": "License plate",
     "vehicle": "Vehicle model",

@@ -39,10 +39,9 @@ import { cookies } from 'next/headers';
 import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
 import { evaluateStage1ActivePublicationRisk } from '@/lib/auth/stage1ActiveRisk';
 import {
-  normalizePhone,
   normalizeLicensePlate,
-  buildRawPhone,
 } from '@/lib/post-validation';
+import { parseUserPhone, resolvePhoneCountry } from '@/lib/phone/phoneNumber';
 import {
   upsertPhoneHistory,
   upsertPlateHistory,
@@ -129,7 +128,9 @@ interface ExistingPost {
 
 interface RequestBody {
   postId: string;
-  /** Optional — Stage-2 contact fields.  Empty = skip, keep existing. */
+  /** ISO 3166-1 alpha-2. Canonical validation uses this, not dial_code. */
+  phone_country?: string;
+  /** Optional compat — ignored when phone_country is present; only used if unique. */
   dial_code?: string;
   raw_phone_local?: string;
   provider_name?: string;
@@ -170,6 +171,7 @@ export async function POST(request: Request) {
 
   const {
     postId,
+    phone_country,
     dial_code,
     raw_phone_local,
     provider_name,
@@ -220,15 +222,21 @@ export async function POST(request: Request) {
   let normalizedPhoneForPost: string | null = null;
 
   if (hasPhone) {
-    const phoneResult = normalizePhone(dial_code ?? '', raw_phone_local!);
-    if (!phoneResult.ok) {
+    const country = resolvePhoneCountry({
+      phoneCountry: phone_country,
+      dialCode: dial_code,
+    });
+    const phoneResult = country
+      ? parseUserPhone({ countryCode: country, nationalInput: raw_phone_local! })
+      : { valid: false as const, errorKey: "error.invalid_phone" as const };
+    if (!phoneResult.valid) {
       return NextResponse.json(
         { ok: false, errorKey: phoneResult.errorKey },
         { status: 400 },
       );
     }
-    normalizedPhoneForPost = phoneResult.normalized;
-    rawPhoneForPost = buildRawPhone(dial_code ?? '', raw_phone_local!);
+    normalizedPhoneForPost = phoneResult.normalizedDigits;
+    rawPhoneForPost = phoneResult.nationalDisplay;
 
     // ── Fraud interception (runs before persisting anything) ─────────────────
     const { data: profileRow } = await supabase
@@ -239,7 +247,7 @@ export async function POST(request: Request) {
     const intercept = await evaluatePublishIntercept({
       userId: user.id,
       postType: post.post_type === 'demand' ? 'demand' : 'provider',
-      normalizedPhone: phoneResult.normalized,
+      normalizedPhone: phoneResult.normalizedDigits,
       normalizedPlate: null,
       departureDate: post.departure_date ?? '',
       departureWindow: post.departure_time_window ?? '',
@@ -255,7 +263,7 @@ export async function POST(request: Request) {
     }
 
     // Persist phone history after fraud check passes
-    phoneId = await upsertPhoneHistory(supabase, user.id, phoneResult.normalized);
+    phoneId = await upsertPhoneHistory(supabase, user.id, phoneResult.normalizedDigits);
   }
 
   // ── Plate — optional: only provider posts, only if provided ───────────────

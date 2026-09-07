@@ -105,7 +105,7 @@
     "oversizeWarning": "⚠️ 提示：未如实填写行李尺寸和数量，Provider 现场有权拒绝载运。"
   },
   "error": {
-    "invalid_phone": "手机号格式无效（清洗后须为 9–14 位纯数字）。",
+    "invalid_phone": "请输入有效的手机号码。",
     "invalid_plate": "车牌号格式无效。",
     "address_required": "请填写起点与终点地址。",
     "service_address_required": "请填写具体服务地址。",
@@ -181,6 +181,10 @@
       "other": "其他（见备注）"
     }
   },
+  "phone": {
+    "countryPicker": "国家与国际区号",
+    "searchCountry": "搜索国家"
+  },
   "account": {
     "title": "账户",
     "welcome": "登录后即可查看联系方式并发布互助单",
@@ -218,6 +222,7 @@
     "bankStatusUnverified": "未验证",
     "benefitsSection": "套餐与权益",
     "fullName": "姓名",
+    "editName": "编辑",
     "phone": "手机号码",
     "plate": "车牌号",
     "vehicle": "车辆型号",

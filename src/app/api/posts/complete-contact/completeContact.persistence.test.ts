@@ -85,8 +85,13 @@ assert.ok(sheetSrc.includes("profilePhone: phone"));
   );
   assert.ok(saveFn.includes("normalizedPhone"));
   assert.ok(saveFn.includes("setProfilePhone(result.normalizedPhone)"));
+  assert.ok(saveFn.includes("phone_country"));
   assert.equal(saveFn.includes("dial_code}${state.raw_phone_local"), false);
   assert.equal(saveFn.includes("savedDigits"), false);
 }
+
+assert.ok(routeSrc.includes("parseUserPhone"));
+assert.ok(routeSrc.includes("phone_country"));
+assert.ok(routeSrc.includes("normalizedDigits"));
 
 console.log("completeContact.persistence.test.ts: ok");

@@ -2,6 +2,11 @@
 
 import { useCallback, useMemo, useReducer } from "react";
 import { calculateFinalFee } from "@/lib/post-fee";
+import {
+  callingCodeForCountry,
+  DEFAULT_PHONE_COUNTRY,
+  isPhoneCountryCode,
+} from "@/lib/phone/phoneNumber";
 import { useRouteKmsEstimation } from "@/lib/post-form/useRouteKmsEstimation";
 import type {
   DeliveryMode,
@@ -31,6 +36,7 @@ export type PostFormState = {
   max_companions: number;
   item_condition: ItemCondition;
   dial_code: string;
+  phone_country: string;
   raw_phone_local: string;
   contact_email: string;
   raw_license_plate: string;
@@ -97,6 +103,7 @@ export const initialFormState: PostFormState = {
   max_companions: 1,
   item_condition: "new",
   dial_code: "+381",
+  phone_country: DEFAULT_PHONE_COUNTRY,
   raw_phone_local: "",
   contact_email: "",
   raw_license_plate: "",
@@ -154,6 +161,7 @@ function reducer(state: PostFormState, action: Action): PostFormState {
         time_buffer: state.time_buffer,
         departure_time_window: state.departure_time_window,
         dial_code: state.dial_code,
+        phone_country: state.phone_country,
         raw_phone_local: state.raw_phone_local,
         contact_email: state.contact_email,
       };
@@ -167,8 +175,17 @@ function reducer(state: PostFormState, action: Action): PostFormState {
         category: state.category,
         departure_date: new Date().toISOString().slice(0, 10),
       };
-    case "SET_FIELD":
+    case "SET_FIELD": {
+      const countryValue = String(action.value);
+      if (action.field === "phone_country" && isPhoneCountryCode(countryValue)) {
+        return {
+          ...state,
+          phone_country: countryValue,
+          dial_code: `+${callingCodeForCountry(countryValue)}`,
+        };
+      }
       return { ...state, [action.field]: action.value };
+    }
     case "SET_SHARE_MODE": {
       const share_mode = action.share_mode;
       if (share_mode === "private") {

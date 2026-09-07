@@ -55,19 +55,14 @@ export async function evaluatePublishIntercept(input: {
       "phone",
       input.normalizedPhone,
     );
-    const plateAccounts = input.normalizedPlate
-      ? await rpcCountAssetBoundAccounts(admin, "plate", input.normalizedPlate)
-      : 0;
-    if (window == null || historyPhoneAccounts == null || plateAccounts == null) {
+    if (window == null || historyPhoneAccounts == null) {
       return { allowed: false, errorKey: "error.submit_failed" };
     }
     const decision = processDemandPostIntercept({
-      is_phone_duplicated:
-        window.has_other_phone || historyPhoneAccounts > 1 || plateAccounts > 1,
+      is_phone_duplicated: window.has_other_phone || historyPhoneAccounts > 1,
       account_count: Math.max(
         window.window_phone_account_count,
         historyPhoneAccounts,
-        plateAccounts,
       ),
       active_order_count: window.own_in_window_count,
     });

@@ -672,25 +672,21 @@ function IdentitySection({
     emailsMatch,
     hasPasskey,
   } = identity;
-  const isAnonymous = user.is_anonymous === true;
-  const customOnly = hasPasskey && !hasGoogle && !hasVerifiedEmail;
+  const needsRecovery = !hasGoogle && !hasVerifiedEmail;
   const needsGoogle = !hasGoogle;
   const needsEmail = !hasVerifiedEmail;
 
   return (
     <section className="mx-auto mt-4 max-w-lg rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
       <h2 className="text-sm font-semibold text-zinc-900">{t("securityTitle")}</h2>
-      {isAnonymous ? (
-        <p className="text-sm font-medium text-zinc-800">{t("secureTitle")}</p>
-      ) : null}
-      {isAnonymous && !hasPasskey ? (
-        <p className="text-xs leading-relaxed text-zinc-600">{t("secureHint")}</p>
-      ) : null}
       {hasPasskey ? (
         <p className="text-sm font-medium text-emerald-700">{t("deviceVerified")}</p>
       ) : null}
-      {customOnly ? (
-        <p className="text-xs leading-relaxed text-amber-800">{t("customOnlyWarning")}</p>
+      {needsRecovery ? (
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-zinc-900">{t("recoveryTitle")}</p>
+          <p className="text-xs leading-relaxed text-amber-800">{t("recoveryBody")}</p>
+        </div>
       ) : null}
 
       {hasGoogle ? (

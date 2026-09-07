@@ -111,12 +111,12 @@ export function PublishedPostSuccess({
       ) : null}
 
       <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
-        <div className="space-y-1">
-          <h3 className="text-sm font-semibold text-zinc-900">{t("protectTitle")}</h3>
-          <p className="text-xs leading-relaxed text-zinc-600">
-            {needsRecovery ? t("customOnlyHint") : t("protectHint")}
-          </p>
-        </div>
+        {needsRecovery ? (
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-zinc-900">{t("recoveryTitle")}</h3>
+            <p className="text-xs leading-relaxed text-zinc-600">{t("recoveryBody")}</p>
+          </div>
+        ) : null}
 
         {hasGoogle ? (
           <div className="space-y-1 rounded-xl bg-emerald-50/80 px-3 py-2.5">
@@ -139,7 +139,7 @@ export function PublishedPostSuccess({
           </div>
         ) : null}
 
-        {!hasGoogle ? (
+        {needsRecovery ? (
           <button
             type="button"
             disabled={connecting}

@@ -75,9 +75,14 @@ export function DraftIdentityCompletion({
         </p>
       </div>
 
-      <p className="text-xs font-medium text-amber-900">
-        {t("identity.verify_with_device")}
-      </p>
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-amber-900">
+          {t("identity.verify_with_device")}
+        </p>
+        <p className="text-xs leading-relaxed text-amber-800">
+          {t("identity.verify_with_device_helper")}
+        </p>
+      </div>
       <button
         type="button"
         disabled={isRetrying || activating}

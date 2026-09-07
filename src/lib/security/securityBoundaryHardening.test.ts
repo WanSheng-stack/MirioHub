@@ -289,7 +289,12 @@ assert.ok(submitPost.includes("publishInterceptLeakedMetrics"));
 assert.ok(migration.includes("DROP POLICY IF EXISTS fraud_logs_insert_authenticated"));
 assert.ok(migration.includes("REVOKE INSERT ON TABLE public.fraud_logs FROM authenticated"));
 assert.ok(migration.includes("REVOKE INSERT ON TABLE public.fraud_logs FROM anon"));
-assert.ok(evaluateHelper.includes('admin.from("fraud_logs").insert'));
+assert.ok(evaluateHelper.includes("writeFraudLog(admin,"));
+assert.ok(
+  readFileSync(join(here, "writeFraudAudit.ts"), "utf8").includes(
+    'admin.from("fraud_logs").insert',
+  ),
+);
 
 // TEST F — public_posts_safe excludes extra private fields
 for (const col of [

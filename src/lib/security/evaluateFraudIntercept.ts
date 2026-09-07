@@ -11,6 +11,10 @@ import {
   rpcGatherWindowInterceptMetrics,
   rpcLookupForeignPhoneReuse,
 } from "@/lib/security/fraudLookupRpc";
+import {
+  retainFraudDecision,
+  writeFraudLog,
+} from "@/lib/security/writeFraudAudit";
 import type { Post } from "@/lib/types";
 
 export type FraudDecision = {
@@ -18,17 +22,6 @@ export type FraudDecision = {
   errorKey: string;
   isSpaceWarning?: boolean;
 };
-
-async function writeFraudLog(row: {
-  user_id: string;
-  scene: string;
-  normalized_phone?: string | null;
-  normalized_license_plate?: string | null;
-  reporter_side: string;
-}): Promise<void> {
-  const admin = createAdminClient();
-  await admin.from("fraud_logs").insert(row);
-}
 
 export async function evaluatePublishIntercept(input: {
   userId: string;
@@ -67,13 +60,17 @@ export async function evaluatePublishIntercept(input: {
       active_order_count: window.own_in_window_count,
     });
     if (!decision.allowed && decision.logFraud && decision.trackerScene) {
-      await writeFraudLog({
+      const auditOk = await writeFraudLog(admin, {
         user_id: input.userId,
         scene: decision.trackerScene,
         normalized_phone: input.normalizedPhone,
         normalized_license_plate: input.normalizedPlate,
         reporter_side: "demand",
       });
+      return retainFraudDecision(
+        { allowed: decision.allowed, errorKey: decision.messageKey },
+        auditOk,
+      );
     }
     return { allowed: decision.allowed, errorKey: decision.messageKey };
   }
@@ -122,13 +119,17 @@ export async function evaluatePublishIntercept(input: {
     is_premium_member: input.isPremium,
   });
   if (!decision.allowed && decision.logFraud && decision.trackerScene) {
-    await writeFraudLog({
+    const auditOk = await writeFraudLog(admin, {
       user_id: input.userId,
       scene: decision.trackerScene,
       normalized_phone: input.normalizedPhone,
       normalized_license_plate: input.normalizedPlate,
       reporter_side: "provider",
     });
+    return retainFraudDecision(
+      { allowed: decision.allowed, errorKey: decision.messageKey },
+      auditOk,
+    );
   }
   return { allowed: decision.allowed, errorKey: decision.messageKey };
 }
@@ -202,14 +203,17 @@ export async function evaluateProviderMatchFraud(input: {
     (plateHistoryAccounts > 1 || window.has_other_plate);
 
   if ((is_phone_duplicated || is_plate_duplicated) && account_count > 1) {
-    await writeFraudLog({
+    const auditOk = await writeFraudLog(admin, {
       user_id: input.userId,
       scene: "multi_account_spacetime_collision",
       normalized_phone: input.providerNormalizedPhone,
       normalized_license_plate: input.providerNormalizedLicensePlate,
       reporter_side: "provider",
     });
-    return { allowed: false, errorKey: "error.match_denied_blurred" };
+    return retainFraudDecision(
+      { allowed: false, errorKey: "error.match_denied_blurred" },
+      auditOk,
+    );
   }
 
   if (!isPureCargo) {
@@ -260,13 +264,21 @@ export async function evaluateProviderMatchFraud(input: {
     is_bank_verified: input.isBankVerified,
   });
   if (!decision.allowed && decision.logFraud && decision.trackerScene) {
-    await writeFraudLog({
+    const auditOk = await writeFraudLog(admin, {
       user_id: input.userId,
       scene: decision.trackerScene,
       normalized_phone: input.providerNormalizedPhone,
       normalized_license_plate: input.providerNormalizedLicensePlate,
       reporter_side: "provider",
     });
+    return retainFraudDecision(
+      {
+        allowed: decision.allowed,
+        errorKey: decision.messageKey,
+        isSpaceWarning: Boolean(decision.isSpaceWarning),
+      },
+      auditOk,
+    );
   }
   return {
     allowed: decision.allowed,

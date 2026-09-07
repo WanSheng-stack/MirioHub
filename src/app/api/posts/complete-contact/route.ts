@@ -42,6 +42,8 @@ import {
   normalizeLicensePlate,
 } from '@/lib/post-validation';
 import { parseUserPhone, resolvePhoneCountry } from '@/lib/phone/phoneNumber';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { writeAccountPhone } from '@/lib/profile/writeAccountPhone';
 import {
   upsertPhoneHistory,
   upsertPlateHistory,
@@ -76,38 +78,14 @@ async function createClient() {
 }
 
 /**
- * Persist Account current/default phone. profiles has no client UPDATE grant;
- * update_my_profile is the existing owner-only writer (WHERE id = auth.uid()).
- * Never accepts a browser-supplied user_id.
+ * Persist Account current/default phone via service-role writer.
+ * Never accepts a browser-supplied user_id. Does not rewrite other profile fields.
  */
 async function persistAccountCurrentPhone(
-  supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   normalizedPhone: string,
 ): Promise<boolean> {
-  const { data: current, error: readErr } = await supabase
-    .from('profiles')
-    .select('full_name, plate, vehicle, facebook, viber')
-    .eq('id', userId)
-    .maybeSingle();
-  if (readErr || !current) return false;
-
-  const { data, error } = await supabase.rpc('update_my_profile', {
-    p_full_name: current.full_name,
-    p_phone: normalizedPhone,
-    p_plate: current.plate,
-    p_vehicle: current.vehicle,
-    p_facebook: current.facebook,
-    p_viber: current.viber,
-  });
-  if (error) {
-    console.error('[complete-contact] profile phone persist error:', {
-      message: error.message,
-      code: error.code,
-    });
-    return false;
-  }
-  return Boolean((data as { ok?: boolean } | null)?.ok);
+  return writeAccountPhone(createAdminClient(), userId, normalizedPhone);
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +347,6 @@ export async function POST(request: Request) {
         }
         if (hasPhone && normalizedPhoneForPost) {
           const profileOk = await persistAccountCurrentPhone(
-            supabase,
             user.id,
             normalizedPhoneForPost,
           );
@@ -410,7 +387,6 @@ export async function POST(request: Request) {
 
   if (hasPhone && normalizedPhoneForPost) {
     const profileOk = await persistAccountCurrentPhone(
-      supabase,
       user.id,
       normalizedPhoneForPost,
     );

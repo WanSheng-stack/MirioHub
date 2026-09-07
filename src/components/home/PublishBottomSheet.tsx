@@ -15,6 +15,11 @@ import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompleti
 import { PublishedPostSuccess } from "@/components/home/PublishedPostSuccess";
 import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
 import { resolvePostPublishReadiness } from "@/lib/auth/postPublishReadiness";
+import { parseUserPhone } from "@/lib/phone/phoneNumber";
+import {
+  readPhoneSaveResponse,
+  resetPhoneFeedback,
+} from "@/lib/profile/phoneSaveClient";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -99,6 +104,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const [backupIsInfo, setBackupIsInfo] = useState(false);
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [phoneSaved, setPhoneSaved] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [profilePhone, setProfilePhone] = useState<string | null>(null);
 
   // Publish-intent anchor — ONE uuid per logical post, persists across:
@@ -745,10 +751,19 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
   /** Phone-only complete-contact on an already-active post. No republish. */
   async function saveActivePhone() {
-    if (!pendingPostId || !state.raw_phone_local.trim()) return;
+    if (!pendingPostId || !state.raw_phone_local.trim() || phoneSaving) return;
+    const clientCheck = parseUserPhone({
+      countryCode: state.phone_country,
+      nationalInput: state.raw_phone_local,
+    });
+    if (!clientCheck.valid) {
+      setPhoneSaved(false);
+      setPhoneError(clientCheck.errorKey);
+      return;
+    }
     setPhoneSaving(true);
     setPhoneSaved(false);
-    setErrorKey(null);
+    setPhoneError(null);
     try {
       const res = await fetch("/api/posts/complete-contact", {
         method: "POST",
@@ -761,18 +776,15 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
           locale,
         }),
       });
-      const result = (await res.json()) as {
-        ok?: boolean;
-        errorKey?: string;
-        normalizedPhone?: string | null;
-      };
-      if (!result.ok) {
-        const raw = result.errorKey ?? "error.submit_failed";
-        setErrorKey(raw.replace(/^error\./, ""));
+      const interpreted = await readPhoneSaveResponse(res);
+      if (!interpreted.ok) {
+        setPhoneError(interpreted.errorKey);
         return;
       }
       setPhoneSaved(true);
-      if (result.normalizedPhone) setProfilePhone(result.normalizedPhone);
+      if (interpreted.normalizedPhone) setProfilePhone(interpreted.normalizedPhone);
+    } catch {
+      setPhoneError("error.submit_failed");
     } finally {
       setPhoneSaving(false);
     }
@@ -1125,11 +1137,22 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     backupIsInfo={backupIsInfo}
                     phoneCountry={state.phone_country}
                     phoneLocal={state.raw_phone_local}
-                    onPhoneCountryChange={(value) => setField("phone_country", value)}
-                    onPhoneLocalChange={(value) => setField("raw_phone_local", value)}
+                    onPhoneCountryChange={(value) => {
+                      const cleared = resetPhoneFeedback();
+                      setPhoneSaved(cleared.phoneSaved);
+                      setPhoneError(cleared.phoneError);
+                      setField("phone_country", value);
+                    }}
+                    onPhoneLocalChange={(value) => {
+                      const cleared = resetPhoneFeedback();
+                      setPhoneSaved(cleared.phoneSaved);
+                      setPhoneError(cleared.phoneError);
+                      setField("raw_phone_local", value);
+                    }}
                     onSavePhone={() => void saveActivePhone()}
                     phoneSaving={phoneSaving}
                     phoneSaved={phoneSaved}
+                    phoneError={phoneError}
                     hasContactPhone={publishReadiness.hasContactPhone}
                     onViewMatches={handleViewMatches}
                     onSkip={handleViewMatches}

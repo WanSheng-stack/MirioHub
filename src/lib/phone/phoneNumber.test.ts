@@ -42,8 +42,14 @@ function digitsOf(value: string): string {
 {
   const withZero = parseUserPhone({ countryCode: "RS", nationalInput: "0641234567" });
   const withoutZero = parseUserPhone({ countryCode: "RS", nationalInput: "641234567" });
-  if (withoutZero.valid && withZero.valid) {
+  const intl = parseUserPhone({ countryCode: "RS", nationalInput: "+381641234567" });
+  assert.equal(withZero.valid, true);
+  assert.equal(withoutZero.valid, true);
+  assert.equal(intl.valid, true);
+  if (withZero.valid && withoutZero.valid && intl.valid) {
     assert.equal(withoutZero.normalizedDigits, withZero.normalizedDigits);
+    assert.equal(intl.normalizedDigits, withZero.normalizedDigits);
+    assert.equal(withZero.normalizedDigits, "381641234567");
   }
 }
 
@@ -130,6 +136,19 @@ function digitsOf(value: string): string {
   assert.equal(intlConflict.valid, false);
 }
 
+{
+  assert.equal(parseUserPhone({ countryCode: "RS", nationalInput: "123456789" }).valid, false);
+  assert.equal(parseUserPhone({ countryCode: "RS", nationalInput: "0112345678" }).valid, false);
+  assert.equal(parseUserPhone({ countryCode: "RS", nationalInput: "011 322 1234" }).valid, false);
+  assert.equal(parseUserPhone({ countryCode: "CN", nationalInput: "01012345678" }).valid, false);
+}
+
+{
+  assert.equal(parseUserPhone({ countryCode: "RS", nationalInput: "0000000000" }).valid, false);
+  assert.equal(parseUserPhone({ countryCode: "RS", nationalInput: "1111111111" }).valid, false);
+  assert.equal(parseUserPhone({ countryCode: "CN", nationalInput: "11111111111" }).valid, false);
+}
+
 assert.equal(uniqueCountryForCallingCode("381"), "RS");
 assert.equal(uniqueCountryForCallingCode("7"), null);
 
@@ -144,6 +163,10 @@ const helperSrc = read("src/lib/phone/phoneNumber.ts");
 assert.ok(helperSrc.includes("extract: false"));
 assert.ok(helperSrc.includes("isPossible()"));
 assert.ok(helperSrc.includes("isValid()"));
+assert.ok(helperSrc.includes("libphonenumber-js/max"));
+assert.ok(helperSrc.includes("MOBILE"));
+assert.ok(helperSrc.includes("FIXED_LINE_OR_MOBILE"));
+assert.ok(helperSrc.includes("getType()"));
 assert.equal(helperSrc.includes('startsWith("0")'), false);
 assert.equal(helperSrc.includes("slice(1)"), false);
 

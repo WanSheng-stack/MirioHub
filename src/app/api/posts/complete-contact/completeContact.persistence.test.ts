@@ -20,7 +20,8 @@ const upsertSrc = read("src/lib/post-form/submitPost.ts");
 // TEST 1 — phone save writes history, this post, then profiles.phone
 assert.ok(routeSrc.includes("upsertPhoneHistory"));
 assert.ok(routeSrc.includes("persistAccountCurrentPhone"));
-assert.ok(routeSrc.includes("update_my_profile"));
+assert.ok(routeSrc.includes("writeAccountPhone"));
+assert.equal(routeSrc.includes("update_my_profile"), false);
 {
   const historyCall = routeSrc.indexOf("phoneId = await upsertPhoneHistory");
   const persistSection = routeSrc.indexOf("// ── Persist");
@@ -31,7 +32,8 @@ assert.ok(routeSrc.includes("update_my_profile"));
 }
 
 // Normalized canonical phone — not the UI raw string
-assert.ok(routeSrc.includes("p_phone: normalizedPhone"));
+assert.ok(routeSrc.includes("normalizedPhoneForPost = phoneResult.normalizedDigits"));
+assert.equal(routeSrc.includes("p_phone:"), false);
 assert.equal(routeSrc.includes("p_phone: rawPhoneForPost"), false);
 assert.equal(routeSrc.includes("p_phone: raw_phone_local"), false);
 
@@ -43,9 +45,7 @@ assert.equal(routeSrc.includes("p_phone: raw_phone_local"), false);
   );
   assert.equal(bodyBlock.includes("user_id"), false);
 }
-assert.ok(routeSrc.includes(".eq('id', userId)"));
-assert.ok(routeSrc.includes("update_my_profile"));
-assert.equal(routeSrc.includes(".from('profiles')\n    .update"), false);
+assert.ok(routeSrc.includes("writeAccountPhone"));
 assert.ok(read("supabase/init.sql").includes("where id = auth.uid();"));
 
 // This post only — do not rewrite other posts' phone_id
@@ -63,11 +63,8 @@ assert.ok(routeSrc.includes("normalizedPhone: normalizedPhoneForPost"));
 assert.ok(routeSrc.includes("return NextResponse.json({ ok: true, postId, isActive });"));
 
 // Profile failure after post success is not reported as ok:true
-{
-  const persistFnEnd = routeSrc.indexOf("export async function POST");
-  const persistFn = routeSrc.slice(0, persistFnEnd);
-  assert.ok(persistFn.includes("return false"));
-}
+assert.ok(routeSrc.includes("writeAccountPhone"));
+assert.ok(routeSrc.includes("if (!profileOk)"));
 assert.ok(routeSrc.includes("If profile persist fails after post update"));
 
 // TEST 2/3/4 — next publish still reads profiles.phone, not post snapshot
@@ -84,8 +81,10 @@ assert.ok(sheetSrc.includes("profilePhone: phone"));
     sheetSrc.indexOf("async function onPublish"),
   );
   assert.ok(saveFn.includes("normalizedPhone"));
-  assert.ok(saveFn.includes("setProfilePhone(result.normalizedPhone)"));
+  assert.ok(saveFn.includes("setProfilePhone(interpreted.normalizedPhone)"));
   assert.ok(saveFn.includes("phone_country"));
+  assert.ok(saveFn.includes("parseUserPhone"));
+  assert.equal(saveFn.includes("setErrorKey"), false);
   assert.equal(saveFn.includes("dial_code}${state.raw_phone_local"), false);
   assert.equal(saveFn.includes("savedDigits"), false);
 }

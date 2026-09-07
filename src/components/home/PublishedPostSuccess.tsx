@@ -32,6 +32,7 @@ interface PublishedPostSuccessProps {
   onSavePhone: () => void;
   phoneSaving: boolean;
   phoneSaved: boolean;
+  phoneError: string | null;
   hasContactPhone: boolean;
   onViewMatches: () => void;
   onSkip: () => void;
@@ -81,12 +82,14 @@ export function PublishedPostSuccess({
   onSavePhone,
   phoneSaving,
   phoneSaved,
+  phoneError,
   hasContactPhone,
   onViewMatches,
   onSkip,
   onViewPost,
 }: PublishedPostSuccessProps) {
   const t = useTranslations("publishSuccess");
+  const tErr = useTranslations("error");
   const needsRecovery = !hasGoogle && !hasVerifiedEmail;
   const emailsMatch =
     Boolean(googleIdentityEmail) &&
@@ -210,6 +213,8 @@ export function PublishedPostSuccess({
             value={phoneLocal}
             onChange={(e) => onPhoneLocalChange(e.target.value)}
             inputMode="tel"
+            aria-label={t("phoneTitle")}
+            aria-invalid={Boolean(phoneError)}
           />
         </div>
         <button
@@ -220,6 +225,11 @@ export function PublishedPostSuccess({
         >
           {phoneSaving ? t("savingPhone") : t("savePhone")}
         </button>
+        {phoneError ? (
+          <p className="text-sm text-red-600" role="alert">
+            {tErr(phoneError.replace(/^error\./, "") as "invalid_phone")}
+          </p>
+        ) : null}
         {phoneSaved ? (
           <p className="text-xs font-medium text-emerald-700">{t("phoneSaved")}</p>
         ) : null}

@@ -211,12 +211,13 @@ assert.equal(migration.includes("contact_unlocks"), false);
 assert.ok(migration.includes("DROP POLICY IF EXISTS posts_select_active_or_own"));
 assert.ok(migration.includes("CREATE POLICY posts_select_own"));
 
-// update_my_profile fill-if-empty keeps existing fields
-assert.ok(profilePage.includes("p_phone: current.phone"));
-assert.ok(profilePage.includes("p_plate: current.plate"));
-assert.ok(profilePage.includes("p_vehicle: current.vehicle"));
-assert.ok(profilePage.includes("p_facebook: current.facebook"));
-assert.ok(profilePage.includes("p_viber: current.viber"));
+// Name fill-if-empty uses atomic RPC; phone is not rewritten via update_my_profile
+assert.ok(profilePage.includes("ensure_my_display_name"));
+assert.ok(profilePage.includes("p_plate: next.plate"));
+assert.ok(profilePage.includes("p_vehicle: next.vehicle"));
+assert.ok(profilePage.includes("p_facebook: next.facebook"));
+assert.ok(profilePage.includes("p_viber: next.viber"));
+assert.equal(profilePage.includes("p_phone:"), false);
 
 const window = parseWindowInterceptMetrics({
   window_phone_account_count: 2,

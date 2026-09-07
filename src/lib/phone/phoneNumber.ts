@@ -4,7 +4,8 @@ import {
   getCountryCallingCode,
   parsePhoneNumberWithError,
   type CountryCode,
-} from "libphonenumber-js";
+  type NumberType,
+} from "libphonenumber-js/max";
 
 export type PhoneCountryCode = CountryCode;
 
@@ -140,11 +141,21 @@ function prepareInput(raw: string): string {
   return trimmed;
 }
 
+const ACCEPTED_NUMBER_TYPES: ReadonlySet<NumberType> = new Set([
+  "MOBILE",
+  "FIXED_LINE_OR_MOBILE",
+]);
+
+function isAcceptedMobileType(type: NumberType | undefined): boolean {
+  return type != null && ACCEPTED_NUMBER_TYPES.has(type);
+}
+
 function fromParsed(
   parsed: ReturnType<typeof parsePhoneNumberWithError>,
   selectedCountry: PhoneCountryCode,
 ): PhoneParseResult {
   if (!parsed.isPossible() || !parsed.isValid()) return failure();
+  if (!isAcceptedMobileType(parsed.getType())) return failure();
   if (parsed.country && parsed.country !== selectedCountry) return failure();
   if (
     !parsed.country &&
@@ -207,6 +218,7 @@ export function parseStoredPhone(stored: string | null | undefined): PhoneParseR
   try {
     const parsed = parsePhoneNumberWithError(`+${digits}`, { extract: false });
     if (!parsed.isPossible() || !parsed.isValid() || !parsed.country) return failure();
+    if (!isAcceptedMobileType(parsed.getType())) return failure();
     const country = parsed.country;
     const { e164, normalizedDigits } = toE164AndDigits(parsed.format("E.164"));
     return {

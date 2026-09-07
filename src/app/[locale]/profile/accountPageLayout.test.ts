@@ -31,8 +31,8 @@ const order = [
   "avatarUrl",
   "headerName",
   '{t("premiumBadge")}',
+  '{t("confirmName")}',
   '{t("editName")}',
-  '{t("fullName")}',
   "IdentitySection",
   '{t("phoneCardTitle")}',
   '{t("phoneCardBody")}',
@@ -97,19 +97,16 @@ assert.ok(page.includes("resolveAccountIdentityState"));
 assert.equal(page.includes("from(\"posts\")"), false);
 
 assert.ok(page.includes("p_full_name: next.full_name"));
-assert.ok(page.includes("p_phone: next.phone"));
 assert.ok(page.includes("p_plate: next.plate"));
 assert.ok(page.includes("p_vehicle: next.vehicle"));
 assert.ok(page.includes("p_facebook: next.facebook"));
 assert.ok(page.includes("p_viber: next.viber"));
-assert.ok(page.includes("p_phone: current.phone"));
-assert.ok(page.includes("p_plate: current.plate"));
-assert.ok(page.includes("p_vehicle: current.vehicle"));
-assert.ok(page.includes("p_facebook: current.facebook"));
-assert.ok(page.includes("p_viber: current.viber"));
-assert.ok(page.includes("persistProfile({ phone: parsed.normalizedDigits })"));
+assert.equal(page.includes("p_phone:"), false);
+assert.ok(page.includes("/api/profile/phone"));
+assert.ok(page.includes("ensure_my_display_name"));
 assert.ok(page.includes("saveName"));
-assert.ok(page.includes('p_phone: next.phone'));
+assert.ok(page.includes("nameEdit.editing"));
+assert.equal(page.includes('{t("fullName")}'), false);
 
 assert.ok(page.includes("is_premium === true"));
 assert.ok(page.includes("<details"));

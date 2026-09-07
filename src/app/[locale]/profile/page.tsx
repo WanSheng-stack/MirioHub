@@ -17,6 +17,20 @@ import {
   parseUserPhone,
   type PhoneCountryCode,
 } from "@/lib/phone/phoneNumber";
+import {
+  DISPLAY_NAME_MAX,
+  applyEnsureNameToLocalProfile,
+  applyNameSaveResult,
+  beginNameEdit,
+  cancelNameEdit,
+  isRpcOk,
+  prepareNameSave,
+  type NameEditState,
+} from "@/lib/profile/displayName";
+import {
+  readPhoneSaveResponse,
+  resetPhoneFeedback,
+} from "@/lib/profile/phoneSaveClient";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -241,10 +255,20 @@ export default function ProfilePage() {
     country: string;
     local: string;
   } | null>(null);
-  const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
+  const [nameEdit, setNameEdit] = useState<NameEditState>({
+    editing: false,
+    draft: "",
+    snapshot: "",
+    saving: false,
+    errorKey: null,
+  });
+  const [nameSaving, setNameSaving] = useState(false);
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneSaved, setPhoneSaved] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
   const nameFillAttemptedRef = useRef(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const bankRef = useMemo(
     () => profile?.bank_reference_code ?? (user ? bankRefFromUuid(user.id) : "------"),
@@ -272,7 +296,7 @@ export default function ProfilePage() {
         const loaded = await loadProfile(resolved.id);
         await loadSystemConfig();
         if (loaded) {
-          await maybeFillGoogleFullName(resolved, loaded);
+          await ensureDisplayName(resolved, loaded);
         }
       }
 
@@ -346,6 +370,15 @@ export default function ProfilePage() {
     }
   }
 
+  useEffect(() => {
+    if (!nameEdit.editing) return;
+    const el = nameInputRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  }, [nameEdit.editing]);
+
   async function loadProfile(id: string): Promise<ExtendedProfile | null> {
     const supabase = createClient();
     const { data, error } = await readWithClockSkewRetry(supabase, async () => {
@@ -374,25 +407,23 @@ export default function ProfilePage() {
     setConfig(data as SystemConfig | null);
   }
 
-  async function maybeFillGoogleFullName(resolved: User, current: ExtendedProfile) {
+  async function ensureDisplayName(resolved: User, current: ExtendedProfile) {
     if (nameFillAttemptedRef.current) return;
     if (!isProfileFullNameEmpty(current.full_name)) return;
-    const suggestion = resolveGoogleDisplayName(resolved);
-    if (!suggestion) return;
     nameFillAttemptedRef.current = true;
+    const preferred = resolveGoogleDisplayName(resolved);
     const supabase = createClient();
-    const { data } = await supabase.rpc("update_my_profile", {
-      p_full_name: suggestion,
-      p_phone: current.phone,
-      p_plate: current.plate,
-      p_vehicle: current.vehicle,
-      p_facebook: current.facebook,
-      p_viber: current.viber,
+    const { data, error } = await supabase.rpc("ensure_my_display_name", {
+      p_preferred: preferred,
     });
-    const json = data as { ok?: boolean };
-    if (json?.ok) {
-      setProfile((p) => (p ? { ...p, full_name: suggestion } : { ...current, full_name: suggestion }));
-    }
+    if (!isRpcOk(error, data)) return;
+    const rpcName = String((data as { full_name?: string } | null)?.full_name ?? "");
+    setProfile((p) => {
+      const local = p ?? current;
+      const nextName = applyEnsureNameToLocalProfile(local.full_name, rpcName);
+      if (!nextName || nextName === local.full_name) return p ?? current;
+      return { ...local, full_name: nextName };
+    });
   }
 
   async function signInWithGoogle() {
@@ -503,48 +534,120 @@ export default function ProfilePage() {
   const phoneCountry = phoneFields.country;
   const phoneLocal = phoneFields.local;
 
-  async function persistProfile(patch: Partial<ExtendedProfile> = {}) {
-    if (!profile) return;
+  async function persistProfile(
+    patch: Partial<ExtendedProfile> = {},
+    options: { announce?: boolean } = {},
+  ): Promise<boolean> {
+    if (!profile) return false;
+    const announce = options.announce !== false;
     const next: ExtendedProfile = { ...profile, ...patch };
     const supabase = createClient();
-    const { data } = await supabase.rpc("update_my_profile", {
+    const { data, error } = await supabase.rpc("update_my_profile", {
       p_full_name: next.full_name,
-      p_phone: next.phone,
       p_plate: next.plate,
       p_vehicle: next.vehicle,
       p_facebook: next.facebook,
       p_viber: next.viber,
     });
-    const json = data as { ok?: boolean };
-    if (json?.ok) {
-      setProfile(next);
-      setMessage(t("saved"));
-    } else {
-      setMessage(tErr("submit_failed"));
+    if (!isRpcOk(error, data)) {
+      if (announce) setMessage(tErr("submit_failed"));
+      return false;
     }
+    setProfile(next);
+    if (announce) setMessage(t("saved"));
+    return true;
+  }
+
+  function fieldErrorText(key: string): string {
+    return tErr(key.replace(/^error\./, "") as "invalid_phone");
+  }
+
+  function onPhoneFieldsChange(next: { country: string; local: string }) {
+    const cleared = resetPhoneFeedback();
+    setPhoneSaved(cleared.phoneSaved);
+    setPhoneError(cleared.phoneError);
+    setPhoneOverride({
+      stored: storedPhone,
+      country: next.country,
+      local: next.local,
+    });
   }
 
   async function savePhone() {
-    if (!phoneLocal.trim()) {
-      await persistProfile({ phone: "" });
-      return;
+    if (phoneSaving) return;
+    setPhoneSaved(false);
+    setPhoneError(null);
+    if (phoneLocal.trim()) {
+      const parsed = parseUserPhone({ countryCode: phoneCountry, nationalInput: phoneLocal });
+      if (!parsed.valid) {
+        setPhoneError(parsed.errorKey);
+        return;
+      }
     }
-    const parsed = parseUserPhone({ countryCode: phoneCountry, nationalInput: phoneLocal });
-    if (!parsed.valid) {
-      setMessage(tErr("invalid_phone"));
-      return;
+    setPhoneSaving(true);
+    try {
+      const res = await fetch("/api/profile/phone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone_country: phoneCountry,
+          raw_phone_local: phoneLocal,
+        }),
+      });
+      const interpreted = await readPhoneSaveResponse(res);
+      if (!interpreted.ok) {
+        setPhoneError(interpreted.errorKey);
+        return;
+      }
+      setProfile((p) => (p ? { ...p, phone: interpreted.normalizedPhone } : p));
+      setPhoneOverride({
+        stored: interpreted.normalizedPhone,
+        country: phoneCountry,
+        local: interpreted.nationalDisplay || "",
+      });
+      setPhoneSaved(true);
+    } catch {
+      setPhoneError("error.submit_failed");
+    } finally {
+      setPhoneSaving(false);
     }
-    await persistProfile({ phone: parsed.normalizedDigits });
   }
 
   async function saveName() {
-    await persistProfile({ full_name: nameDraft.trim() });
-    setEditingName(false);
+    if (nameSaving || nameEdit.saving) return;
+    const prepared = prepareNameSave(nameEdit);
+    if (!prepared.ok) {
+      setNameEdit((s) => ({ ...s, errorKey: prepared.errorKey, editing: true }));
+      return;
+    }
+    setNameSaving(true);
+    setNameEdit((s) => ({ ...s, saving: true, errorKey: null }));
+    const ok = await persistProfile({ full_name: prepared.name }, { announce: false });
+    setNameSaving(false);
+    setNameEdit((s) => applyNameSaveResult({ ...s, draft: prepared.name, saving: true }, ok));
+    if (!ok) {
+      setNameEdit((s) => ({
+        ...s,
+        editing: true,
+        draft: prepared.name,
+        saving: false,
+        errorKey: "error.submit_failed",
+      }));
+    }
   }
 
   const headerName = user ? resolveHeaderName(profile, user) : "";
   const avatarUrl = user && !avatarBroken ? resolveAvatarUrl(user) : null;
   const showPremiumBadge = profile?.is_premium === true;
+
+  function startNameEdit() {
+    const current = profile?.full_name || headerName;
+    setNameEdit(beginNameEdit(current));
+  }
+
+  function abortNameEdit() {
+    setNameEdit((s) => cancelNameEdit(s));
+  }
 
   if (!hasSupabaseEnv()) {
     return <p className="text-sm">{tErr("missing_env")}</p>;
@@ -684,7 +787,30 @@ export default function ProfilePage() {
           </div>
         )}
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          {headerName ? (
+          {nameEdit.editing ? (
+            <input
+              ref={nameInputRef}
+              className="min-w-0 max-w-[14rem] flex-1 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-lg font-semibold text-zinc-900 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+              value={nameEdit.draft}
+              maxLength={DISPLAY_NAME_MAX}
+              aria-label={t("displayName")}
+              aria-invalid={Boolean(nameEdit.errorKey)}
+              disabled={nameSaving}
+              onChange={(e) =>
+                setNameEdit((s) => ({ ...s, draft: e.target.value, errorKey: null }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveName();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  abortNameEdit();
+                }
+              }}
+            />
+          ) : headerName ? (
             <h1 className="truncate text-lg font-semibold text-zinc-900">{headerName}</h1>
           ) : null}
           {showPremiumBadge ? (
@@ -692,39 +818,49 @@ export default function ProfilePage() {
               {t("premiumBadge")}
             </span>
           ) : null}
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
-            aria-label={t("editName")}
-            onClick={() => {
-              setNameDraft(profile?.full_name ?? headerName);
-              setEditingName((open) => !open);
-            }}
-          >
-            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M12.3 4.2 15.8 7.7M3 17l3.4-.6L16 6.8a1.5 1.5 0 0 0 0-2.1L15.3 4a1.5 1.5 0 0 0-2.1 0L3.6 13.6 3 17Z" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          {nameEdit.editing ? (
+            <>
+              <button
+                type="button"
+                disabled={nameSaving}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                aria-label={t("confirmName")}
+                onClick={() => void saveName()}
+              >
+                <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 10.5 8 14.5 16 5.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                disabled={nameSaving}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50"
+                aria-label={t("cancelName")}
+                onClick={abortNameEdit}
+              >
+                <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M5 5 15 15M15 5 5 15" strokeLinecap="round" />
+                </svg>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+              aria-label={t("editName")}
+              onClick={startNameEdit}
+            >
+              <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M12.3 4.2 15.8 7.7M3 17l3.4-.6L16 6.8a1.5 1.5 0 0 0 0-2.1L15.3 4a1.5 1.5 0 0 0-2.1 0L3.6 13.6 3 17Z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
-      {editingName ? (
-        <div className="mt-3 space-y-2">
-          <label className="block text-sm text-zinc-800">
-            {t("fullName")}
-            <input
-              className={fieldClass}
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
-            onClick={() => void saveName()}
-          >
-            {t("save")}
-          </button>
-        </div>
+      {nameEdit.errorKey ? (
+        <p className="mt-2 text-sm text-red-600" role="alert">
+          {fieldErrorText(nameEdit.errorKey)}
+        </p>
       ) : null}
     </header>
 
@@ -751,11 +887,7 @@ export default function ProfilePage() {
           value={phoneCountry}
           ariaLabel={t("phone")}
           onChange={(country: PhoneCountryCode) =>
-            setPhoneOverride({
-              stored: storedPhone,
-              country,
-              local: phoneLocal,
-            })
+            onPhoneFieldsChange({ country, local: phoneLocal })
           }
         />
         <input
@@ -763,22 +895,29 @@ export default function ProfilePage() {
           value={phoneLocal}
           inputMode="tel"
           autoComplete="tel"
+          aria-label={t("phone")}
+          aria-invalid={Boolean(phoneError)}
           onChange={(e) =>
-            setPhoneOverride({
-              stored: storedPhone,
-              country: phoneCountry,
-              local: e.target.value,
-            })
+            onPhoneFieldsChange({ country: phoneCountry, local: e.target.value })
           }
         />
         <button
           type="button"
-          className="h-11 w-full rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white sm:w-auto"
+          disabled={phoneSaving}
+          className="h-11 w-full rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white sm:w-auto disabled:opacity-50"
           onClick={() => void savePhone()}
         >
           {t("save")}
         </button>
       </div>
+      {phoneError ? (
+        <p className="mt-2 text-sm text-red-600" role="alert">
+          {fieldErrorText(phoneError)}
+        </p>
+      ) : null}
+      {phoneSaved ? (
+        <p className="mt-2 text-sm font-medium text-emerald-700">{t("phoneSaved")}</p>
+      ) : null}
     </section>
 
     <div className="mt-4 space-y-2">

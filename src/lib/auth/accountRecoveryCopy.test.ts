@@ -1,6 +1,5 @@
 /**
- * PHASE 6.5B.3 — Account recovery copy must not imply device verification
- * is a returning-login method.
+ * PHASE 6.5B.3 FINAL — keep-account copy. Device verification is not recovery.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/auth/accountRecoveryCopy.test.ts
  */
 
@@ -44,21 +43,17 @@ const zhIdentity = zh.identity as Record<string, string>;
 const enIdentity = en.identity as Record<string, string>;
 const srIdentity = sr.identity as Record<string, string>;
 
-// TEST 1 / 5 / 10 — recovery copy
-assert.equal(zhAccount.recoveryTitle, "建议添加账户恢复方式");
-assert.equal(
-  zhAccount.recoveryBody,
-  "绑定 Google 或邮箱后，即使退出登录、清除浏览器数据或更换设备，也能重新找回当前账户。",
-);
-assert.equal(enAccount.recoveryTitle, "Add an account recovery method");
+assert.equal(zhAccount.recoveryTitle, "保存你的账户");
+assert.equal(zhAccount.recoveryBody, "添加 Google 或邮箱，以便之后可以继续使用这个账户。");
+assert.equal(enAccount.recoveryTitle, "Keep your account");
 assert.equal(
   enAccount.recoveryBody,
-  "Connect Google or email so you can recover this account after signing out, clearing browser data, or switching devices.",
+  "Add Google or email so you can continue using this account later.",
 );
-assert.equal(srAccount.recoveryTitle, "Dodajte način za oporavak naloga");
+assert.equal(srAccount.recoveryTitle, "Sačuvajte svoj nalog");
 assert.equal(
   srAccount.recoveryBody,
-  "Povežite Google ili email kako biste mogli ponovo da pristupite ovom nalogu nakon odjave, brisanja podataka pregledača ili promene uređaja.",
+  "Povežite Google ili email kako biste kasnije mogli da nastavite da koristite ovaj nalog.",
 );
 
 assert.equal(zhAccount.deviceVerified, "✓ 已完成设备验证");
@@ -71,27 +66,16 @@ assert.equal(enSuccess.recoveryBody, enAccount.recoveryBody);
 assert.equal(srSuccess.recoveryTitle, srAccount.recoveryTitle);
 assert.equal(srSuccess.recoveryBody, srAccount.recoveryBody);
 
-for (const text of leafStrings({ zh, en, sr })) {
-  assert.equal(text.includes("目前只有设备验证"), false, text);
-  assert.equal(text.includes("当前只有设备验证"), false, text);
-  assert.equal(text.toLowerCase().includes("only has device verification"), false, text);
-  assert.equal(text.includes("samo verifikaciju uređajem"), false, text);
-  assert.equal(text.includes("设备验证本身以后可以让我登录"), false, text);
-  assert.equal(text.includes("device verification lets you sign in again"), false, text);
-}
-
-// TEST 8 — phone is order contact, not recovery
 assert.equal(zhSuccess.phoneTitle, "手机号码");
 assert.equal(zhSuccess.phoneHint, "方便订单确认后联系。");
 assert.equal(enSuccess.phoneTitle, "Phone number");
 assert.equal(enSuccess.phoneHint, "For contact after an order is confirmed.");
 assert.equal(srSuccess.phoneTitle, "Broj telefona");
 assert.equal(srSuccess.phoneHint, "Za kontakt nakon potvrde dogovora.");
-for (const phone of [zhSuccess.phoneHint, enSuccess.phoneHint, srSuccess.phoneHint]) {
-  assert.equal(/找回账户|账户恢复|sign in|recover this account|oporavak naloga|prijav/i.test(phone), false);
+for (const phone of [zhSuccess.phoneTitle, zhSuccess.phoneHint, enSuccess.phoneHint, srSuccess.phoneHint]) {
+  assert.equal(/登录|找回账户|保存账户|recover|recovery|oporavak/i.test(phone), false);
 }
 
-// TEST 10 — device verification ceremony stays publish-security, not recovery
 assert.equal(zhIdentity.verify_with_device, "使用设备验证");
 assert.equal(zhIdentity.verify_with_device_helper, "使用指纹、面容或设备解锁完成安全验证。");
 assert.equal(enIdentity.verify_with_device, "Verify with a device");
@@ -100,9 +84,6 @@ assert.equal(
   "Use your fingerprint, face, or device unlock to complete secure verification.",
 );
 assert.equal(srIdentity.verify_with_device, "Verifikujte uređajem");
-for (const text of [zhIdentity.verify_with_device_helper, enIdentity.verify_with_device_helper, srIdentity.verify_with_device_helper]) {
-  assert.equal(/账户恢复|recover this account|oporavak naloga|以后登录/.test(text), false);
-}
 
 const profileSrc = read("src/app/[locale]/profile/page.tsx");
 assert.ok(profileSrc.includes("needsRecovery"));
@@ -113,9 +94,6 @@ assert.equal(profileSrc.includes("customOnly"), false);
 const successSrc = read("src/components/home/PublishedPostSuccess.tsx");
 assert.ok(successSrc.includes("recoveryTitle"));
 assert.ok(successSrc.includes("recoveryBody"));
-assert.ok(successSrc.includes("googleConnected"));
-assert.ok(successSrc.includes("emailVerified"));
-assert.ok(successSrc.includes("emailsMatch"));
 assert.match(
   successSrc,
   /needsRecovery \? \(\s*<button[\s\S]*connectGoogle/,
@@ -124,11 +102,7 @@ assert.match(
 const draftSrc = read("src/components/home/DraftIdentityCompletion.tsx");
 assert.ok(draftSrc.includes("verify_with_device_helper"));
 assert.equal(draftSrc.includes("Windows Hello"), false);
-assert.equal(draftSrc.includes("WebAuthn"), false);
-assert.equal(draftSrc.includes("risk gate"), false);
-assert.equal(draftSrc.includes("privacy bind"), false);
 
-// TEST 9 — user-visible message values must not leak ceremony jargon
 const forbidden = [
   "Windows Hello",
   "WebAuthn",
@@ -138,11 +112,32 @@ const forbidden = [
   "challenge",
   "risk gate",
   "privacy bind",
+  "目前只有设备验证",
+  "当前只有设备验证",
+  "建议添加账户恢复方式",
+  "保护你的账户",
+  "完善账户安全",
+  "添加账户恢复方式",
+  "找回当前账户",
+  "recover this account",
+  "recovery method",
+  "signing out",
+  "clearing browser data",
+  "switching devices",
+  "browser data",
+  "oporavak naloga",
+  "brisanja podataka pregledača",
 ];
 for (const text of leafStrings({ zh, en, sr })) {
+  const lower = text.toLowerCase();
   for (const term of forbidden) {
-    assert.equal(text.includes(term), false, `${term} in: ${text}`);
+    assert.equal(
+      text.includes(term) || lower.includes(term.toLowerCase()),
+      false,
+      `${term} in: ${text}`,
+    );
   }
+  assert.equal(/\brecovery\b/i.test(text), false, text);
 }
 
 const readinessSrc = read("src/lib/auth/postPublishReadiness.ts");

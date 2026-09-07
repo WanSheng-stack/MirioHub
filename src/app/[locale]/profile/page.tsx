@@ -36,6 +36,9 @@ function GoogleIcon() {
   );
 }
 
+const fieldClass =
+  "mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15";
+
 // ── Identity Activation Context ──────────────────────────────────────────────
 // These helpers are module-level (no React state) so they can be called both
 // from useEffect and from linkGoogle / bindEmail without closure issues.
@@ -528,12 +531,9 @@ export default function ProfilePage() {
   }
 
   return (
-    <>
-    {/* Published-after-verification banner lives outside IdentitySection.
-        After Google linkIdentity the user is no longer anonymous, and
-        IdentitySection may return null — the banner must still appear. */}
+    <div className="mx-auto w-full max-w-lg px-4 pb-12">
     {activatedCount > 0 ? (
-      <div className="mx-auto mb-4 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2">
+      <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2">
         <p className="text-sm font-medium text-emerald-800">
           {t("identity.post_published_after_verification")}
         </p>
@@ -548,79 +548,16 @@ export default function ProfilePage() {
       </div>
     ) : null}
     {identityMsg ? (
-      <p className="mx-auto mb-3 max-w-lg text-sm text-red-600">{identityMsg}</p>
+      <p className="mb-3 text-sm text-red-600">{identityMsg}</p>
     ) : null}
-    <form className="mx-auto max-w-lg space-y-4" onSubmit={(e) => void save(e)}>
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <button
-          type="button"
-          className="text-sm text-zinc-500"
-          onClick={async () => {
-            await createClient().auth.signOut();
-            setUser(null);
-            setProfile(null);
-          }}
-        >
-          {t("signOut")}
-        </button>
-      </div>
-      <p className="text-sm text-zinc-600">
-        {t("quota")}: {profile?.free_views_left ?? "—"} · {t("premium")}:{" "}
-        {profile?.is_premium ? "✓" : "—"}
-      </p>
 
-      <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4">
-        <h2 className="text-sm font-semibold">{t("bankVerifyTitle")}</h2>
-        <p className="mt-1 text-xs text-zinc-600">{t("bankVerifyHint")}</p>
-        <dl className="mt-3 space-y-2 text-sm">
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">{t("recipient")}</dt>
-            <dd className="font-medium">{config?.bank_recipient ?? "—"}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">{t("accountNumber")}</dt>
-            <dd className="font-mono text-xs">{config?.bank_account ?? "—"}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">{t("bankReference")}</dt>
-            <dd className="font-mono text-lg font-bold tracking-widest text-zinc-900">{bankRef}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-500">{t("bankVerified")}</dt>
-            <dd className={profile?.is_bank_verified ? "text-emerald-700" : "text-amber-700"}>
-              {profile?.is_bank_verified ? t("bankVerified") : t("bankNotVerified")}
-            </dd>
-          </div>
-        </dl>
-      </section>
+    <header className="mb-5">
+      <h1 className="text-xl font-semibold text-zinc-900">{t("title")}</h1>
+      {profile?.full_name?.trim() ? (
+        <p className="mt-1 text-sm text-zinc-500">{profile.full_name.trim()}</p>
+      ) : null}
+    </header>
 
-      {(
-        [
-          ["full_name", t("fullName")],
-          ["phone", t("phone")],
-          ["plate", t("plate")],
-          ["vehicle", t("vehicle")],
-          ["facebook", t("facebook")],
-          ["viber", t("viber")],
-        ] as const
-      ).map(([key, label]) => (
-        <label key={key} className="block text-sm">
-          {label}
-          <input
-            className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
-            value={profile?.[key] ?? ""}
-            onChange={(e) =>
-              setProfile((p) => (p ? { ...p, [key]: e.target.value } : p))
-            }
-          />
-        </label>
-      ))}
-      {message ? <p className="text-sm text-green-700">{message}</p> : null}
-      <button className="rounded-md bg-zinc-900 px-4 py-2 text-sm text-white" type="submit">
-        {t("save")}
-      </button>
-    </form>
     <IdentitySection
       user={user}
       profile={profile}
@@ -631,12 +568,158 @@ export default function ProfilePage() {
       linkGoogle={linkGoogle}
       bindEmail={bindEmail}
     />
-    </>
+
+    <form className="mt-6 space-y-6" onSubmit={(e) => void save(e)}>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-zinc-900">{t("personalSection")}</h2>
+        <label className="block text-sm text-zinc-800">
+          {t("fullName")}
+          <input
+            className={fieldClass}
+            value={profile?.full_name ?? ""}
+            onChange={(e) =>
+              setProfile((p) => (p ? { ...p, full_name: e.target.value } : p))
+            }
+          />
+        </label>
+        <label className="block text-sm text-zinc-800">
+          {t("phone")}
+          <input
+            className={fieldClass}
+            value={profile?.phone ?? ""}
+            inputMode="tel"
+            autoComplete="tel"
+            onChange={(e) =>
+              setProfile((p) => (p ? { ...p, phone: e.target.value } : p))
+            }
+          />
+        </label>
+        <p className="text-xs leading-relaxed text-zinc-500">{t("phoneHelper")}</p>
+        {message ? <p className="text-sm text-green-700">{message}</p> : null}
+        <button
+          className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
+          type="submit"
+        >
+          {t("save")}
+        </button>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-zinc-900">{t("vehicleSection")}</h2>
+        <label className="block text-sm text-zinc-800">
+          {t("plate")}
+          <input
+            className={fieldClass}
+            value={profile?.plate ?? ""}
+            onChange={(e) =>
+              setProfile((p) => (p ? { ...p, plate: e.target.value } : p))
+            }
+          />
+        </label>
+        <label className="block text-sm text-zinc-800">
+          {t("vehicle")}
+          <input
+            className={fieldClass}
+            value={profile?.vehicle ?? ""}
+            onChange={(e) =>
+              setProfile((p) => (p ? { ...p, vehicle: e.target.value } : p))
+            }
+          />
+        </label>
+      </section>
+
+      <details className="rounded-xl border border-zinc-200 bg-white">
+        <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-zinc-900 [&::-webkit-details-marker]:hidden">
+          {t("otherContactsSection")}
+          <span className="text-zinc-400" aria-hidden>
+            ›
+          </span>
+        </summary>
+        <div className="space-y-3 border-t border-zinc-100 px-4 py-3">
+          <label className="block text-sm text-zinc-800">
+            {t("facebook")}
+            <input
+              className={fieldClass}
+              value={profile?.facebook ?? ""}
+              onChange={(e) =>
+                setProfile((p) => (p ? { ...p, facebook: e.target.value } : p))
+              }
+            />
+          </label>
+          <label className="block text-sm text-zinc-800">
+            {t("viber")}
+            <input
+              className={fieldClass}
+              value={profile?.viber ?? ""}
+              onChange={(e) =>
+                setProfile((p) => (p ? { ...p, viber: e.target.value } : p))
+              }
+            />
+          </label>
+        </div>
+      </details>
+    </form>
+
+    <section className="mt-6 space-y-2">
+      <h2 className="text-sm font-semibold text-zinc-900">{t("identityVerificationSection")}</h2>
+      <details className="rounded-xl border border-zinc-200 bg-white">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm [&::-webkit-details-marker]:hidden">
+          <span className="font-semibold text-zinc-900">{t("bankVerification")}</span>
+          <span className={profile?.is_bank_verified ? "text-emerald-700" : "text-zinc-500"}>
+            {profile?.is_bank_verified ? t("bankStatusVerified") : t("bankStatusUnverified")}
+          </span>
+        </summary>
+        <div className="border-t border-zinc-100 px-4 py-3">
+          <p className="text-xs text-zinc-600">{t("bankVerifyHint")}</p>
+          <dl className="mt-3 space-y-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-zinc-500">{t("recipient")}</dt>
+              <dd className="font-medium">{config?.bank_recipient ?? "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-zinc-500">{t("accountNumber")}</dt>
+              <dd className="font-mono text-xs">{config?.bank_account ?? "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-zinc-500">{t("bankReference")}</dt>
+              <dd className="font-mono text-lg font-bold tracking-widest text-zinc-900">{bankRef}</dd>
+            </div>
+          </dl>
+        </div>
+      </details>
+    </section>
+
+    {profile && typeof profile.free_views_left === "number" ? (
+      <section className="mt-6 space-y-1">
+        <h2 className="text-sm font-semibold text-zinc-900">{t("benefitsSection")}</h2>
+        <p className="text-sm text-zinc-600">
+          {t("quota")}: {profile.free_views_left}
+        </p>
+        {profile.is_premium ? (
+          <p className="text-sm text-zinc-600">{t("premium")}</p>
+        ) : null}
+      </section>
+    ) : null}
+
+    <div className="mt-10 text-center">
+      <button
+        type="button"
+        className="text-sm text-zinc-500 underline-offset-2 hover:text-zinc-800 hover:underline"
+        onClick={async () => {
+          await createClient().auth.signOut();
+          setUser(null);
+          setProfile(null);
+        }}
+      >
+        {t("signOut")}
+      </button>
+    </div>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// IdentitySection — shown below the profile form for logged-in users
+// IdentitySection — sign-in / keep-account card at the top of the logged-in Account page.
 // Handles linkIdentity (Google) and updateUser (Email) for anonymous accounts
 // ---------------------------------------------------------------------------
 
@@ -677,15 +760,15 @@ function IdentitySection({
   const needsEmail = !hasVerifiedEmail;
 
   return (
-    <section className="mx-auto mt-4 max-w-lg rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-zinc-900">{t("securityTitle")}</h2>
+    <section className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
+      <h2 className="text-sm font-semibold text-zinc-900">{t("signInSection")}</h2>
       {hasPasskey ? (
         <p className="text-sm font-medium text-emerald-700">{t("deviceVerified")}</p>
       ) : null}
       {needsRecovery ? (
         <div className="space-y-1">
           <p className="text-sm font-semibold text-zinc-900">{t("recoveryTitle")}</p>
-          <p className="text-xs leading-relaxed text-amber-800">{t("recoveryBody")}</p>
+          <p className="text-xs leading-relaxed text-zinc-600">{t("recoveryBody")}</p>
         </div>
       ) : null}
 
@@ -710,7 +793,7 @@ function IdentitySection({
         </div>
       ) : null}
 
-      {needsGoogle || needsEmail ? (
+      {needsRecovery ? (
         <div className="space-y-3">
           {needsGoogle ? (
             <button
@@ -748,6 +831,39 @@ function IdentitySection({
                 disabled={identityLoading || !emailForBinding.trim()}
                 onClick={() => void bindEmail()}
                 className="w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-50"
+              >
+                {t("sendVerification")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : needsGoogle || needsEmail ? (
+        <div className="space-y-2 border-t border-zinc-100 pt-3">
+          {needsGoogle ? (
+            <button
+              type="button"
+              disabled={identityLoading}
+              onClick={() => void linkGoogle()}
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+            >
+              {identityLoading ? t("linkingGoogle") : t("bindGoogle")}
+            </button>
+          ) : null}
+          {needsEmail ? (
+            <div className="space-y-2">
+              <p className="text-xs text-zinc-500">{t("orOtherEmail")}</p>
+              <input
+                type="email"
+                className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
+                placeholder={t("bindEmail")}
+                value={emailForBinding}
+                onChange={(e) => setEmailForBinding(e.target.value)}
+              />
+              <button
+                type="button"
+                disabled={identityLoading || !emailForBinding.trim()}
+                onClick={() => void bindEmail()}
+                className="w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
               >
                 {t("sendVerification")}
               </button>

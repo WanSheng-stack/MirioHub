@@ -85,7 +85,8 @@ async function persistAccountCurrentPhone(
   userId: string,
   normalizedPhone: string,
 ): Promise<boolean> {
-  return writeAccountPhone(createAdminClient(), userId, normalizedPhone);
+  const result = await writeAccountPhone(createAdminClient(), userId, normalizedPhone);
+  return result.ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +353,7 @@ export async function POST(request: Request) {
           );
           if (!profileOk) {
             return NextResponse.json(
-              { ok: false, errorKey: 'error.submit_failed' },
+              { ok: false, errorKey: 'error.phone_save_failed' },
               { status: 500 },
             );
           }
@@ -392,7 +393,7 @@ export async function POST(request: Request) {
     );
     if (!profileOk) {
       return NextResponse.json(
-        { ok: false, errorKey: 'error.submit_failed' },
+        { ok: false, errorKey: 'error.phone_save_failed' },
         { status: 500 },
       );
     }

@@ -106,6 +106,7 @@
   },
   "error": {
     "invalid_phone": "Unesite važeći broj telefona.",
+    "phone_save_failed": "Broj telefona nije sačuvan. Pokušajte ponovo.",
     "name_required": "Unesite ime.",
     "invalid_plate": "Neispravne tablice.",
     "address_required": "Polazak i destinacija su obavezni.",

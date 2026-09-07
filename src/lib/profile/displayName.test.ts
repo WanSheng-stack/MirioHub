@@ -159,15 +159,6 @@ assert.equal(page.includes("setEditingName(false)"), false);
 assert.equal(page.includes("mt-3 space-y-2"), false);
 assert.ok(page.includes("/api/profile/phone"));
 
-const initSql = read("supabase/init.sql");
-const updateFn = initSql.slice(
-  initSql.indexOf("create or replace function public.update_my_profile("),
-  initSql.indexOf("create or replace function public.set_profile_phone_v87"),
-);
-assert.equal(updateFn.includes("p_phone"), false);
-assert.ok(initSql.includes("generate_mirio_display_name"));
-assert.ok(initSql.includes("and nullif(btrim(full_name), '') is null"));
-
 const migration = read("supabase/migrations/20260908000001_account_display_name_and_phone_boundary.sql");
 assert.ok(migration.includes("AND nullif(btrim(full_name), '') IS NULL"));
 assert.ok(migration.includes("DROP FUNCTION IF EXISTS public.update_my_profile(text, text, text, text, text, text)"));

@@ -1,4 +1,8 @@
 import { parseUserPhone } from "@/lib/phone/phoneNumber";
+import {
+  PHONE_SAVE_FAILED_KEY,
+  type AccountPhoneWriteResult,
+} from "@/lib/profile/accountPhoneWrite";
 
 export type AccountPhoneSaveJson =
   | {
@@ -8,17 +12,31 @@ export type AccountPhoneSaveJson =
     }
   | {
       ok: false;
-      errorKey: "error.authentication_required" | "error.invalid_phone" | "error.submit_failed";
+      errorKey:
+        | "error.authentication_required"
+        | "error.invalid_phone"
+        | typeof PHONE_SAVE_FAILED_KEY;
     };
 
 export type AccountPhoneSaveResult = {
   status: number;
   json: AccountPhoneSaveJson;
   wrote?: { userId: string; phone: string };
+  writeFailure?: Extract<AccountPhoneWriteResult, { ok: false }>;
 };
 
 function asRecord(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+}
+
+function writeFailed(
+  failure: Extract<AccountPhoneWriteResult, { ok: false }>,
+): AccountPhoneSaveResult {
+  return {
+    status: 500,
+    json: { ok: false, errorKey: PHONE_SAVE_FAILED_KEY },
+    writeFailure: failure,
+  };
 }
 
 /**
@@ -28,7 +46,7 @@ function asRecord(body: unknown): Record<string, unknown> {
 export async function executeAccountPhoneSave(input: {
   userId: string | null | undefined;
   body: unknown;
-  writePhone: (userId: string, phone: string) => Promise<boolean>;
+  writePhone: (userId: string, phone: string) => Promise<AccountPhoneWriteResult>;
 }): Promise<AccountPhoneSaveResult> {
   if (!input.userId) {
     return {
@@ -43,9 +61,7 @@ export async function executeAccountPhoneSave(input: {
 
   if (!raw) {
     const wrote = await input.writePhone(input.userId, "");
-    if (!wrote) {
-      return { status: 500, json: { ok: false, errorKey: "error.submit_failed" } };
-    }
+    if (!wrote.ok) return writeFailed(wrote);
     return {
       status: 200,
       json: { ok: true, normalizedPhone: "", nationalDisplay: "" },
@@ -59,9 +75,7 @@ export async function executeAccountPhoneSave(input: {
   }
 
   const wrote = await input.writePhone(input.userId, parsed.normalizedDigits);
-  if (!wrote) {
-    return { status: 500, json: { ok: false, errorKey: "error.submit_failed" } };
-  }
+  if (!wrote.ok) return writeFailed(wrote);
   return {
     status: 200,
     json: {

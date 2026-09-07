@@ -784,7 +784,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       setPhoneSaved(true);
       if (interpreted.normalizedPhone) setProfilePhone(interpreted.normalizedPhone);
     } catch {
-      setPhoneError("error.submit_failed");
+      setPhoneError("error.phone_save_failed");
     } finally {
       setPhoneSaving(false);
     }

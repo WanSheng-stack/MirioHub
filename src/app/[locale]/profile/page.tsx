@@ -607,7 +607,7 @@ export default function ProfilePage() {
       });
       setPhoneSaved(true);
     } catch {
-      setPhoneError("error.submit_failed");
+      setPhoneError("error.phone_save_failed");
     } finally {
       setPhoneSaving(false);
     }

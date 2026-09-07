@@ -106,6 +106,7 @@
   },
   "error": {
     "invalid_phone": "Enter a valid phone number.",
+    "phone_save_failed": "Failed to save the phone number. Please try again.",
     "name_required": "Enter a name.",
     "invalid_plate": "Invalid license plate.",
     "address_required": "Origin and destination are required.",

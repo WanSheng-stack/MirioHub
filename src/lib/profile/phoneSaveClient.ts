@@ -1,5 +1,7 @@
 import { parseUserPhone, PHONE_ERROR_KEY } from "@/lib/phone/phoneNumber";
+import { PHONE_SAVE_FAILED_KEY } from "@/lib/profile/accountPhoneWrite";
 
+export { PHONE_SAVE_FAILED_KEY };
 export const SUBMIT_FAILED_KEY = "error.submit_failed" as const;
 
 export function resetPhoneFeedback(): { phoneSaved: false; phoneError: null } {
@@ -27,11 +29,12 @@ export function interpretPhoneSaveResponse(body: unknown):
   | { ok: true; normalizedPhone: string; nationalDisplay: string }
   | { ok: false; errorKey: string } {
   if (!body || typeof body !== "object") {
-    return { ok: false, errorKey: SUBMIT_FAILED_KEY };
+    return { ok: false, errorKey: PHONE_SAVE_FAILED_KEY };
   }
   const rec = body as Record<string, unknown>;
   if (rec.ok !== true) {
-    const key = typeof rec.errorKey === "string" && rec.errorKey ? rec.errorKey : SUBMIT_FAILED_KEY;
+    const raw = typeof rec.errorKey === "string" && rec.errorKey ? rec.errorKey : PHONE_SAVE_FAILED_KEY;
+    const key = raw === SUBMIT_FAILED_KEY ? PHONE_SAVE_FAILED_KEY : raw;
     return { ok: false, errorKey: key };
   }
   return {
@@ -48,7 +51,23 @@ export async function readPhoneSaveResponse(res: {
   try {
     text = await res.text();
   } catch {
-    return { ok: false, errorKey: SUBMIT_FAILED_KEY };
+    return { ok: false, errorKey: PHONE_SAVE_FAILED_KEY };
   }
   return interpretPhoneSaveResponse(parseJsonSafe(text));
+}
+
+export function applyDedicatedPhoneSaveOutcome(input: {
+  ok: boolean;
+  errorKey?: string;
+}): {
+  phoneSaved: boolean;
+  phoneError: string | null;
+  publishErrorKey: null;
+} {
+  if (input.ok) {
+    return { phoneSaved: true, phoneError: null, publishErrorKey: null };
+  }
+  const raw = input.errorKey ?? PHONE_SAVE_FAILED_KEY;
+  const phoneError = raw === SUBMIT_FAILED_KEY ? PHONE_SAVE_FAILED_KEY : raw;
+  return { phoneSaved: false, phoneError, publishErrorKey: null };
 }

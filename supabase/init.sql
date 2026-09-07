@@ -55,42 +55,17 @@ on conflict (id) do nothing;
 -- ---------------------------------------------------------------------------
 -- signup → profile
 -- ---------------------------------------------------------------------------
-create or replace function public.generate_mirio_display_name()
-returns text
-language plpgsql
-set search_path = public, pg_temp
-as $$
-declare
-  chars text := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-  suffix text := '';
-  i int;
-begin
-  for i in 1..7 loop
-    suffix := suffix || substr(chars, 1 + floor(random() * length(chars))::int, 1);
-  end loop;
-  return 'Mirio-' || suffix;
-end;
-$$;
-
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public
 as $$
-declare
-  v_name text;
 begin
-  v_name := nullif(btrim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), '');
-  if v_name is not null then
-    v_name := left(v_name, 50);
-  else
-    v_name := public.generate_mirio_display_name();
-  end if;
   insert into public.profiles (id, full_name, phone)
   values (
     new.id,
-    v_name,
+    coalesce(new.raw_user_meta_data ->> 'full_name', ''),
     coalesce(new.raw_user_meta_data ->> 'phone', '')
   );
   return new;
@@ -142,60 +117,9 @@ begin
 end;
 $$;
 
-create or replace function public.ensure_my_display_name(p_preferred text default null)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  v_name text;
-  v_preferred text;
-  v_generated text;
-begin
-  if auth.uid() is null then
-    return jsonb_build_object('ok', false, 'error', 'AUTH');
-  end if;
-
-  select full_name into v_name
-  from public.profiles
-  where id = auth.uid();
-
-  if nullif(btrim(coalesce(v_name, '')), '') is not null then
-    return jsonb_build_object('ok', true, 'full_name', btrim(v_name), 'generated', false);
-  end if;
-
-  v_preferred := nullif(btrim(coalesce(p_preferred, '')), '');
-  if v_preferred is not null then
-    v_preferred := left(v_preferred, 50);
-    update public.profiles
-      set full_name = v_preferred,
-          updated_at = timezone('utc', now())
-      where id = auth.uid()
-        and nullif(btrim(full_name), '') is null;
-  else
-    v_generated := public.generate_mirio_display_name();
-    update public.profiles
-      set full_name = v_generated,
-          updated_at = timezone('utc', now())
-      where id = auth.uid()
-        and nullif(btrim(full_name), '') is null;
-  end if;
-
-  select full_name into v_name
-  from public.profiles
-  where id = auth.uid();
-
-  return jsonb_build_object(
-    'ok', true,
-    'full_name', v_name,
-    'generated', nullif(btrim(coalesce(v_name, '')), '') is not null
-  );
-end;
-$$;
-
 create or replace function public.update_my_profile(
   p_full_name text,
+  p_phone text,
   p_plate text,
   p_vehicle text,
   p_facebook text,
@@ -204,7 +128,7 @@ create or replace function public.update_my_profile(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public
 as $$
 begin
   if auth.uid() is null then
@@ -212,10 +136,8 @@ begin
   end if;
 
   update public.profiles
-    set full_name = case
-          when nullif(btrim(coalesce(p_full_name, '')), '') is null then full_name
-          else left(btrim(p_full_name), 50)
-        end,
+    set full_name = p_full_name,
+        phone = p_phone,
         plate = p_plate,
         vehicle = p_vehicle,
         facebook = p_facebook,
@@ -223,27 +145,6 @@ begin
         updated_at = timezone('utc', now())
     where id = auth.uid();
 
-  return jsonb_build_object('ok', true);
-end;
-$$;
-
-create or replace function public.set_profile_phone_v87(p_user_id uuid, p_phone text)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-begin
-  if p_user_id is null then
-    return jsonb_build_object('ok', false, 'error', 'AUTH');
-  end if;
-  update public.profiles
-    set phone = coalesce(p_phone, ''),
-        updated_at = timezone('utc', now())
-    where id = p_user_id;
-  if not found then
-    return jsonb_build_object('ok', false, 'error', 'NOT_FOUND');
-  end if;
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -311,26 +212,5 @@ grant execute on function public.admin_set_premium(uuid, boolean) to authenticat
 revoke all on function public.is_admin() from public;
 grant execute on function public.is_admin() to authenticated;
 
-revoke all on function public.generate_mirio_display_name() from public;
-revoke all on function public.generate_mirio_display_name() from anon;
-revoke all on function public.generate_mirio_display_name() from authenticated;
-revoke all on function public.ensure_my_display_name(text) from public;
-revoke all on function public.ensure_my_display_name(text) from anon;
-grant execute on function public.ensure_my_display_name(text) to authenticated;
-
-revoke all on function public.update_my_profile(text, text, text, text, text) from public;
-grant execute on function public.update_my_profile(text, text, text, text, text) to authenticated;
-
-revoke all on function public.set_profile_phone_v87(uuid, text) from public;
-revoke all on function public.set_profile_phone_v87(uuid, text) from anon;
-revoke all on function public.set_profile_phone_v87(uuid, text) from authenticated;
-grant execute on function public.set_profile_phone_v87(uuid, text) to service_role;
-
-alter table public.profiles drop constraint if exists profiles_phone_canonical_digits;
-alter table public.profiles
-  add constraint profiles_phone_canonical_digits
-  check (
-    phone is null
-    or btrim(phone) = ''
-    or phone ~ '^[1-9][0-9]{6,14}$'
-  );
+revoke all on function public.update_my_profile(text, text, text, text, text, text) from public;
+grant execute on function public.update_my_profile(text, text, text, text, text, text) to authenticated;

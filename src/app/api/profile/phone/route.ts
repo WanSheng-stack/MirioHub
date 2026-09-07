@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { executeAccountPhoneSave } from "@/lib/profile/accountPhoneSave";
+import { formatSafePhoneWriteLog } from "@/lib/profile/accountPhoneWrite";
 import { writeAccountPhone } from "@/lib/profile/writeAccountPhone";
 
 /**
@@ -28,6 +29,13 @@ export async function POST(request: Request) {
     body,
     writePhone: (userId, phone) => writeAccountPhone(admin, userId, phone),
   });
+
+  if (result.writeFailure) {
+    console.error(
+      "[api/profile/phone] set_profile_phone_v87 failed",
+      formatSafePhoneWriteLog(result.writeFailure),
+    );
+  }
 
   return NextResponse.json(result.json, { status: result.status });
 }

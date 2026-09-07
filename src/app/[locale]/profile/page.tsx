@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
@@ -10,6 +10,8 @@ import {
   resolveGoogleDisplayName,
 } from "@/lib/auth/googleProfileName";
 import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
+import { COUNTRY_DIAL_CODES } from "@/lib/post-time-windows";
+import { normalizePhone } from "@/lib/post-validation";
 import type { Profile, SystemConfig } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -38,6 +40,77 @@ function GoogleIcon() {
 
 const fieldClass =
   "mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15";
+
+const settingRowClass =
+  "rounded-xl border border-zinc-200 bg-white";
+const settingSummaryClass =
+  "flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-zinc-900 [&::-webkit-details-marker]:hidden";
+
+function SettingRow({
+  label,
+  trailing,
+  children,
+}: {
+  label: string;
+  trailing?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <details className={settingRowClass}>
+      <summary className={settingSummaryClass}>
+        <span>{label}</span>
+        <span className="flex items-center gap-2 text-zinc-500">
+          {trailing}
+          <span className="text-zinc-400" aria-hidden>
+            ›
+          </span>
+        </span>
+      </summary>
+      <div className="space-y-3 border-t border-zinc-100 px-4 py-3">{children}</div>
+    </details>
+  );
+}
+
+function splitStoredPhone(stored: string | null | undefined): { dial: string; local: string } {
+  const digits = String(stored ?? "").replace(/\D/g, "");
+  const codes = [...COUNTRY_DIAL_CODES]
+    .map((c) => c.code.replace(/\D/g, ""))
+    .sort((a, b) => b.length - a.length);
+  for (const code of codes) {
+    if (digits.startsWith(code) && digits.length > code.length) {
+      return { dial: `+${code}`, local: digits.slice(code.length) };
+    }
+  }
+  return { dial: "+381", local: digits };
+}
+
+function resolveAvatarUrl(user: User): string | null {
+  const meta = user.user_metadata ?? {};
+  const fromMeta = String(meta.avatar_url ?? meta.picture ?? "").trim();
+  if (fromMeta.startsWith("http")) return fromMeta;
+  const google = user.identities?.find((i) => i.provider === "google");
+  const data = (google?.identity_data ?? {}) as Record<string, unknown>;
+  const fromIdentity = String(data.avatar_url ?? data.picture ?? "").trim();
+  return fromIdentity.startsWith("http") ? fromIdentity : null;
+}
+
+function resolveHeaderName(profile: { full_name?: string | null } | null, user: User): string {
+  const fromProfile = String(profile?.full_name ?? "").trim();
+  if (fromProfile) return fromProfile;
+  const fromGoogle = resolveGoogleDisplayName(user);
+  if (fromGoogle) return fromGoogle;
+  const meta = user.user_metadata ?? {};
+  const fromMeta = String(meta.full_name ?? meta.name ?? "").trim();
+  if (fromMeta) return fromMeta;
+  return "";
+}
+
+function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "M";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase();
+}
 
 // ── Identity Activation Context ──────────────────────────────────────────────
 // These helpers are module-level (no React state) so they can be called both
@@ -171,6 +244,12 @@ export default function ProfilePage() {
   // postId of a draft that was activated after Google/Email identity verification.
   // Populated from the server response (not from client URL).
   const [activatedPostId, setActivatedPostId] = useState<string | null>(null);
+  const [phoneOverride, setPhoneOverride] = useState<{
+    stored: string;
+    dial: string;
+    local: string;
+  } | null>(null);
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const nameFillAttemptedRef = useRef(false);
 
   const bankRef = useMemo(
@@ -417,21 +496,52 @@ export default function ProfilePage() {
     setIdentityLoading(false);
   }
 
-  async function save(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  const storedPhone = profile?.phone ?? "";
+  const splitPhone = splitStoredPhone(profile?.phone);
+  const phoneFields =
+    phoneOverride && phoneOverride.stored === storedPhone
+      ? phoneOverride
+      : { stored: storedPhone, dial: splitPhone.dial, local: splitPhone.local };
+  const dialCode = phoneFields.dial;
+  const phoneLocal = phoneFields.local;
+
+  async function persistProfile(patch: Partial<ExtendedProfile> = {}) {
     if (!profile) return;
+    const next: ExtendedProfile = { ...profile, ...patch };
     const supabase = createClient();
     const { data } = await supabase.rpc("update_my_profile", {
-      p_full_name: profile.full_name,
-      p_phone: profile.phone,
-      p_plate: profile.plate,
-      p_vehicle: profile.vehicle,
-      p_facebook: profile.facebook,
-      p_viber: profile.viber,
+      p_full_name: next.full_name,
+      p_phone: next.phone,
+      p_plate: next.plate,
+      p_vehicle: next.vehicle,
+      p_facebook: next.facebook,
+      p_viber: next.viber,
     });
     const json = data as { ok?: boolean };
-    setMessage(json?.ok ? t("saved") : tErr("submit_failed"));
+    if (json?.ok) {
+      setProfile(next);
+      setMessage(t("saved"));
+    } else {
+      setMessage(tErr("submit_failed"));
+    }
   }
+
+  async function savePhone() {
+    if (!phoneLocal.trim()) {
+      await persistProfile({ phone: "" });
+      return;
+    }
+    const result = normalizePhone(dialCode, phoneLocal);
+    if (!result.ok) {
+      setMessage(tErr("invalid_phone"));
+      return;
+    }
+    await persistProfile({ phone: result.normalized });
+  }
+
+  const headerName = user ? resolveHeaderName(profile, user) : "";
+  const avatarUrl = user && !avatarBroken ? resolveAvatarUrl(user) : null;
+  const showPremiumBadge = profile?.is_premium === true;
 
   if (!hasSupabaseEnv()) {
     return <p className="text-sm">{tErr("missing_env")}</p>;
@@ -552,10 +662,35 @@ export default function ProfilePage() {
     ) : null}
 
     <header className="mb-5">
-      <h1 className="text-xl font-semibold text-zinc-900">{t("title")}</h1>
-      {profile?.full_name?.trim() ? (
-        <p className="mt-1 text-sm text-zinc-500">{profile.full_name.trim()}</p>
-      ) : null}
+      <p className="mb-3 text-sm font-medium text-zinc-500">{t("title")}</p>
+      <div className="flex min-w-0 items-center gap-3">
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={avatarUrl}
+            alt=""
+            className="h-12 w-12 shrink-0 rounded-full object-cover"
+            onError={() => setAvatarBroken(true)}
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-sm font-semibold text-zinc-700"
+          >
+            {initialsFromName(headerName)}
+          </div>
+        )}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          {headerName ? (
+            <h1 className="truncate text-lg font-semibold text-zinc-900">{headerName}</h1>
+          ) : null}
+          {showPremiumBadge ? (
+            <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+              {t("premiumBadge")}
+            </span>
+          ) : null}
+        </div>
+      </div>
     </header>
 
     <IdentitySection
@@ -569,9 +704,57 @@ export default function ProfilePage() {
       bindEmail={bindEmail}
     />
 
-    <form className="mt-6 space-y-6" onSubmit={(e) => void save(e)}>
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-900">{t("personalSection")}</h2>
+    {message ? (
+      <p className="mt-3 text-sm text-zinc-700">{message}</p>
+    ) : null}
+
+    <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-4">
+      <h2 className="text-sm font-semibold text-zinc-900">{t("phoneCardTitle")}</h2>
+      <p className="mt-1 text-sm leading-relaxed text-zinc-600">{t("phoneCardBody")}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <select
+          className="h-11 w-[4.75rem] shrink-0 rounded-xl border border-zinc-200 bg-white px-2 text-sm"
+          value={dialCode}
+          onChange={(e) =>
+            setPhoneOverride({
+              stored: storedPhone,
+              dial: e.target.value,
+              local: phoneLocal,
+            })
+          }
+          aria-label={t("phone")}
+        >
+          {COUNTRY_DIAL_CODES.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.code}
+            </option>
+          ))}
+        </select>
+        <input
+          className="h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+          value={phoneLocal}
+          inputMode="tel"
+          autoComplete="tel"
+          onChange={(e) =>
+            setPhoneOverride({
+              stored: storedPhone,
+              dial: dialCode,
+              local: e.target.value,
+            })
+          }
+        />
+        <button
+          type="button"
+          className="h-11 w-full rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white sm:w-auto"
+          onClick={() => void savePhone()}
+        >
+          {t("save")}
+        </button>
+      </div>
+    </section>
+
+    <div className="mt-4 space-y-2">
+      <SettingRow label={t("personalSection")}>
         <label className="block text-sm text-zinc-800">
           {t("fullName")}
           <input
@@ -582,30 +765,16 @@ export default function ProfilePage() {
             }
           />
         </label>
-        <label className="block text-sm text-zinc-800">
-          {t("phone")}
-          <input
-            className={fieldClass}
-            value={profile?.phone ?? ""}
-            inputMode="tel"
-            autoComplete="tel"
-            onChange={(e) =>
-              setProfile((p) => (p ? { ...p, phone: e.target.value } : p))
-            }
-          />
-        </label>
-        <p className="text-xs leading-relaxed text-zinc-500">{t("phoneHelper")}</p>
-        {message ? <p className="text-sm text-green-700">{message}</p> : null}
         <button
+          type="button"
           className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
-          type="submit"
+          onClick={() => void persistProfile()}
         >
           {t("save")}
         </button>
-      </section>
+      </SettingRow>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-900">{t("vehicleSection")}</h2>
+      <SettingRow label={t("vehicleSection")}>
         <label className="block text-sm text-zinc-800">
           {t("plate")}
           <input
@@ -626,80 +795,71 @@ export default function ProfilePage() {
             }
           />
         </label>
-      </section>
+        <button
+          type="button"
+          className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
+          onClick={() => void persistProfile()}
+        >
+          {t("save")}
+        </button>
+      </SettingRow>
 
-      <details className="rounded-xl border border-zinc-200 bg-white">
-        <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-zinc-900 [&::-webkit-details-marker]:hidden">
-          {t("otherContactsSection")}
-          <span className="text-zinc-400" aria-hidden>
-            ›
-          </span>
-        </summary>
-        <div className="space-y-3 border-t border-zinc-100 px-4 py-3">
-          <label className="block text-sm text-zinc-800">
-            {t("facebook")}
-            <input
-              className={fieldClass}
-              value={profile?.facebook ?? ""}
-              onChange={(e) =>
-                setProfile((p) => (p ? { ...p, facebook: e.target.value } : p))
-              }
-            />
-          </label>
-          <label className="block text-sm text-zinc-800">
-            {t("viber")}
-            <input
-              className={fieldClass}
-              value={profile?.viber ?? ""}
-              onChange={(e) =>
-                setProfile((p) => (p ? { ...p, viber: e.target.value } : p))
-              }
-            />
-          </label>
-        </div>
-      </details>
-    </form>
+      <SettingRow label={t("otherContactsSection")}>
+        <label className="block text-sm text-zinc-800">
+          {t("facebook")}
+          <input
+            className={fieldClass}
+            value={profile?.facebook ?? ""}
+            onChange={(e) =>
+              setProfile((p) => (p ? { ...p, facebook: e.target.value } : p))
+            }
+          />
+        </label>
+        <label className="block text-sm text-zinc-800">
+          {t("viber")}
+          <input
+            className={fieldClass}
+            value={profile?.viber ?? ""}
+            onChange={(e) =>
+              setProfile((p) => (p ? { ...p, viber: e.target.value } : p))
+            }
+          />
+        </label>
+        <button
+          type="button"
+          className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white"
+          onClick={() => void persistProfile()}
+        >
+          {t("save")}
+        </button>
+      </SettingRow>
 
-    <section className="mt-6 space-y-2">
-      <h2 className="text-sm font-semibold text-zinc-900">{t("identityVerificationSection")}</h2>
-      <details className="rounded-xl border border-zinc-200 bg-white">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm [&::-webkit-details-marker]:hidden">
-          <span className="font-semibold text-zinc-900">{t("bankVerification")}</span>
-          <span className={profile?.is_bank_verified ? "text-emerald-700" : "text-zinc-500"}>
+      <SettingRow
+        label={t("bankVerification")}
+        trailing={
+          <span className={profile?.is_bank_verified ? "text-sm font-normal text-emerald-700" : "text-sm font-normal text-zinc-500"}>
             {profile?.is_bank_verified ? t("bankStatusVerified") : t("bankStatusUnverified")}
           </span>
-        </summary>
-        <div className="border-t border-zinc-100 px-4 py-3">
-          <p className="text-xs text-zinc-600">{t("bankVerifyHint")}</p>
-          <dl className="mt-3 space-y-2 text-sm">
-            <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">{t("recipient")}</dt>
-              <dd className="font-medium">{config?.bank_recipient ?? "—"}</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">{t("accountNumber")}</dt>
-              <dd className="font-mono text-xs">{config?.bank_account ?? "—"}</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-zinc-500">{t("bankReference")}</dt>
-              <dd className="font-mono text-lg font-bold tracking-widest text-zinc-900">{bankRef}</dd>
-            </div>
-          </dl>
-        </div>
-      </details>
-    </section>
-
-    {profile && typeof profile.free_views_left === "number" ? (
-      <section className="mt-6 space-y-1">
-        <h2 className="text-sm font-semibold text-zinc-900">{t("benefitsSection")}</h2>
-        <p className="text-sm text-zinc-600">
-          {t("quota")}: {profile.free_views_left}
-        </p>
-        {profile.is_premium ? (
-          <p className="text-sm text-zinc-600">{t("premium")}</p>
-        ) : null}
-      </section>
-    ) : null}
+        }
+      >
+        <p className="text-sm font-medium text-zinc-900">{t("bankVerifyTitle")}</p>
+        <p className="text-sm leading-relaxed text-zinc-600">{t("bankVerifyHint")}</p>
+        <dl className="space-y-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("recipient")}</dt>
+            <dd className="font-medium">{config?.bank_recipient ?? "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("accountNumber")}</dt>
+            <dd className="break-all font-mono text-xs">{config?.bank_account ?? "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t("bankReference")}</dt>
+            <dd className="font-mono text-lg font-bold tracking-widest text-zinc-900">{bankRef}</dd>
+          </div>
+        </dl>
+      </SettingRow>
+    </div>
 
     <div className="mt-10 text-center">
       <button
@@ -761,14 +921,13 @@ function IdentitySection({
 
   return (
     <section className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-zinc-900">{t("signInSection")}</h2>
       {hasPasskey ? (
         <p className="text-sm font-medium text-emerald-700">{t("deviceVerified")}</p>
       ) : null}
       {needsRecovery ? (
         <div className="space-y-1">
           <p className="text-sm font-semibold text-zinc-900">{t("recoveryTitle")}</p>
-          <p className="text-xs leading-relaxed text-zinc-600">{t("recoveryBody")}</p>
+          <p className="text-sm leading-relaxed text-zinc-600">{t("recoveryBody")}</p>
         </div>
       ) : null}
 

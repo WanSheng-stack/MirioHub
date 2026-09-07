@@ -1,6 +1,9 @@
-import { executeAccountPhoneSave, type AccountPhoneSaveJson } from "@/lib/profile/accountPhoneSave";
 import {
-  formatSafePhoneWriteLog,
+  prepareAccountPhoneSave,
+  type AccountPhoneSaveJson,
+} from "@/lib/profile/accountPhoneSave";
+import {
+  PHONE_SAVE_FAILED_KEY,
   type AccountPhoneWriteResult,
 } from "@/lib/profile/accountPhoneWrite";
 
@@ -26,6 +29,7 @@ export async function runAccountPhoneRoute(deps: {
   ) => Promise<AccountPhoneWriteResult>;
   onWriteFailure?: (failure: Extract<AccountPhoneWriteResult, { ok: false }>) => void;
   onConfigFailure?: () => void;
+  onWriterThrow?: () => void;
 }): Promise<AccountPhoneRouteResult> {
   const userId = await deps.getUserId();
   if (!userId) {
@@ -35,11 +39,19 @@ export async function runAccountPhoneRoute(deps: {
     };
   }
 
-  let body: unknown = {};
+  let body: unknown;
   try {
     body = await deps.readBody();
   } catch {
-    body = {};
+    return {
+      status: 400,
+      json: { ok: false, errorKey: "error.invalid_request_body" },
+    };
+  }
+
+  const prepared = prepareAccountPhoneSave(body);
+  if (!prepared.ok) {
+    return { status: prepared.status, json: prepared.json };
   }
 
   let admin: unknown;
@@ -53,27 +65,31 @@ export async function runAccountPhoneRoute(deps: {
     };
   }
 
+  let wrote: AccountPhoneWriteResult;
   try {
-    const result = await executeAccountPhoneSave({
-      userId,
-      body,
-      writePhone: (id, phone) => deps.writePhone(admin, id, phone),
-    });
-    if (result.writeFailure) {
-      deps.onWriteFailure?.(result.writeFailure);
-    }
-    return { status: result.status, json: result.json };
+    wrote = await deps.writePhone(admin, userId, prepared.normalizedPhone);
   } catch {
-    deps.onConfigFailure?.();
+    deps.onWriterThrow?.();
     return {
       status: 500,
-      json: { ok: false, errorKey: SERVER_CONFIGURATION_KEY },
+      json: { ok: false, errorKey: PHONE_SAVE_FAILED_KEY },
     };
   }
-}
 
-export function logAccountPhoneWriteFailure(
-  failure: Extract<AccountPhoneWriteResult, { ok: false }>,
-): ReturnType<typeof formatSafePhoneWriteLog> {
-  return formatSafePhoneWriteLog(failure);
+  if (!wrote.ok) {
+    deps.onWriteFailure?.(wrote);
+    return {
+      status: 500,
+      json: { ok: false, errorKey: PHONE_SAVE_FAILED_KEY },
+    };
+  }
+
+  return {
+    status: 200,
+    json: {
+      ok: true,
+      normalizedPhone: prepared.normalizedPhone,
+      nationalDisplay: prepared.nationalDisplay,
+    },
+  };
 }

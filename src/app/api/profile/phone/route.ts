@@ -37,6 +37,9 @@ export async function POST(request: Request) {
       onConfigFailure: () => {
         console.error("[api/profile/phone] admin client init failed");
       },
+      onWriterThrow: () => {
+        console.error("[api/profile/phone] phone writer threw");
+      },
     });
     return NextResponse.json(result.json, { status: result.status });
   } catch {

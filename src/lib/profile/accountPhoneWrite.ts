@@ -51,31 +51,27 @@ export function interpretProfilePhoneRpc(input: {
 }
 
 const STABLE_RPC_ERROR = /^[A-Z][A-Z0-9_]{0,39}$/;
+const SQLSTATE_CODE = /^[A-Z0-9]{5}$/;
 
-function stabilizeLogMessage(message: string | undefined): string | undefined {
-  if (!message) return undefined;
-  const trimmed = message.trim();
-  if (!trimmed) return undefined;
-  if (/failing row/i.test(trimmed)) return undefined;
-  if (/\d{6,}/.test(trimmed)) return undefined;
-  return trimmed.slice(0, 300);
+function whitelistLogCode(code: string | undefined): string | undefined {
+  if (!code) return undefined;
+  const trimmed = code.trim().toUpperCase();
+  if (SQLSTATE_CODE.test(trimmed) || STABLE_RPC_ERROR.test(trimmed)) return trimmed;
+  return undefined;
 }
 
 export function formatSafePhoneWriteLog(
   result: Extract<AccountPhoneWriteResult, { ok: false }>,
 ): {
   reason: "rpc_error" | "rpc_rejected";
-  error?: { code?: string; message?: string };
+  error?: { code?: string };
   rpcError?: string;
 } {
   if (result.reason === "rpc_error") {
-    const message = stabilizeLogMessage(result.error.message);
+    const code = whitelistLogCode(result.error.code);
     return {
       reason: "rpc_error",
-      error: {
-        code: result.error.code,
-        ...(message ? { message } : {}),
-      },
+      error: code ? { code } : {},
     };
   }
   const rpcError =
@@ -88,4 +84,16 @@ export function clientJsonForPhoneWriteFailure(): {
   errorKey: typeof PHONE_SAVE_FAILED_KEY;
 } {
   return { ok: false, errorKey: PHONE_SAVE_FAILED_KEY };
+}
+
+export async function runPhoneWriterSafely(
+  write: () => Promise<AccountPhoneWriteResult>,
+  onThrow: () => void,
+): Promise<AccountPhoneWriteResult> {
+  try {
+    return await write();
+  } catch {
+    onThrow();
+    return { ok: false, reason: "rpc_rejected" };
+  }
 }

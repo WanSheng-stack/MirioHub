@@ -46,6 +46,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import {
   clientJsonForPhoneWriteFailure,
   formatSafePhoneWriteLog,
+  runPhoneWriterSafely,
   type AccountPhoneWriteResult,
 } from '@/lib/profile/accountPhoneWrite';
 import { writeAccountPhone } from '@/lib/profile/writeAccountPhone';
@@ -90,7 +91,12 @@ async function persistAccountCurrentPhone(
   userId: string,
   normalizedPhone: string,
 ): Promise<AccountPhoneWriteResult> {
-  return writeAccountPhone(createAdminClient(), userId, normalizedPhone);
+  return runPhoneWriterSafely(
+    () => writeAccountPhone(createAdminClient(), userId, normalizedPhone),
+    () => {
+      console.error('[complete-contact] phone writer threw');
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

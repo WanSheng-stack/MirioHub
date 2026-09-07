@@ -15,6 +15,7 @@ export type AccountPhoneSaveJson =
       errorKey:
         | "error.authentication_required"
         | "error.invalid_phone"
+        | "error.invalid_request_body"
         | typeof PHONE_SAVE_FAILED_KEY;
     };
 
@@ -25,8 +26,42 @@ export type AccountPhoneSaveResult = {
   writeFailure?: Extract<AccountPhoneWriteResult, { ok: false }>;
 };
 
+export type PreparedAccountPhone =
+  | {
+      ok: true;
+      normalizedPhone: string;
+      nationalDisplay: string;
+    }
+  | {
+      ok: false;
+      status: 400;
+      json: { ok: false; errorKey: "error.invalid_phone" };
+    };
+
 function asRecord(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+}
+
+export function prepareAccountPhoneSave(body: unknown): PreparedAccountPhone {
+  const rec = asRecord(body);
+  const raw = String(rec.raw_phone_local ?? "").trim();
+  const country = String(rec.phone_country ?? "");
+  if (!raw) {
+    return { ok: true, normalizedPhone: "", nationalDisplay: "" };
+  }
+  const parsed = parseUserPhone({ countryCode: country, nationalInput: raw });
+  if (!parsed.valid) {
+    return {
+      ok: false,
+      status: 400,
+      json: { ok: false, errorKey: "error.invalid_phone" },
+    };
+  }
+  return {
+    ok: true,
+    normalizedPhone: parsed.normalizedDigits,
+    nationalDisplay: parsed.nationalDisplay,
+  };
 }
 
 function writeFailed(
@@ -40,8 +75,7 @@ function writeFailed(
 }
 
 /**
- * Server-side Account phone write decision.
- * Session userId is the only owner. body.user_id is ignored.
+ * Apply a prepared Account phone value. Does not create an admin client.
  */
 export async function executeAccountPhoneSave(input: {
   userId: string | null | undefined;
@@ -55,34 +89,20 @@ export async function executeAccountPhoneSave(input: {
     };
   }
 
-  const body = asRecord(input.body);
-  const raw = String(body.raw_phone_local ?? "").trim();
-  const country = String(body.phone_country ?? "");
-
-  if (!raw) {
-    const wrote = await input.writePhone(input.userId, "");
-    if (!wrote.ok) return writeFailed(wrote);
-    return {
-      status: 200,
-      json: { ok: true, normalizedPhone: "", nationalDisplay: "" },
-      wrote: { userId: input.userId, phone: "" },
-    };
+  const prepared = prepareAccountPhoneSave(input.body);
+  if (!prepared.ok) {
+    return { status: prepared.status, json: prepared.json };
   }
 
-  const parsed = parseUserPhone({ countryCode: country, nationalInput: raw });
-  if (!parsed.valid) {
-    return { status: 400, json: { ok: false, errorKey: "error.invalid_phone" } };
-  }
-
-  const wrote = await input.writePhone(input.userId, parsed.normalizedDigits);
+  const wrote = await input.writePhone(input.userId, prepared.normalizedPhone);
   if (!wrote.ok) return writeFailed(wrote);
   return {
     status: 200,
     json: {
       ok: true,
-      normalizedPhone: parsed.normalizedDigits,
-      nationalDisplay: parsed.nationalDisplay,
+      normalizedPhone: prepared.normalizedPhone,
+      nationalDisplay: prepared.nationalDisplay,
     },
-    wrote: { userId: input.userId, phone: parsed.normalizedDigits },
+    wrote: { userId: input.userId, phone: prepared.normalizedPhone },
   };
 }

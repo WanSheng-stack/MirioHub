@@ -106,28 +106,23 @@ async function main() {
     assert.equal("error" in result.json, false);
   }
 
-  // TEST E — formatter never emits details/hint/failing row/phone
+  // Safe log: reason + whitelist code only
   {
     const log = formatSafePhoneWriteLog({
       ok: false,
       reason: "rpc_error",
       error: {
         code: "23514",
-        message: "new row for relation profiles violates check constraint",
+        message: "+381 65 322 8255",
         details: "Failing row contains (..., 381653228255, ...)",
-        hint: "retry with 381653228255",
+        hint: "retry with +381-65-322-8255",
       },
     });
+    assert.deepEqual(log, { reason: "rpc_error", error: { code: "23514" } });
     const serialized = JSON.stringify(log);
-    assert.equal(log.reason, "rpc_error");
-    assert.equal(log.error?.code, "23514");
-    assert.equal("details" in (log.error ?? {}), false);
-    assert.equal("hint" in log, false);
-    assert.equal(serialized.includes("details"), false);
-    assert.equal(serialized.includes("hint"), false);
-    assert.equal(serialized.includes("381653228255"), false);
-    assert.equal(serialized.includes("Failing row"), false);
-    assert.equal(serialized.includes("653228255"), false);
+    assert.equal(serialized.includes("message"), false);
+    assert.equal(serialized.includes("+381"), false);
+    assert.equal(serialized.includes("322"), false);
 
     const route = read("src/app/api/profile/phone/route.ts");
     assert.ok(route.includes('[api/profile/phone] set_profile_phone_v87 failed'));

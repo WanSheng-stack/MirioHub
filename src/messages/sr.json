@@ -574,5 +574,28 @@
     "passengerCount": "Broj putnika ovog puta (1–4)",
     "carryLuggage": "Nosim prtljag",
     "message": "Napomena (opciono)"
+  },
+  "transportPolicy": {
+    "travelTitle": "Usput povedi ljude ili sitne stvari",
+    "travelSubtitle": "Možeš da povedeš putnike, prtljag ili obične male pakete — peške, biciklom, javnim prevozom ili privatnim automobilom",
+    "deliverTitle": "Usput povedi krupne stvari",
+    "deliverSubtitle": "Za kombi, kamion ili brod — nameštaj, kućne aparate, selidbu i drugi krupan teret",
+    "escortSeatConfirm": "Potvrđujem da ovo vozilo ima zakonito i bezbedno mesto za putnika."
+  },
+  "safety": {
+    "unlistedRiskCatchall": "Navedena upozorenja i stavke provere ne mogu da navedu sve rizike. Ako primetite bilo šta što nije na spisku, a može da ugrozi ličnu bezbednost, imovinu, privatnost, bezbednost u saobraćaju, da bude prevara, ili da uključuje zabranjene, opasne ili nezakonite predmete i druge neuobičajene situacije, odmah prekinite komunikaciju, zajednički put, predaju ili uslugu. Nemojte nastavljati samo zato što je zahtev već prihvaćen ili ste stigli na mesto. Po potrebi pozovite lokalnu policiju, hitne službe ili nadležne organe.",
+    "module": {
+      "platform_boundary": "Granice platforme",
+      "passenger_identity_vehicle": "Provera identiteta putnika i vozila",
+      "small_item_handover": "Predaja sitnih stvari",
+      "large_item_handover": "Predaja krupnih stvari",
+      "escort_passenger": "Potvrda pratioca tereta",
+      "public_transport_rules": "Pravila javnog prevoza",
+      "water_transport_rules": "Pravila vodenog prevoza",
+      "purchase_help": "Pomoć pri kupovini",
+      "onsite_help": "Pomoć na licu mesta",
+      "errand_help": "Pomoć u sitnim poslovima",
+      "payment_anti_scam": "Zaštita od prevara pri plaćanju"
+    }
   }
 }

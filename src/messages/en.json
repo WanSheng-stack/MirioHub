@@ -574,5 +574,28 @@
     "passengerCount": "Passengers this trip (1–4)",
     "carryLuggage": "Bringing luggage",
     "message": "Note (optional)"
+  },
+  "transportPolicy": {
+    "travelTitle": "Give a lift to people or small items along the way",
+    "travelSubtitle": "You can take people, luggage, or ordinary small parcels — walking, bicycle, public transport, or a private car",
+    "deliverTitle": "Carry large items along the way",
+    "deliverSubtitle": "For vans, trucks, or boats — furniture, appliances, moves, and other bulky cargo",
+    "escortSeatConfirm": "I confirm this vehicle has a legal, safe passenger seat."
+  },
+  "safety": {
+    "unlistedRiskCatchall": "The notices and checklist items above cannot list every risk. If you notice anything not listed that may involve personal safety, property, privacy, traffic safety, fraud, or suspected illegal, prohibited, or dangerous goods or any other unusual situation, stop communication, travel together, handover, or service immediately. Do not continue just because a request was already accepted or you have arrived. Contact local police, emergency services, or the relevant authorities if needed.",
+    "module": {
+      "platform_boundary": "Platform boundary",
+      "passenger_identity_vehicle": "Passenger identity and vehicle check",
+      "small_item_handover": "Small-item handover",
+      "large_item_handover": "Large-item handover",
+      "escort_passenger": "Escort passenger confirmation",
+      "public_transport_rules": "Public-transport rules",
+      "water_transport_rules": "Water-transport rules",
+      "purchase_help": "Purchase help",
+      "onsite_help": "On-site help",
+      "errand_help": "Errand help",
+      "payment_anti_scam": "Payment anti-scam"
+    }
   }
 }

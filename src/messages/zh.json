@@ -574,5 +574,28 @@
     "passengerCount": "本次乘车人数（1–4）",
     "carryLuggage": "携带行李",
     "message": "补充说明（可选）"
+  },
+  "transportPolicy": {
+    "travelTitle": "顺路捎人或捎小件",
+    "travelSubtitle": "可捎人、行李或普通小包裹，适合步行、自行车、公共交通和私家车等顺路场景",
+    "deliverTitle": "顺路捎大件",
+    "deliverSubtitle": "适合面包车、货车或船舶等顺路捎带家具、家电、搬家物品和其他大件",
+    "escortSeatConfirm": "我确认运输工具具备合法、安全的乘坐位置。"
+  },
+  "safety": {
+    "unlistedRiskCatchall": "以上提示和检查项目无法列举所有风险。如发现任何未在清单中列明，但可能涉及人身安全、财产安全、隐私泄露、交通安全、欺诈，或涉嫌违法、违禁、危险物品及其他异常情况，应立即停止沟通、同行、交接或服务，不要因为已经接受申请或到达现场而勉强继续；必要时请联系当地警方、紧急服务或有关部门。",
+    "module": {
+      "platform_boundary": "平台边界",
+      "passenger_identity_vehicle": "乘车身份与车辆核验",
+      "small_item_handover": "小件交接",
+      "large_item_handover": "大件交接",
+      "escort_passenger": "押货乘坐确认",
+      "public_transport_rules": "公共交通规则",
+      "water_transport_rules": "水路运输规则",
+      "purchase_help": "代购协助",
+      "onsite_help": "现场协助",
+      "errand_help": "跑腿协助",
+      "payment_anti_scam": "付款防骗"
+    }
   }
 }

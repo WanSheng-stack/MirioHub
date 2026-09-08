@@ -1,5 +1,6 @@
 /**
- * PHASE 6.5B.6 TEST 11 — Demand plate duplication must not become phone fraud.
+ * Demand plate history must not become phone fraud.
+ * Historical phone reuse is not a standalone Demand hard-deny.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/security/demandPhonePlateIsolation.test.ts
  */
 
@@ -13,12 +14,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
-// TEST 11 — phone duplicated = false, plate duplicated = true
 {
   const decision = processDemandPostIntercept({
-    is_phone_duplicated: false,
-    account_count: 2,
-    active_order_count: 0,
+    has_foreign_phone_in_window: false,
+    own_in_window_count: 0,
   });
   assert.equal(decision.allowed, true);
   assert.notEqual(decision.trackerScene, "multi_account_demand_spam");
@@ -26,36 +25,33 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
 {
   const withPhoneDup = processDemandPostIntercept({
-    is_phone_duplicated: true,
-    account_count: 2,
-    active_order_count: 0,
+    has_foreign_phone_in_window: true,
+    own_in_window_count: 0,
   });
   assert.equal(withPhoneDup.allowed, false);
   assert.equal(withPhoneDup.trackerScene, "multi_account_demand_spam");
 }
 
-const demandBlock = read("src/lib/security/evaluateFraudIntercept.ts").slice(
-  read("src/lib/security/evaluateFraudIntercept.ts").indexOf('if (input.postType === "demand")'),
-  read("src/lib/security/evaluateFraudIntercept.ts").indexOf("const reuse = await rpcLookupForeignPhoneReuse"),
+const demandFlow = read("src/lib/security/runFraudIntercept.ts");
+assert.ok(demandFlow.includes("has_foreign_phone_in_window: window.has_other_phone"));
+assert.equal(demandFlow.includes("has_other_plate"), true);
+assert.equal(
+  demandFlow.includes("has_foreign_phone_in_window: window.has_other_plate"),
+  false,
 );
-assert.ok(demandBlock.includes("window.has_other_phone || historyPhoneAccounts > 1"));
-assert.equal(demandBlock.includes("plateAccounts > 1"), false);
-assert.equal(demandBlock.includes("plateAccounts,"), false);
+assert.equal(demandFlow.includes("rpcCountAssetBoundAccounts"), false);
+assert.equal(demandFlow.includes("historyPhoneAccounts"), false);
+assert.equal(demandFlow.includes("plateAccounts"), false);
 
-const supplySrc = read("src/lib/post-intercept.ts");
-assert.ok(
-  supplySrc.includes(
-    "metrics.is_phone_historically_reused === true && metrics.last_post_time_delta_months <= 12",
-  ),
-);
+const intercept = read("src/lib/post-intercept.ts");
+assert.equal(intercept.includes("is_phone_historically_reused"), false);
 assert.equal(
   processSupplyPostIntercept({
-    is_phone_historically_reused: true,
-    last_post_time_delta_months: 12,
     active_supply_posts_count: 0,
     is_premium_member: false,
   }).trackerScene,
-  "phone_recycling_fraud_1year",
+  undefined,
 );
+assert.equal(intercept.includes("phone_recycling_fraud_1year"), false);
 
 console.log("demandPhonePlateIsolation.test.ts: ok");

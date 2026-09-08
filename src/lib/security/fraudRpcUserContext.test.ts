@@ -19,6 +19,7 @@ const migration = readFileSync(
 );
 const wrappers = readFileSync(join(here, "fraudLookupRpc.ts"), "utf8");
 const evaluate = readFileSync(join(here, "evaluateFraudIntercept.ts"), "utf8");
+const flow = readFileSync(join(here, "runFraudIntercept.ts"), "utf8");
 const publishRoute = readFileSync(
   join(repoRoot, "src/app/api/posts/evaluate-publish-intercept/route.ts"),
   "utf8",
@@ -44,18 +45,24 @@ const windowBody = functionBody("gather_window_intercept_metrics_v86");
 assert.ok(lookupBody.includes("p_user_id uuid"));
 assert.equal(lookupBody.includes("auth.uid()"), false);
 assert.ok(wrappers.includes("p_user_id: userId"));
-assert.ok(evaluate.includes("rpcLookupForeignPhoneReuse(\n    admin,\n    input.userId,"));
+assert.equal(evaluate.includes("rpcLookupForeignPhoneReuse"), false);
+assert.equal(flow.includes("rpcLookupForeignPhoneReuse"), false);
+assert.ok(
+  flow.includes("deps.gatherWindow(\n      admin,\n      input.userId,"),
+);
+assert.ok(
+  flow.includes("deps.gatherWindow(\n    admin,\n    input.userId,"),
+);
 
 // TEST B — window own_* counts use p_user_id
 assert.ok(windowBody.includes("COUNT(*) FILTER (WHERE p.user_id = p_user_id)"));
 assert.equal(windowBody.includes("auth.uid()"), false);
 assert.equal(windowBody.includes("v_uid"), false);
 assert.ok(
-  evaluate.includes("rpcGatherWindowInterceptMetrics(\n      admin,\n      input.userId,"),
+  evaluate.includes("gatherWindow: rpcGatherWindowInterceptMetrics"),
 );
-assert.ok(
-  evaluate.includes("rpcGatherWindowInterceptMetrics(\n    admin,\n    input.userId,"),
-);
+assert.equal(evaluate.includes("rpcCountAssetBoundAccounts"), false);
+assert.equal(flow.includes("rpcCountAssetBoundAccounts"), false);
 
 // TEST C — other-user rows use IS DISTINCT FROM p_user_id
 assert.ok(lookupBody.includes("h.user_id IS DISTINCT FROM p_user_id"));

@@ -19,13 +19,13 @@ import {
   processSupplyPostIntercept,
 } from "@/lib/post-intercept";
 import { demandInterceptRange, buildDepartureTimestamp } from "@/lib/post-time-windows";
+import {
+  isIdempotentActiveRetry,
+  type PublishIntentRow,
+} from "@/lib/auth/idempotentActiveRetry";
 
-export type PublishIntentRow = {
-  id: string;
-  user_id: string;
-  payload_hash: string | null;
-  status: string;
-};
+export type { PublishIntentRow };
+export { isIdempotentActiveRetry };
 
 export type Stage1ActiveRiskDecision = {
   allowed: boolean;
@@ -45,20 +45,6 @@ export async function findPublishIntentByClientRequestId(
 
   if (error || !data) return null;
   return data as PublishIntentRow;
-}
-
-/** Same owner + same hash + already ACTIVE → HTTP retry, not spam. */
-export function isIdempotentActiveRetry(
-  existing: PublishIntentRow | null,
-  userId: string,
-  payloadHash: string,
-): boolean {
-  return (
-    existing != null &&
-    existing.user_id === userId &&
-    existing.payload_hash === payloadHash &&
-    existing.status === "active"
-  );
 }
 
 export async function evaluateStage1ActivePublicationRisk(
@@ -95,9 +81,8 @@ export async function evaluateStage1ActivePublicationRisk(
     }).length;
 
     const decision = processDemandPostIntercept({
-      is_phone_duplicated: false,
-      account_count: 1,
-      active_order_count: activeOwn,
+      has_foreign_phone_in_window: false,
+      own_in_window_count: activeOwn,
     });
     return {
       allowed: decision.allowed,
@@ -121,8 +106,6 @@ export async function evaluateStage1ActivePublicationRisk(
     .eq("status", "active");
 
   const decision = processSupplyPostIntercept({
-    is_phone_historically_reused: false,
-    last_post_time_delta_months: 999,
     active_supply_posts_count: count ?? 0,
     is_premium_member: isPremium,
   });

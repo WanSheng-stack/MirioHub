@@ -52,6 +52,7 @@ export function parseForeignPhoneReuse(value: unknown): ForeignPhoneReuse | null
   };
 }
 
+/** Historical signal retained for future composite risk policy. It is not a standalone hard-deny condition. */
 export async function rpcCountAssetBoundAccounts(
   supabase: SupabaseClient,
   kind: "phone" | "plate",
@@ -67,6 +68,7 @@ export async function rpcCountAssetBoundAccounts(
   return Number.isFinite(n) ? n : null;
 }
 
+/** Historical signal retained for future composite risk policy. It is not a standalone hard-deny condition. */
 export async function rpcLookupForeignPhoneReuse(
   supabase: SupabaseClient,
   userId: string,

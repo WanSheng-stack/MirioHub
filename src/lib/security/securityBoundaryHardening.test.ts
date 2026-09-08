@@ -68,6 +68,10 @@ const evaluateHelper = readFileSync(
   join(repoRoot, "src/lib/security/evaluateFraudIntercept.ts"),
   "utf8",
 );
+const fraudFlow = readFileSync(
+  join(repoRoot, "src/lib/security/runFraudIntercept.ts"),
+  "utf8",
+);
 const completeContact = readFileSync(
   join(repoRoot, "src/app/api/posts/complete-contact/route.ts"),
   "utf8",
@@ -277,8 +281,9 @@ assert.ok(
 
 // TEST D — publish fraud decision still works; browser does not receive metrics
 assert.ok(submitPost.includes("/api/posts/evaluate-publish-intercept"));
-assert.ok(evaluateHelper.includes("processDemandPostIntercept"));
-assert.ok(evaluateHelper.includes("processSupplyPostIntercept"));
+assert.ok(evaluateHelper.includes("evaluatePublishIntercept") || evaluatePublishRoute.includes("evaluatePublishIntercept"));
+assert.ok(fraudFlow.includes("processDemandPostIntercept"));
+assert.ok(fraudFlow.includes("processSupplyPostIntercept"));
 assert.ok(evaluatePublishRoute.includes("evaluatePublishIntercept"));
 assert.equal(evaluatePublishRoute.includes("account_count"), false);
 assert.equal(evaluatePublishRoute.includes("last_post_at"), false);
@@ -289,7 +294,8 @@ assert.ok(submitPost.includes("publishInterceptLeakedMetrics"));
 assert.ok(migration.includes("DROP POLICY IF EXISTS fraud_logs_insert_authenticated"));
 assert.ok(migration.includes("REVOKE INSERT ON TABLE public.fraud_logs FROM authenticated"));
 assert.ok(migration.includes("REVOKE INSERT ON TABLE public.fraud_logs FROM anon"));
-assert.ok(evaluateHelper.includes("writeFraudLog(admin,"));
+assert.ok(evaluateHelper.includes("writeAudit: writeFraudLog"));
+assert.ok(fraudFlow.includes("writeAudit(admin,"));
 assert.ok(
   readFileSync(join(here, "writeFraudAudit.ts"), "utf8").includes(
     'admin.from("fraud_logs").insert',

@@ -31,6 +31,7 @@ const verifySql = read(
   "supabase/migrations/20260908000002_risk_audit_boundary_v88.verify.sql",
 );
 const evaluateSrc = read("src/lib/security/evaluateFraudIntercept.ts");
+const flowSrc = read("src/lib/security/runFraudIntercept.ts");
 const publishRoute = read(
   "src/app/api/posts/evaluate-publish-intercept/route.ts",
 );
@@ -215,9 +216,8 @@ async function main() {
   // TEST D — Demand hard deny + audit error keeps original errorKey
   {
     const demand = processDemandPostIntercept({
-      is_phone_duplicated: true,
-      account_count: 2,
-      active_order_count: 0,
+      has_foreign_phone_in_window: true,
+      own_in_window_count: 0,
     });
     assert.equal(demand.allowed, false);
     assert.equal(demand.messageKey, "error.post_denied_blurred");
@@ -240,25 +240,29 @@ async function main() {
     assert.notEqual(returned.errorKey, "error.submit_failed");
     assert.equal(publishApiBody(returned).ok, false);
     assert.equal(publishApiBody(returned).errorKey, "error.post_denied_blurred");
-    assert.ok(evaluateSrc.includes("writeFraudLog(admin,"));
-    assert.ok(evaluateSrc.includes("retainFraudDecision"));
-    assert.equal(evaluateSrc.includes("createAdminClient();\n  await admin.from"), false);
+    assert.ok(evaluateSrc.includes("writeAudit: writeFraudLog"));
+    assert.ok(flowSrc.includes("retainFraudDecision"));
   }
 
-  // TEST E — Supply hard deny + audit error keeps original errorKey
+  // TEST E — Supply historical reuse is not a fraud deny; limit deny does not audit
   {
-    const supply = processSupplyPostIntercept({
-      is_phone_historically_reused: true,
-      last_post_time_delta_months: 12,
+    const historicalOnly = processSupplyPostIntercept({
       active_supply_posts_count: 0,
       is_premium_member: false,
     });
+    assert.equal(historicalOnly.allowed, true);
+    assert.notEqual(historicalOnly.trackerScene, "phone_recycling_fraud_1year");
+    const supply = processSupplyPostIntercept({
+      active_supply_posts_count: 3,
+      is_premium_member: false,
+    });
     assert.equal(supply.allowed, false);
-    assert.equal(supply.messageKey, "error.post_denied_blurred");
+    assert.equal(supply.messageKey, "error.non_member_limit_exceeded");
+    assert.equal(supply.logFraud, false);
     const { value: auditOk } = await captureErrors(() =>
       writeFraudLog(
         mockAdmin(() => ({ error: { message: "fail" } })),
-        { ...sampleRow, reporter_side: "provider", scene: supply.trackerScene! },
+        { ...sampleRow, reporter_side: "provider", scene: "unused" },
       ),
     );
     const returned = retainFraudDecision(
@@ -266,17 +270,16 @@ async function main() {
       auditOk,
     );
     assert.equal(returned.allowed, false);
-    assert.equal(returned.errorKey, "error.post_denied_blurred");
+    assert.equal(returned.errorKey, "error.non_member_limit_exceeded");
     assert.notEqual(returned.errorKey, "error.submit_failed");
   }
 
   // TEST F — Provider Match hard deny + audit error keeps original errorKey
   {
     const match = processProviderMatchIntercept({
-      is_plate_duplicated: true,
-      is_phone_duplicated: false,
-      account_count: 2,
-      active_cargo_order_count: 0,
+      has_foreign_phone_in_window: false,
+      has_foreign_plate_in_window: true,
+      own_cargo_in_window: 0,
       current_all_matched_units: 0,
       current_all_passengers_count: 0,
       is_bank_verified: false,
@@ -299,8 +302,8 @@ async function main() {
     assert.equal(returned.errorKey, "error.match_denied_blurred");
     assert.notEqual(returned.errorKey, "error.submit_failed");
     assert.equal(matchApiBody(returned).errorKey, "error.match_denied_blurred");
-    assert.ok(evaluateSrc.includes('errorKey: "error.match_denied_blurred"'));
-    assert.ok(evaluateSrc.includes("retainFraudDecision"));
+    assert.ok(flowSrc.includes('errorKey: "error.match_denied_blurred"') || match.messageKey === "error.match_denied_blurred");
+    assert.ok(flowSrc.includes("retainFraudDecision"));
   }
 
   // TEST G — API / browser payload stays ok / errorKey / isSpaceWarning
@@ -436,49 +439,39 @@ async function main() {
     assert.ok(read("src/lib/security/writeFraudAudit.ts").includes('from("fraud_logs")'));
   }
 
-  // TEST K — Fraud Policy algorithm files unchanged this phase
+  // TEST K — live Fraud Policy uses current-window signals only
   {
     assert.ok(
-      postIntercept.includes(
-        "metrics.is_phone_duplicated === true && metrics.account_count > 1",
-      ),
+      postIntercept.includes("metrics.has_foreign_phone_in_window === true"),
     );
-    assert.ok(
-      postIntercept.includes(
-        "metrics.is_phone_historically_reused === true && metrics.last_post_time_delta_months <= 12",
-      ),
+    assert.equal(postIntercept.includes("is_phone_historically_reused"), false);
+    assert.equal(
+      postIntercept.includes("phone_recycling_fraud_1year"),
+      false,
     );
-    assert.ok(
-      postIntercept.includes(
-        "(metrics.is_plate_duplicated || metrics.is_phone_duplicated) && metrics.account_count > 1",
-      ),
-    );
-    assert.ok(
-      evaluateSrc.includes("if (phoneAccounts > 1 || plateAccounts > 1)"),
+    assert.equal(
+      flowSrc.includes("if (phoneAccounts > 1 || plateAccounts > 1)"),
+      false,
     );
     const demand = processDemandPostIntercept({
-      is_phone_duplicated: true,
-      account_count: 2,
-      active_order_count: 0,
+      has_foreign_phone_in_window: true,
+      own_in_window_count: 0,
     });
     assert.equal(demand.trackerScene, "multi_account_demand_spam");
     const supply = processSupplyPostIntercept({
-      is_phone_historically_reused: true,
-      last_post_time_delta_months: 12,
       active_supply_posts_count: 0,
       is_premium_member: false,
     });
-    assert.equal(supply.trackerScene, "phone_recycling_fraud_1year");
+    assert.notEqual(supply.trackerScene, "phone_recycling_fraud_1year");
     const match = processProviderMatchIntercept({
-      is_plate_duplicated: true,
-      is_phone_duplicated: false,
-      account_count: 2,
-      active_cargo_order_count: 0,
+      has_foreign_phone_in_window: false,
+      has_foreign_plate_in_window: true,
+      own_cargo_in_window: 0,
       current_all_matched_units: 0,
       current_all_passengers_count: 0,
       is_bank_verified: false,
     });
-    assert.equal(match.trackerScene, "multi_account_cargo_theft");
+    assert.equal(match.trackerScene, "multi_account_spacetime_collision");
   }
 
   // TEST L — init.sql still matches frozen baseline

@@ -13,7 +13,7 @@ import {
   toRpcStage1Payload,
   validateBumpFeeMinor,
 } from "@/lib/auth/canonicalStage1";
-import { isIdempotentActiveRetry } from "@/lib/auth/stage1ActiveRisk";
+import { isIdempotentActiveRetry } from "@/lib/auth/idempotentActiveRetry";
 import {
   processDemandPostIntercept,
   processSupplyPostIntercept,
@@ -121,24 +121,20 @@ assert.equal(isIdempotentActiveRetry(null, "u1", "H1"), false);
 // ── existing risk rules ─────────────────────────────────────────────────────
 assert.equal(
   processDemandPostIntercept({
-    is_phone_duplicated: false,
-    account_count: 1,
-    active_order_count: 0,
+    has_foreign_phone_in_window: false,
+    own_in_window_count: 0,
   }).allowed,
   true,
 );
 assert.equal(
   processDemandPostIntercept({
-    is_phone_duplicated: false,
-    account_count: 1,
-    active_order_count: 1,
+    has_foreign_phone_in_window: false,
+    own_in_window_count: 1,
   }).messageKey,
   "error.time_window_overlap",
 );
 assert.equal(
   processSupplyPostIntercept({
-    is_phone_historically_reused: false,
-    last_post_time_delta_months: 999,
     active_supply_posts_count: 3,
     is_premium_member: false,
   }).messageKey,
@@ -146,8 +142,6 @@ assert.equal(
 );
 assert.equal(
   processSupplyPostIntercept({
-    is_phone_historically_reused: false,
-    last_post_time_delta_months: 999,
     active_supply_posts_count: 2,
     is_premium_member: false,
   }).allowed,

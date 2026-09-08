@@ -160,7 +160,22 @@
     "shadow_draft_failed": "Draft save failed. Please check your connection and retry.",
     "invalid_bump_fee_boundary": "Urgency fee is invalid. Use a whole-cent amount from 0 to 50.00 EUR.",
     "invalid_payload_numeric_values": "One or more publish fields are invalid. Counts, seats, and time buffer cannot be negative.",
-    "matching_temporarily_unavailable": "Matching is being prepared. Please try again later."
+    "matching_temporarily_unavailable": "Matching is being prepared. Please try again later.",
+    "match_request_invalid_payload": "This application is invalid. Please review and try again.",
+    "match_request_unknown_key": "This application contains an unrecognized field.",
+    "match_request_forbidden_key": "This application contains a field that is not allowed.",
+    "match_request_invalid_version": "This application version is not supported.",
+    "match_request_role_mismatch": "Applicant role does not match the target post type.",
+    "match_request_invalid_category": "This application category is invalid.",
+    "match_request_message_too_long": "The note can be at most 300 characters.",
+    "match_request_invalid_quantity": "Quantities must be non-negative integers.",
+    "match_request_invalid_enum": "Please choose a valid option.",
+    "match_request_transport_mode_required": "Please choose a transport mode.",
+    "match_request_seats_required": "Please enter the seat count.",
+    "match_request_cargo_required": "Please enter luggage / cargo counts.",
+    "match_request_need_demand_quantity": "Enter at least one actual demand quantity.",
+    "match_request_invalid_budget": "Please enter a valid budget range.",
+    "match_request_passenger_count_bounds": "Seat count must be an integer in the current product range (travel 1–4, escort 0–4)."
   },
   "success": {
     "posted": "Published successfully.",
@@ -544,5 +559,20 @@
     "savingPhone": "Saving…",
     "phoneSaved": "Phone number saved",
     "skip": "Skip for now · View matches"
+  },
+  "matchRequest": {
+    "offerHelp": "Offer help",
+    "requestHelp": "Request help",
+    "titleOffer": "Offer help",
+    "titleRequest": "Request help",
+    "submit": "Send application",
+    "cancel": "Cancel",
+    "targetType": "Their post",
+    "transportMode": "Transport mode",
+    "availablePassengerSeats": "Seats you can offer (1–4)",
+    "availablePassengerSeatsOptional": "Escort seats you can offer (optional, 0–4)",
+    "passengerCount": "Passengers this trip (1–4)",
+    "carryLuggage": "Bringing luggage",
+    "message": "Note (optional)"
   }
 }

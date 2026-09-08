@@ -160,7 +160,22 @@
     "shadow_draft_failed": "Čuvanje skice nije uspelo. Proverite internet i pokušajte ponovo.",
     "invalid_bump_fee_boundary": "Hitna naknada nije validna. Koristite iznos u centima od 0 do 50,00 EUR.",
     "invalid_payload_numeric_values": "Nevažeća polja objave. Brojevi, sedišta i vremenski bafer ne smeju biti negativni.",
-    "matching_temporarily_unavailable": "Funkcija povezivanja je u pripremi. Pokušajte ponovo kasnije."
+    "matching_temporarily_unavailable": "Funkcija povezivanja je u pripremi. Pokušajte ponovo kasnije.",
+    "match_request_invalid_payload": "Prijava nije ispravna. Proverite i pokušajte ponovo.",
+    "match_request_unknown_key": "Prijava sadrži nepoznato polje.",
+    "match_request_forbidden_key": "Prijava sadrži polje koje nije dozvoljeno.",
+    "match_request_invalid_version": "Verzija prijave nije podržana.",
+    "match_request_role_mismatch": "Uloga podnosioca ne odgovara tipu ciljne objave.",
+    "match_request_invalid_category": "Kategorija prijave nije ispravna.",
+    "match_request_message_too_long": "Napomena može imati najviše 300 karaktera.",
+    "match_request_invalid_quantity": "Količine moraju biti nenegativni celi brojevi.",
+    "match_request_invalid_enum": "Izaberite ispravnu opciju.",
+    "match_request_transport_mode_required": "Izaberite način prevoza.",
+    "match_request_seats_required": "Unesite broj sedišta.",
+    "match_request_cargo_required": "Unesite broj komada prtljaga / tereta.",
+    "match_request_need_demand_quantity": "Unesite bar jednu stvarnu količinu potražnje.",
+    "match_request_invalid_budget": "Unesite ispravan opseg budžeta.",
+    "match_request_passenger_count_bounds": "Broj sedišta mora biti ceo broj u važećem rasponu (putovanje 1–4, pratnja 0–4)."
   },
   "success": {
     "posted": "Uspešno objavljeno.",
@@ -544,5 +559,20 @@
     "savingPhone": "Čuvanje…",
     "phoneSaved": "Broj telefona je sačuvan",
     "skip": "Preskoči za sada · Pogledaj poklapanja"
+  },
+  "matchRequest": {
+    "offerHelp": "Ponudi pomoć",
+    "requestHelp": "Zatraži pomoć",
+    "titleOffer": "Ponudi pomoć",
+    "titleRequest": "Zatraži pomoć",
+    "submit": "Pošalji prijavu",
+    "cancel": "Otkaži",
+    "targetType": "Njihova objava",
+    "transportMode": "Način prevoza",
+    "availablePassengerSeats": "Sedišta koja nudiš (1–4)",
+    "availablePassengerSeatsOptional": "Sedišta za pratnju (opciono, 0–4)",
+    "passengerCount": "Broj putnika ovog puta (1–4)",
+    "carryLuggage": "Nosim prtljag",
+    "message": "Napomena (opciono)"
   }
 }

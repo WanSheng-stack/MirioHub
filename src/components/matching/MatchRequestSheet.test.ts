@@ -1,0 +1,256 @@
+/**
+ * PHASE 6.7B — MatchRequestSheet contract (TEST P–X).
+ * Pure form/submit tests + static source assertions. No browser E2E.
+ * Run: npx tsx --tsconfig tsconfig.json src/components/matching/MatchRequestSheet.test.ts
+ */
+
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  freezeLegacyDirectMatchIntercept,
+  MATCHING_TEMPORARILY_UNAVAILABLE_KEY,
+} from "@/lib/matching/legacyMatchingFreeze";
+import {
+  attemptMatchRequestSubmit,
+  collectFieldHints,
+  createInitialMatchRequestForm,
+  formAfterOpenChange,
+  reduceMatchRequestForm,
+  serverErrorAlert,
+  type MatchRequestTargetPost,
+} from "@/lib/matching/matchRequestForm";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, "..", "..", "..");
+const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
+
+const sheetSrc = read("src/components/matching/MatchRequestSheet.tsx");
+const payloadSrc = read("src/lib/matching/applicationPayload.ts");
+const postCard = read("src/components/hall/PostCard.tsx");
+const homePage = read("src/app/[locale]/page.tsx");
+const actionsSrc = read("src/components/post/PostActions.tsx");
+const homeConsole = read("src/components/home/HomeConsole.tsx");
+const matchRoute = read(
+  "src/app/api/posts/evaluate-provider-match-intercept/route.ts",
+);
+const migration67a = read(
+  "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql",
+);
+const publicSelect = read("src/lib/posts/publicPostSelect.ts");
+const zh = read("src/messages/zh.json");
+const en = read("src/messages/en.json");
+const sr = read("src/messages/sr.json");
+
+const demandTravel: MatchRequestTargetPost = {
+  id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  post_type: "demand",
+  category: "travel",
+  origin_address: "Belgrade",
+  destination_address: "Novi Sad",
+  departure_date: "2026-09-10",
+  departure_time_window: "14:00-14:30",
+  fee_amount: 12,
+};
+
+function validProviderOfferForm() {
+  let form = createInitialMatchRequestForm(demandTravel);
+  form = reduceMatchRequestForm(form, { type: "SET_TRANSPORT_MODE", value: "car" });
+  form = reduceMatchRequestForm(form, {
+    type: "SET_SEAT_FIELD",
+    field: "availablePassengerSeats",
+    value: "2",
+  });
+  form = reduceMatchRequestForm(form, { type: "SET_MESSAGE", value: "  I can drive  " });
+  return form;
+}
+
+// TEST P onSubmit receives typed normalized payload, not raw form state
+{
+  const form = validProviderOfferForm();
+  const result = attemptMatchRequestSubmit(form, demandTravel, false);
+  assert.equal(result.kind, "submitted");
+  if (result.kind === "submitted") {
+    const payload = result.payload;
+    assert.equal(payload.version, 1);
+    assert.equal(payload.applicantRole, "provider");
+    assert.equal(payload.targetPostType, "demand");
+    assert.equal(payload.message, "I can drive");
+    assert.equal("transportMode" in form, true);
+    assert.equal("availablePassengerSeats" in payload, true);
+    assert.equal("origin_address" in payload, false);
+    assert.equal("fee_amount" in payload, false);
+    assert.equal("fieldErrors" in payload, false);
+    assert.equal("fieldErrors" in (payload as object), false);
+  }
+}
+
+// TEST Q invalid form does not call onSubmit
+{
+  const form = createInitialMatchRequestForm(demandTravel);
+  let submitted: unknown = null;
+  const result = attemptMatchRequestSubmit(form, demandTravel, false);
+  if (result.kind === "submitted") submitted = result.payload;
+  assert.equal(result.kind, "invalid");
+  assert.equal(submitted, null);
+  assert.ok(collectFieldHints(form, demandTravel).transportMode);
+}
+
+// TEST R submitting cannot double-submit
+{
+  const form = validProviderOfferForm();
+  const first = attemptMatchRequestSubmit(form, demandTravel, false);
+  const second = attemptMatchRequestSubmit(form, demandTravel, true);
+  assert.equal(first.kind, "submitted");
+  assert.equal(second.kind, "blocked_submitting");
+}
+
+// TEST S server error uses inline role=alert
+{
+  const alert = serverErrorAlert("error.matching_temporarily_unavailable");
+  assert.deepEqual(alert, {
+    role: "alert",
+    errorKey: "error.matching_temporarily_unavailable",
+  });
+  assert.equal(serverErrorAlert(null), null);
+  assert.ok(sheetSrc.includes('role="alert"'));
+  assert.ok(sheetSrc.includes("aria-invalid"));
+  assert.ok(sheetSrc.includes("serverErrorKey"));
+}
+
+// TEST T close/reopen clears unsubmitted draft
+{
+  const dirty = validProviderOfferForm();
+  assert.equal(dirty.transportMode, "car");
+  const closed = formAfterOpenChange(true, false, dirty, demandTravel);
+  assert.equal(closed.transportMode, "");
+  assert.equal(closed.message, "");
+  const reopened = formAfterOpenChange(false, true, closed, demandTravel);
+  assert.equal(reopened.transportMode, "");
+  assert.deepEqual(reopened.fieldErrors, {});
+}
+
+// TEST U this round PostCard / homepage have no apply buttons and no new API fetch
+{
+  for (const src of [postCard, homePage, actionsSrc, homeConsole]) {
+    assert.equal(src.includes("MatchRequestSheet"), false);
+    assert.equal(src.includes("matchRequest.offerHelp"), false);
+    assert.equal(src.includes("matchRequest.requestHelp"), false);
+  }
+  for (const src of [postCard, homePage, homeConsole]) {
+    assert.equal(src.includes("我能帮忙"), false);
+    assert.equal(src.includes("Offer help"), false);
+    assert.equal(src.includes("请求帮助"), false);
+  }
+  assert.ok(actionsSrc.includes("Future 6.7B copy only"));
+  assert.equal(/<button[\s\S]{0,400}我能帮忙/.test(actionsSrc), false);
+  assert.equal(/fetch\s*\(\s*["']\/api\/match/.test(postCard), false);
+  assert.equal(/fetch\s*\(\s*["']\/api\/match/.test(homePage), false);
+  assert.equal(/fetch\s*\(\s*["']\/api\/match/.test(actionsSrc), false);
+  assert.ok(zh.includes("我能帮忙"));
+  assert.ok(en.includes("Offer help"));
+  assert.ok(sr.includes("Ponudi pomoć"));
+  assert.ok(zh.includes("请求帮助"));
+  assert.ok(en.includes("Request help"));
+  assert.ok(sr.includes("Zatraži pomoć"));
+  assert.ok(zh.includes("提供帮助"));
+  assert.ok(zh.includes("发送申请"));
+}
+
+// TEST V old confirm_match still frozen, old API still 409
+{
+  const result = freezeLegacyDirectMatchIntercept();
+  assert.equal(result.status, 409);
+  assert.deepEqual(result.json, {
+    ok: false,
+    errorKey: MATCHING_TEMPORARILY_UNAVAILABLE_KEY,
+  });
+  assert.ok(matchRoute.includes("freezeLegacyDirectMatchIntercept"));
+  assert.equal(actionsSrc.includes("confirm_match"), false);
+  assert.equal(actionsSrc.includes("confirmMatch"), false);
+  assert.equal(sheetSrc.includes("confirm_match"), false);
+  assert.equal(payloadSrc.includes("confirm_match"), false);
+  assert.equal(sheetSrc.includes("evaluate-provider-match-intercept"), false);
+
+  function walkRuntimeTs(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      if (name.name === "node_modules" || name.name === ".next") continue;
+      const full = join(dir, name.name);
+      if (name.isDirectory()) walkRuntimeTs(full, out);
+      else if (
+        (name.name.endsWith(".ts") || name.name.endsWith(".tsx")) &&
+        !name.name.endsWith(".test.ts")
+      ) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+  for (const file of walkRuntimeTs(join(repoRoot, "src"))) {
+    const src = readFileSync(file, "utf8");
+    assert.equal(src.includes('rpc("confirm_match"'), false, file);
+    assert.equal(src.includes("rpc('confirm_match'"), false, file);
+  }
+}
+
+// TEST W match_requests / match_contracts ACL unchanged
+{
+  for (const table of ["public.match_requests", "public.match_contracts"]) {
+    for (const role of ["PUBLIC", "anon", "authenticated", "service_role"]) {
+      assert.ok(
+        migration67a.includes(`REVOKE ALL ON TABLE ${table} FROM ${role}`),
+        `${table} ${role}`,
+      );
+    }
+  }
+  assert.equal(/GRANT\s+(SELECT|INSERT|UPDATE|DELETE|ALL)\b/i.test(migration67a), false);
+  const migrationDiff = execFileSync(
+    "git",
+    ["diff", "HEAD", "--", "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(migrationDiff, "");
+  const supabaseStatus = execFileSync(
+    "git",
+    ["status", "--porcelain", "--", "supabase"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(supabaseStatus.trim(), "");
+}
+
+// TEST X public_posts_safe unchanged
+{
+  const selectDiff = execFileSync(
+    "git",
+    ["diff", "HEAD", "--", "src/lib/posts/publicPostSelect.ts"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(selectDiff, "");
+  const viewDiff = execFileSync(
+    "git",
+    [
+      "diff",
+      "HEAD",
+      "--",
+      "supabase/migrations/20260907000001_security_boundary_hardening_v86.sql",
+    ],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(viewDiff, "");
+  assert.ok(publicSelect.includes("PUBLIC_SAFE_POST_SELECT"));
+  assert.equal(payloadSrc.includes("public_posts_safe"), false);
+  assert.equal(sheetSrc.includes("public_posts_safe"), false);
+}
+
+assert.ok(payloadSrc.includes("Client validator is UX"));
+assert.ok(payloadSrc.includes("6.7C"));
+assert.ok(payloadSrc.includes("Never trust browser-provided"));
+assert.ok(sheetSrc.includes("must not be trusted"));
+assert.ok(sheetSrc.includes("Do not mount this on PostCard"));
+assert.equal(sheetSrc.includes("window.alert"), false);
+assert.ok(sheetSrc.includes("Escape"));
+assert.ok(sheetSrc.includes("disabled={busy}"));
+
+console.log("MatchRequestSheet.test.ts: ok");

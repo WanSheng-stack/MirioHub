@@ -160,7 +160,22 @@
     "shadow_draft_failed": "草稿暂存失败，请检查网络后重试",
     "invalid_bump_fee_boundary": "加急费无效。请使用 0 至 50.00 EUR 的整数分值。",
     "invalid_payload_numeric_values": "发布字段无效。件数、座位和时间缓冲不能为负数。",
-    "matching_temporarily_unavailable": "匹配功能正在准备中，请稍后再试。"
+    "matching_temporarily_unavailable": "匹配功能正在准备中，请稍后再试。",
+    "match_request_invalid_payload": "申请内容无效，请检查后重试。",
+    "match_request_unknown_key": "申请包含无法识别的字段。",
+    "match_request_forbidden_key": "申请包含不允许的字段。",
+    "match_request_invalid_version": "申请版本无效。",
+    "match_request_role_mismatch": "申请角色与目标帖类型不匹配。",
+    "match_request_invalid_category": "申请类目无效。",
+    "match_request_message_too_long": "补充说明最多 300 个字符。",
+    "match_request_invalid_quantity": "数量必须是非负整数。",
+    "match_request_invalid_enum": "请选择有效的选项。",
+    "match_request_transport_mode_required": "请选择交通方式。",
+    "match_request_seats_required": "请填写座位数。",
+    "match_request_cargo_required": "请填写行李/货物件数。",
+    "match_request_need_demand_quantity": "请至少填写一项实际需求数量。",
+    "match_request_invalid_budget": "请填写有效的预算区间。",
+    "match_request_passenger_count_bounds": "座位数须为现有产品范围内的整数（出行 1–4，押货 0–4）。"
   },
   "success": {
     "posted": "发布成功。",
@@ -544,5 +559,20 @@
     "savingPhone": "保存中…",
     "phoneSaved": "手机号已保存",
     "skip": "暂时跳过，查看匹配"
+  },
+  "matchRequest": {
+    "offerHelp": "我能帮忙",
+    "requestHelp": "请求帮助",
+    "titleOffer": "提供帮助",
+    "titleRequest": "请求帮助",
+    "submit": "发送申请",
+    "cancel": "取消",
+    "targetType": "对方帖子",
+    "transportMode": "交通方式",
+    "availablePassengerSeats": "可提供座位数（1–4）",
+    "availablePassengerSeatsOptional": "可提供押货座位（可选，0–4）",
+    "passengerCount": "本次乘车人数（1–4）",
+    "carryLuggage": "携带行李",
+    "message": "补充说明（可选）"
   }
 }

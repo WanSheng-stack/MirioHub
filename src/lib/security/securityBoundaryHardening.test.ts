@@ -317,9 +317,10 @@ for (const col of [
 // TEST G — owner + invalid status rejected (status fence)
 assert.ok(migration.includes("AND status = 'completed'"));
 
-// TEST H — owner + completed succeeds
+// TEST H — owner + completed succeeds; match API is frozen this round (6.6B.1)
 assert.ok(migration.includes("RETURN jsonb_build_object('ok', true, 'deadline', v_deadline)"));
-assert.ok(evaluateMatchRoute.includes("evaluateProviderMatchFraud"));
+assert.ok(evaluateHelper.includes("evaluateProviderMatchFraud"));
+assert.equal(evaluateMatchRoute.includes("evaluateProviderMatchFraud"), false);
 assert.ok(providerMatch.includes("/api/posts/evaluate-provider-match-intercept"));
 
 console.log("securityBoundaryHardening.test.ts: ok");

@@ -159,7 +159,8 @@
     "challenge_init_failed": "无法开始设备验证，请重试",
     "shadow_draft_failed": "草稿暂存失败，请检查网络后重试",
     "invalid_bump_fee_boundary": "加急费无效。请使用 0 至 50.00 EUR 的整数分值。",
-    "invalid_payload_numeric_values": "发布字段无效。件数、座位和时间缓冲不能为负数。"
+    "invalid_payload_numeric_values": "发布字段无效。件数、座位和时间缓冲不能为负数。",
+    "matching_temporarily_unavailable": "匹配功能正在准备中，请稍后再试。"
   },
   "success": {
     "posted": "发布成功。",

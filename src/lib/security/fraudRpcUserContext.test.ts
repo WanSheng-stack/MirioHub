@@ -117,6 +117,7 @@ for (const src of [publishRoute, matchRoute]) {
 }
 assert.ok(publishRoute.includes("ok: true"));
 assert.ok(publishRoute.includes("errorKey"));
-assert.ok(matchRoute.includes("isSpaceWarning"));
+assert.equal(matchRoute.includes("evaluateProviderMatchFraud"), false);
+assert.ok(matchRoute.includes("freezeLegacyDirectMatchIntercept"));
 
 console.log("fraudRpcUserContext.test.ts: ok");

@@ -7,7 +7,6 @@ import { PaywallModal } from "@/components/paywall/PaywallModal";
 import { VerificationShield } from "@/components/post/VerificationShield";
 import { AutoMeltDialog } from "@/components/post/AutoMeltDialog";
 import { Link } from "@/i18n/navigation";
-import { runProviderMatchIntercept } from "@/lib/post-form/providerMatch";
 import type { MatchRow, Post, RevealResult, SystemConfig } from "@/lib/types";
 
 type Props = {
@@ -16,8 +15,6 @@ type Props = {
   campaign: boolean;
   config: SystemConfig | null;
   match: MatchRow | null;
-  /** Owned active provider post for this match — never guessed by date. */
-  providerPostId?: string | null;
 };
 
 export function PostActions({
@@ -26,7 +23,6 @@ export function PostActions({
   campaign,
   config,
   match,
-  providerPostId,
 }: Props) {
   const t = useTranslations("post");
   const tRoot = useTranslations();
@@ -36,16 +32,11 @@ export function PostActions({
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [matchState, setMatchState] = useState(match);
   const [showPickupShield, setShowPickupShield] = useState(false);
-  const [spaceWarning, setSpaceWarning] = useState(false);
   const [pickupCodeInput, setPickupCodeInput] = useState("");
 
   const isDemand = matchState?.demand_user_id === userId;
   const isProvider = matchState?.provider_user_id === userId;
   const activeMatch = Boolean(matchState?.confirmed_at && !matchState?.cancelled_at);
-  const isCargoDemand =
-    post.post_type === "demand" &&
-    post.category === "deliver" &&
-    (post.escort_seats ?? 0) === 0;
 
   async function reveal() {
     setErrorKey(null);
@@ -71,62 +62,6 @@ export function PostActions({
       return;
     }
     setPhone(result.phone ?? null);
-  }
-
-  async function confirm() {
-    setErrorKey(null);
-    setSpaceWarning(false);
-    if (!userId) return;
-
-    const supabase = createClient();
-
-    if (isCargoDemand && post.post_type === "demand") {
-      const { data: me } = await supabase
-        .from("profiles")
-        .select("phone, plate, is_bank_verified")
-        .eq("id", userId)
-        .maybeSingle();
-
-      const normPhone = (me?.phone ?? "").replace(/\D/g, "");
-      const normPlate = (me?.plate ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      if (!providerPostId) {
-        setErrorKey("error.route_not_compatible");
-        return;
-      }
-      const intercept = await runProviderMatchIntercept(supabase, {
-        providerUserId: userId,
-        demandPostId: post.id,
-        providerPostId,
-        providerNormalizedPhone: normPhone,
-        providerNormalizedLicensePlate: normPlate || null,
-        isBankVerified: Boolean(me?.is_bank_verified),
-      });
-
-      if (!intercept.ok) {
-        setErrorKey(intercept.errorKey);
-        return;
-      }
-      if (intercept.isSpaceWarning) {
-        setSpaceWarning(true);
-      }
-    }
-
-    const { data } = await supabase.rpc("confirm_match", { p_post_id: post.id });
-    const json = data as {
-      ok?: boolean;
-      demand_user_id?: string;
-      provider_user_id?: string;
-    };
-    if (json?.ok && json.demand_user_id && json.provider_user_id) {
-      setMatchState({
-        id: "local",
-        post_id: post.id,
-        demand_user_id: json.demand_user_id,
-        provider_user_id: json.provider_user_id,
-        confirmed_at: new Date().toISOString(),
-        cancelled_at: null,
-      });
-    }
   }
 
   async function cancel() {
@@ -181,22 +116,11 @@ export function PostActions({
         ) : null}
       </div>
 
-      {userId && userId !== post.user_id && !activeMatch && post.status === "active" ? (
-        <>
-          {spaceWarning ? (
-            <p className="animate-pulse rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
-              {tRoot("ui.space_overload_warning")}
-            </p>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void confirm()}
-            className="rounded-md border border-zinc-300 px-4 py-2 text-sm"
-          >
-            {isCargoDemand ? t("acceptCargo") : t("confirmMatch")}
-          </button>
-        </>
-      ) : null}
+      {/*
+        PHASE 6.6B.1 — one-click direct match is paused (no buttons this round).
+        Future 6.7B copy only: Demand 我能帮忙 / Offer help / Ponudi pomoć;
+        Provider 请求帮助 / Request help / Zatraži pomoć.
+      */}
 
       {activeMatch && isDemand ? (
         <div className="space-y-3">

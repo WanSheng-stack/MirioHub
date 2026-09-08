@@ -345,7 +345,8 @@ async function main() {
     }
     assert.ok(publishRoute.includes("ok: false"));
     assert.ok(publishRoute.includes("errorKey: decision.errorKey"));
-    assert.ok(matchRoute.includes("isSpaceWarning"));
+    assert.equal(matchRoute.includes("evaluateProviderMatchFraud"), false);
+    assert.ok(matchRoute.includes("freezeLegacyDirectMatchIntercept"));
   }
 
   // TEST H — migration ACL

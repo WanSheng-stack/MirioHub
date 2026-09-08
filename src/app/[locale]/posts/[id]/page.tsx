@@ -8,17 +8,14 @@ import {
   OWNER_POST_SELECT,
   PUBLIC_SAFE_POST_SELECT,
 } from "@/lib/posts/publicPostSelect";
-import { resolveViewerProviderPostId } from "@/lib/route/routeMatchAccess";
 import type { MatchRow, Post, SystemConfig } from "@/lib/types";
 
 type Props = {
   params: Promise<{ locale: string; id: string }>;
-  searchParams: Promise<{ providerPostId?: string }>;
 };
 
-export default async function PostDetailPage({ params, searchParams }: Props) {
+export default async function PostDetailPage({ params }: Props) {
   const { locale, id } = await params;
-  const query = await searchParams;
   setRequestLocale(locale as AppLocale);
   const t = await getTranslations("post");
 
@@ -58,20 +55,6 @@ export default async function PostDetailPage({ params, searchParams }: Props) {
   const cfg = (config ?? null) as SystemConfig | null;
   const matchRow = (match ?? null) as MatchRow | null;
 
-  let viewerProviderPostId: string | null = null;
-  if (auth.user?.id) {
-    const { data: ownedProviders } = await supabase
-      .from("posts")
-      .select("id")
-      .eq("user_id", auth.user.id)
-      .eq("post_type", "provider")
-      .eq("status", "active");
-    viewerProviderPostId = resolveViewerProviderPostId(
-      (ownedProviders ?? []).map((p) => p.id),
-      query.providerPostId,
-    );
-  }
-
   return (
     <article>
       <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
@@ -84,7 +67,6 @@ export default async function PostDetailPage({ params, searchParams }: Props) {
         campaign={Boolean(cfg?.is_global_free_campaign)}
         config={cfg}
         match={matchRow}
-        providerPostId={viewerProviderPostId}
       />
     </article>
   );

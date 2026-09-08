@@ -7,13 +7,11 @@ import { PricePremiumSlider } from "@/components/home/PricePremiumSlider";
 import type { RouteMatchInfo } from "@/lib/hall-route-match";
 import { haversineKm, lbsGravityScore, parseGpsPoint } from "@/lib/geo";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
-import type { CreditStats } from "@/components/credit/CreditDashboard";
 import type { Post } from "@/lib/types";
 
 export type LbsPostBundle = {
   post: Post;
   authorName?: string | null;
-  creditStats?: CreditStats | null;
   routeMatch?: RouteMatchInfo | null;
 };
 
@@ -185,7 +183,6 @@ function MirrorCard({
       <PostCard
         post={bundle.post}
         authorName={bundle.authorName}
-        creditStats={bundle.creditStats}
         routeMatch={bundle.routeMatch}
       />
       {bundle.routeMatch?.showDetourNotice ? (

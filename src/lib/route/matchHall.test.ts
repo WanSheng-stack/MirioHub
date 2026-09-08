@@ -138,8 +138,10 @@ const confirmSql = read("supabase/migrate_orders_to_posts.sql");
 assert.ok(confirmSql.includes("if v_post.status <> 'active'"));
 assert.ok(confirmSql.includes("NOT_ACTIVE"));
 const actionsSrc = read("src/components/post/PostActions.tsx");
-assert.ok(actionsSrc.includes("confirm_match"));
-assert.ok(actionsSrc.includes('post.status === "active"'));
+assert.equal(actionsSrc.includes("confirm_match"), false);
+assert.ok(actionsSrc.includes("cancel_match_no_fault"));
+assert.ok(actionsSrc.includes("VerificationShield"));
+assert.ok(actionsSrc.includes("AutoMeltDialog"));
 
 const dto = {
   id: "1",

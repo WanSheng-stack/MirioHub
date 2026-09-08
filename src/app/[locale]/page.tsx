@@ -2,7 +2,6 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { AppLocale } from "@/i18n/routing";
 import { HomeConsole } from "@/components/home/HomeConsole";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/server";
-import { computeCreditStats } from "@/lib/credit-stats";
 import {
   computeDemandMatchInfo,
   computeProviderMatchInfo,
@@ -55,24 +54,9 @@ export default async function HomePage({ params }: Props) {
     : { data: [] as { id: string; full_name: string | null }[] };
   const names = new Map((cards ?? []).map((c) => [c.id, c.full_name]));
 
-  const creditByUser = new Map<string, ReturnType<typeof computeCreditStats>>();
-  for (const uid of authorIds) {
-    const { data: history } = await supabase
-      .from("public_posts_safe")
-      .select("status, completion_type")
-      .eq("user_id", uid)
-      .eq("post_type", "provider")
-      .eq("status", "completed");
-    creditByUser.set(uid, computeCreditStats((history ?? []) as unknown as Post[]));
-  }
-
   const hallBundles = rows.map((post) => ({
     post,
     authorName: names.get(post.user_id) ?? null,
-    creditStats:
-      post.post_type === "provider"
-        ? creditByUser.get(post.user_id) ?? null
-        : null,
     routeMatch:
       (post.post_type === "provider"
         ? providerMatchMap.get(post.id)

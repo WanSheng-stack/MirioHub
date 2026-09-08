@@ -159,7 +159,8 @@
     "challenge_init_failed": "Couldn't start device verification. Please try again.",
     "shadow_draft_failed": "Draft save failed. Please check your connection and retry.",
     "invalid_bump_fee_boundary": "Urgency fee is invalid. Use a whole-cent amount from 0 to 50.00 EUR.",
-    "invalid_payload_numeric_values": "One or more publish fields are invalid. Counts, seats, and time buffer cannot be negative."
+    "invalid_payload_numeric_values": "One or more publish fields are invalid. Counts, seats, and time buffer cannot be negative.",
+    "matching_temporarily_unavailable": "Matching is being prepared. Please try again later."
   },
   "success": {
     "posted": "Published successfully.",

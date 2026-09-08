@@ -10,7 +10,6 @@ import {
   postMetaRowClass,
   postTypeTagClass,
 } from "@/lib/posts";
-import { CreditDashboard, type CreditStats } from "@/components/credit/CreditDashboard";
 import type { RouteMatchInfo } from "@/lib/hall-route-match";
 import { resolveDriverOrderedRoute } from "@/lib/post-route-match";
 import type { AppLocale } from "@/i18n/routing";
@@ -19,7 +18,6 @@ import type { Post } from "@/lib/types";
 type Props = {
   post: Post;
   authorName?: string | null;
-  creditStats?: CreditStats | null;
   routeMatch?: RouteMatchInfo | null;
   /** Enable translate control (detail page) */
   showTranslate?: boolean;
@@ -30,7 +28,6 @@ type Props = {
 export function PostCard({
   post,
   authorName,
-  creditStats,
   routeMatch,
   showTranslate = false,
   linkToDetail = true,
@@ -139,12 +136,6 @@ export function PostCard({
 
       {authorName ? (
         <p className="mt-0.5 text-xs text-zinc-500">{authorName}</p>
-      ) : null}
-
-      {post.post_type === "provider" && creditStats ? (
-        <div className="mt-2">
-          <CreditDashboard stats={creditStats} compact />
-        </div>
       ) : null}
 
       {text ? (

@@ -140,8 +140,8 @@ assert.equal(payload.pickupBeforeProviderOrigin, true);
 assert.equal(payload.pickupExtensionKm, 2.1);
 assert.equal("origin_gps" in payload, false);
 
-const actionsSrc = read("src/components/post/PostActions.tsx");
-assert.ok(actionsSrc.includes("providerPostId"));
-assert.ok(actionsSrc.includes("providerPostId,"));
+const matchCardSrc = read("src/components/match/MatchPostCard.tsx");
+assert.ok(matchCardSrc.includes("providerPostId"));
+assert.ok(providerMatchSrc.includes("input.providerPostId"));
 
 console.log("routeMatchAccess.test.ts: ok");

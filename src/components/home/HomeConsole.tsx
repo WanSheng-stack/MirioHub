@@ -12,13 +12,11 @@ import { PostCard } from "@/components/hall/PostCard";
 import { PricePremiumSlider } from "@/components/home/PricePremiumSlider";
 import { usePostFormState } from "@/lib/post-form/usePostFormState";
 import type { RouteMatchInfo } from "@/lib/hall-route-match";
-import type { CreditStats } from "@/components/credit/CreditDashboard";
 import type { Post, PostCategory, PostType } from "@/lib/types";
 
 type HallBundle = {
   post: Post;
   authorName?: string | null;
-  creditStats?: CreditStats | null;
   routeMatch?: RouteMatchInfo | null;
 };
 
@@ -117,7 +115,6 @@ export function HomeConsole({ hallPosts, lbsPosts, compliancePosts }: Props) {
                 <PostCard
                   post={bundle.post}
                   authorName={bundle.authorName}
-                  creditStats={bundle.creditStats}
                   routeMatch={bundle.routeMatch}
                 />
                 {bundle.routeMatch?.showDetourNotice ? (

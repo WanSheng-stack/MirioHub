@@ -154,7 +154,12 @@ export async function runProviderMatchIntercept(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ demandPostId: input.demandPostId }),
   });
-  const json = (await res.json()) as ProviderMatchApiResult;
+  let json: ProviderMatchApiResult;
+  try {
+    json = (await res.json()) as ProviderMatchApiResult;
+  } catch {
+    return { ok: false, errorKey: "error.submit_failed" };
+  }
   if (
     json.account_count != null ||
     json.reused != null ||
@@ -164,8 +169,14 @@ export async function runProviderMatchIntercept(
   ) {
     return { ok: false, errorKey: "error.submit_failed" };
   }
-  if (!json.ok) {
-    return { ok: false, errorKey: json.errorKey ?? "error.submit_failed" };
+  if (res.status === 409 || !json.ok) {
+    return {
+      ok: false,
+      errorKey:
+        typeof json.errorKey === "string"
+          ? json.errorKey
+          : "error.submit_failed",
+    };
   }
   return {
     ok: true,

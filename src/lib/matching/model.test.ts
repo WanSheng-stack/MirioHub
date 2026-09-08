@@ -1,5 +1,6 @@
 /**
  * PHASE 6.7A — match request / contract foundation (TEST A–Y).
+ * PHASE 6.7A.1 — relax contract event timestamps (TEST A–J).
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/model.test.ts
  */
 
@@ -13,6 +14,9 @@ import {
   processSupplyPostIntercept,
 } from "@/lib/post-intercept";
 import {
+  contractCancelledRequiresTimestamp,
+  contractCompletedRequiresTimestamp,
+  contractCompletionCancellationExclusive,
   hasDistinctParties,
   isAlignedApplicantRole,
   isObjectPayload,
@@ -169,7 +173,7 @@ function assertNoForbiddenColumns(src: string) {
   assert.ok(hasDistinctParties(PROVIDER_APPLICANT, DEMAND_OWNER));
 }
 
-// TEST E — application_payload must be a JSON object
+// TEST E — application_payload must be a JSON object (empty object allowed)
 {
   assert.ok(migration.includes("jsonb_typeof(application_payload) = 'object'"));
   assert.equal(isObjectPayload({}), true);
@@ -470,5 +474,164 @@ assert.ok(verifySql.includes("relrowsecurity"));
 assert.ok(verifySql.includes("NOT t.tgisinternal"));
 assert.equal(verifySql.includes("SELECT * FROM public.match_requests"), false);
 assert.equal(verifySql.includes("SELECT * FROM public.match_contracts"), false);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 6.7A.1 — timestamp and payload constraints
+// ═══════════════════════════════════════════════════════════════════════════
+
+const COMPLETED_AT = "2026-09-08T13:00:00.000Z";
+const CANCELLED_AT = "2026-09-08T13:30:00.000Z";
+
+// 6.7A.1 TEST A — status = completed + completed_at set → valid
+{
+  assert.equal(
+    contractCompletedRequiresTimestamp("completed", COMPLETED_AT),
+    true,
+  );
+  assert.ok(
+    contractCompletionCancellationExclusive(COMPLETED_AT, null),
+  );
+}
+
+// 6.7A.1 TEST B — status = completed + completed_at null → invalid
+{
+  assert.equal(contractCompletedRequiresTimestamp("completed", null), false);
+}
+
+// 6.7A.1 TEST C — status = disputed + completed_at set → valid
+{
+  assert.equal(
+    contractCompletedRequiresTimestamp("disputed", COMPLETED_AT),
+    true,
+  );
+  assert.ok(
+    contractCompletionCancellationExclusive(COMPLETED_AT, null),
+  );
+}
+
+// 6.7A.1 TEST D — status = cancelled + cancelled_at set → valid
+{
+  assert.equal(
+    contractCancelledRequiresTimestamp("cancelled", CANCELLED_AT),
+    true,
+  );
+  assert.ok(
+    contractCompletionCancellationExclusive(null, CANCELLED_AT),
+  );
+}
+
+// 6.7A.1 TEST E — status = cancelled + cancelled_at null → invalid
+{
+  assert.equal(contractCancelledRequiresTimestamp("cancelled", null), false);
+}
+
+// 6.7A.1 TEST F — status = disputed + cancelled_at set → valid
+{
+  assert.equal(
+    contractCancelledRequiresTimestamp("disputed", CANCELLED_AT),
+    true,
+  );
+  assert.ok(
+    contractCompletionCancellationExclusive(null, CANCELLED_AT),
+  );
+}
+
+// 6.7A.1 TEST G — completed_at and cancelled_at both set → invalid
+{
+  assert.equal(
+    contractCompletionCancellationExclusive(COMPLETED_AT, CANCELLED_AT),
+    false,
+  );
+}
+
+// 6.7A.1 TEST H — application_payload = {} is a valid JSON object
+{
+  assert.equal(isObjectPayload({}), true);
+  assert.ok(migration.includes("DEFAULT '{}'::jsonb"));
+  assert.ok(migration.includes("jsonb_typeof(application_payload) = 'object'"));
+}
+
+// 6.7A.1 TEST I — application_payload = [] is not an object
+{
+  assert.equal(isObjectPayload([]), false);
+  assert.equal(isObjectPayload(null), false);
+  assert.equal(isObjectPayload("x"), false);
+}
+
+// 6.7A.1 TEST J — providerMatch.ts has no runtime caller; ledger is accurate
+{
+  assert.ok(/no runtime caller/i.test(ledger));
+  assert.ok(/reference/i.test(ledger));
+  assert.ok(/6\.7D/.test(ledger));
+  assert.equal(/Still used by some publish\/match client paths/i.test(ledger), false);
+
+  const srcRoot = join(repoRoot, "src");
+  const runtimeFiles: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+      if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) {
+        continue;
+      }
+      runtimeFiles.push(full);
+    }
+  };
+  walk(srcRoot);
+  const importRe =
+    /from\s+["'](?:@\/lib\/post-form\/providerMatch|\.{1,2}\/.*providerMatch)["']/;
+  for (const file of runtimeFiles) {
+    const src = readFileSync(file, "utf8");
+    assert.equal(
+      importRe.test(src),
+      false,
+      `unexpected runtime import of providerMatch.ts in ${file}`,
+    );
+  }
+}
+
+assert.ok(
+  migration.includes("match_contracts_completed_requires_timestamp"),
+);
+assert.ok(
+  migration.includes("status <> 'completed' OR completed_at IS NOT NULL"),
+);
+assert.ok(
+  migration.includes("match_contracts_cancelled_requires_timestamp"),
+);
+assert.ok(
+  migration.includes("status <> 'cancelled' OR cancelled_at IS NOT NULL"),
+);
+assert.ok(
+  migration.includes("match_contracts_completion_cancellation_exclusive"),
+);
+assert.ok(
+  migration.includes("completed_at IS NULL OR cancelled_at IS NULL"),
+);
+assert.equal(
+  migration.includes("match_contracts_completed_ts_consistent"),
+  false,
+);
+assert.equal(
+  migration.includes("match_contracts_cancelled_ts_consistent"),
+  false,
+);
+assert.equal(
+  migration.includes("(status = 'completed') = (completed_at IS NOT NULL)"),
+  false,
+);
+assert.equal(
+  migration.includes("(status = 'cancelled') = (cancelled_at IS NOT NULL)"),
+  false,
+);
+assert.ok(verifySql.includes("match_contracts_completed_requires_timestamp"));
+assert.ok(verifySql.includes("match_contracts_cancelled_requires_timestamp"));
+assert.ok(verifySql.includes("match_contracts_completion_cancellation_exclusive"));
+assert.ok(verifySql.includes("no bidirectional equality"));
+assert.ok(verifySql.includes("empty object allowed"));
 
 console.log("model.test.ts: ok");

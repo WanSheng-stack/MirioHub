@@ -143,10 +143,15 @@ CREATE TABLE public.match_contracts (
   updated_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
   CONSTRAINT match_contracts_demand_ne_provider
     CHECK (demand_user_id <> provider_user_id),
-  CONSTRAINT match_contracts_completed_ts_consistent
-    CHECK ((status = 'completed') = (completed_at IS NOT NULL)),
-  CONSTRAINT match_contracts_cancelled_ts_consistent
-    CHECK ((status = 'cancelled') = (cancelled_at IS NOT NULL))
+  -- completed requires completed_at; later statuses (e.g. disputed) may keep it.
+  CONSTRAINT match_contracts_completed_requires_timestamp
+    CHECK (status <> 'completed' OR completed_at IS NOT NULL),
+  -- cancelled requires cancelled_at; later statuses (e.g. disputed) may keep it.
+  CONSTRAINT match_contracts_cancelled_requires_timestamp
+    CHECK (status <> 'cancelled' OR cancelled_at IS NOT NULL),
+  -- A contract cannot be recorded as both completed and cancelled.
+  CONSTRAINT match_contracts_completion_cancellation_exclusive
+    CHECK (completed_at IS NULL OR cancelled_at IS NULL)
 );
 
 CREATE INDEX match_contracts_provider_user_id_idx

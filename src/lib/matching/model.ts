@@ -106,7 +106,7 @@ export function isValidMatchContractStatus(
   );
 }
 
-/** JSON object — not array, not null. Mirrors jsonb_typeof(...) = 'object'. */
+/** JSON object (including {}); not array, not null. Mirrors jsonb_typeof(...) = 'object'. */
 export function isObjectPayload(
   value: unknown,
 ): value is Record<string, unknown> {
@@ -139,4 +139,28 @@ export function isAlignedApplicantRole(
 
 export function hasDistinctParties(a: string, b: string): boolean {
   return a !== b;
+}
+
+/** Mirrors match_contracts_completed_requires_timestamp. */
+export function contractCompletedRequiresTimestamp(
+  status: MatchContractStatus,
+  completedAt: string | null,
+): boolean {
+  return status !== "completed" || completedAt !== null;
+}
+
+/** Mirrors match_contracts_cancelled_requires_timestamp. */
+export function contractCancelledRequiresTimestamp(
+  status: MatchContractStatus,
+  cancelledAt: string | null,
+): boolean {
+  return status !== "cancelled" || cancelledAt !== null;
+}
+
+/** Mirrors match_contracts_completion_cancellation_exclusive. */
+export function contractCompletionCancellationExclusive(
+  completedAt: string | null,
+  cancelledAt: string | null,
+): boolean {
+  return completedAt === null || cancelledAt === null;
 }

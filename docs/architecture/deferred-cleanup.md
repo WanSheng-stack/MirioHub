@@ -32,16 +32,17 @@ schema authority; this repo currently must not modify it.
 
 ## 3. `src/lib/post-form/providerMatch.ts`
 
-- **Current state:** Still used by some publish/match client paths. Direct
-  `confirm_match` is frozen; preflight API returns 409.
-- **Future replacement:** Match-request client (PHASE 6.7B+) posting to
-  server-only request/accept APIs.
-- **Earliest safe deletion:** After hall/detail matching uses match
-  requests and no caller imports this module.
+- **Current state:** No runtime caller. File is kept temporarily as a
+  reference for the old Route/Capacity client path. Direct `confirm_match`
+  is frozen; preflight API returns 409.
+- **Future replacement:** PHASE 6.7D accept-time orchestration will
+  decide whether to reuse pieces of this module or delete it.
+- **Earliest safe deletion:** After 6.7D accept-time orchestration is in
+  place and this file is confirmed unused.
 - **Preconditions:** New request/accept UI; 409 freeze helper no longer
   needed; no `rpc("confirm_match")`.
-- **Risk if deleted early:** Remaining clients lose 409 handling / match
-  navigation.
+- **Risk if deleted early:** Loss of a reference implementation for
+  Route/Capacity client wiring.
 
 ## 4. `evaluateFraudIntercept.ts` legacy Provider Match path
 

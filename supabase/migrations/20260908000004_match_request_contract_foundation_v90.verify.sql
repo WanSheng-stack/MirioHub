@@ -68,7 +68,17 @@ WHERE n.nspname = 'public'
   AND con.contype = 'c'
 ORDER BY 1, 2;
 -- EXPECT applicant <> recipient, demand <> provider,
--- status enums, jsonb_typeof = object, completed/cancelled timestamp consistency
+-- status enums, jsonb_typeof = object (empty object allowed for application_payload;
+-- specific keys are not required at schema layer),
+-- match_contracts_completed_requires_timestamp:
+--   CHECK (status <> 'completed' OR completed_at IS NOT NULL)
+-- match_contracts_cancelled_requires_timestamp:
+--   CHECK (status <> 'cancelled' OR cancelled_at IS NOT NULL)
+-- match_contracts_completion_cancellation_exclusive:
+--   CHECK (completed_at IS NULL OR cancelled_at IS NULL)
+-- EXPECT: no bidirectional equality constraints
+--   ((status = 'completed') = (completed_at IS NOT NULL))
+--   ((status = 'cancelled') = (cancelled_at IS NOT NULL))
 
 -- E. Unique constraints / indexes
 SELECT

@@ -124,23 +124,28 @@ must not modify it.
 
 ## 9. Cargo V2 domain contract (not on the production path)
 
-- **Current state:** PHASE 6.7B.1A.2A is a parse-only aggregate-space
-  contract under `src/lib/cargo/`. Demand declares overall required L×W×H;
-  Provider declares this-trip remaining L×W×H. Nothing imports these types
-  from UI, APIs, or RPCs. Legacy `count_small/medium/large/xlarge` remain
-  the production luggage model and are not cast to `CargoRequirementV1`.
+- **Current state:** PHASE 6.7B.1A.2B is a parse-only aggregate-space
+  contract under `src/lib/cargo/`. Demand declares overall required L×W×H
+  plus two booleans (needs loading / unloading help). Provider declares
+  this-trip remaining L×W×H plus two booleans (can help load / unload).
+  Handling fee is not in this contract; any requested help later shows 面议
+  and is confirmed before accept. Nothing imports these types from UI,
+  APIs, or RPCs. Legacy `count_small/medium/large/xlarge` remain the
+  production luggage model and are not cast to `CargoRequirementV1`.
 - **Future replacement:** 6.7B.1B may wire the parsers to an application
-  sheet. 6.7D accept-time must re-parse both snapshots and re-run declared
-  comparison. A read-only legacy adapter, if ever added, can at most emit
-  `needs_confirmation` because four-tier counts lack size and weight.
+  sheet (trilingual copy for the four booleans and 面议). 6.7D accept-time
+  must re-parse both snapshots, then write final help + fee onto
+  `agreement_snapshot`. A read-only legacy adapter, if ever added, can at
+  most emit `needs_confirmation`.
 - **Earliest safe production use:** After sheet wiring, trilingual error
   copy, and server-side re-parse on accept. Not this phase.
 - **Preconditions:** Escort stays Demand 0/1 vs Provider accommodation;
   remaining-trip space is not nameplate volume; no vehicle-class
-  recommendation; photos stay in a later handover flow, not this contract.
+  recommendation; no handling amount/currency on the publish/apply payload;
+  photos stay in a later handover flow.
 - **Risk if wired early:** Treats incomplete four-tier rows as a fit
-  decision, or shows Provider “seat count” / verified-safe copy on public
-  cards.
+  decision, shows Provider “seat count” / verified-safe copy, or stores a
+  handling price before the parties agreed.
 
 ## 10. `public.profile_cards` (dropped live; still in frozen `init.sql`)
 

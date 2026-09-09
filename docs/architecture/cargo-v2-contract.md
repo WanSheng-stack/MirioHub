@@ -1,4 +1,4 @@
-# Cargo V2 contract (PHASE 6.7B.1A.2A)
+# Cargo V2 contract (PHASE 6.7B.1A.2B)
 
 MirioHub V1 is a rideshare-style information match platform. It is **not** a
 professional logistics dispatcher, vehicle recommender, or 3D packing engine.
@@ -6,7 +6,7 @@ professional logistics dispatcher, vehicle recommender, or 3D packing engine.
 This file is a parse-only domain contract. This phase does **not** add
 database columns, RPCs, APIs, UI, or production runtime imports. Server-side
 re-parse remains mandatory before any future accept. Trilingual browser copy
-is **not** added here.
+is **not** added here (6.7B.1B).
 
 ## 1. What each side declares
 
@@ -24,119 +24,107 @@ is **not** added here.
 
 Both parties must still confirm with text, photos (later, in the
 handover/chat flow — **not uploaded in this contract**), and in-person
-checks:
+checks: cargo shape, vehicle openings, wheel arches, rotation/stacking,
+true remaining space, weight/restraint, and loading conditions.
 
-- actual cargo shape
-- vehicle openings
-- wheel arches / irregular cabin space
-- whether items can rotate or stack
-- true remaining space
-- weight and safe restraint
-- loading and unloading conditions
-
-A `no_obvious_conflict` result is **not** platform approval, a verified
-vehicle, or a guaranteed load.
+A `no_obvious_conflict` result is **not** platform approval.
 
 ## 3. Structures
 
-`CargoRequirementV1` (Demand): `version`, `requiredSpace`,
-`approximateWeightKg`, `escortPassengerCount` (0 or 1), `handlingRequest`,
-optional `note`.
+`CargoRequirementV1`: `version`, `requiredSpace`, `approximateWeightKg`,
+`escortPassengerCount` (0 or 1), `handlingRequest`, optional `note`.
 
-`CargoCapacityV1` (Provider): `version`, `basis =
-current_trip_available_space`, `availableSpace`, `availablePayloadKg`,
-`escortAccommodation`, `handlingOffer`, optional `note`.
+`CargoCapacityV1`: `version`, `basis = current_trip_available_space`,
+`availableSpace`, `availablePayloadKg`, `escortAccommodation`,
+`handlingOffer`, optional `note`.
 
-Dimensions are required integers, centimetres, `> 0`, finite, safe integers,
-with a centralized input ceiling in `cargoPolicy.ts`. The ceiling is only an
-input safety bound.
+Dimensions: required centimetre integers, `> 0`, finite, safe integers,
+ceiling in `cargoPolicy.ts` as an input safety bound only.
 
-Weight is `{ kind: "known", kg }` (positive, finite, at most one decimal,
-capped) or `{ kind: "unknown" }`. Unknown is legal and forces
-`needs_confirmation`. Known kg is **this trip's declared remaining payload**,
-not GVW from a nameplate.
+Weight: `{ kind: "known", kg }` or `{ kind: "unknown" }`. Unknown forces
+`needs_confirmation`. Known kg is this-trip remaining payload, not GVW.
 
-## 4. Escort and handling
+## 4. Handling is four booleans, fee is always later 面议
 
-Demand escort is 0 or 1. Provider does **not** enter a generic seat count.
-`available` is a self-report. The platform must not show verified / safe /
-approved. An escort mismatch is a declared-condition conflict, not a Fraud
-hard deny.
+Demand `handlingRequest`:
 
-Handling uses one scope: `none` | `loading` | `unloading` | `both`.
-Compensation exists only when scope is not `none`.
+- `needsLoadingHelp: boolean` — wants Provider help loading
+- `needsUnloadingHelp: boolean` — wants Provider help unloading
 
-- Demand compensation: willing-to-pay handling help (`fixed` or
-  `negotiable`). Currency V1: `RSD` | `EUR`. `amountMinor` is a positive
-  safe integer (RSD minor units / EUR cents). Display formatting is later UI.
-- Provider compensation: hoped-for handling help (`fixed`, `negotiable`, or
-  `voluntary_unpaid`). `voluntary_unpaid` means the Provider offers unpaid
-  help voluntarily; the platform is not requiring free labour. It does **not**
-  turn the Demand offered amount into a Provider receivable.
+Provider `handlingOffer`:
 
-Handling assistance is separate from the main transport fee. The final
-agreed handling terms belong in a later `agreement_snapshot`, not in this
-phase.
+- `canHelpLoading: boolean` — Provider says they can help load
+- `canHelpUnloading: boolean` — Provider says they can help unload
 
-## 5. Declared comparison (not a fit verdict)
+Both fields are required strict booleans (`true`/`false` only).
 
-Statuses:
+This contract stores **no** handling fee, currency, min/max, unpaid flag,
+Demand offer, or Provider asking price.
+
+Future UI copy (not added this phase):
+
+- Demand: 需要帮助方协助装货 / 需要帮助方协助卸货. If either is on:
+  装卸协助费：面议. 请在接受申请前确认是否收费、具体金额和协助范围.
+- Provider: 可以协助装货 / 可以协助卸货. If either is on:
+  装卸协助费：面议. 是否收费及具体金额，由双方在接受申请前确认.
+
+“Can help” is a self-report. It is **not** free labour, not verified
+moving capacity, and not an agreed price.
+
+## 5. Future `agreement_snapshot` (not this phase)
+
+Publish/apply records only the four booleans. After chat, **before accept**,
+a later flow confirms: final loading help, final unloading help, final
+handling fee and currency, or confirmed unpaid. Those fields belong on
+`agreement_snapshot`. Do not pre-build an amount model here.
+
+## 6. Declared comparison
 
 | Status | Meaning |
 | --- | --- |
-| `declared_conflict` | Filled-in declarations differ (space, weight, escort, or handling scope). Parties can still talk. Not a Fraud hard deny. |
-| `needs_confirmation` | Unknown weight, negotiable fee, currency/amount gap, or Provider escort `requires_confirmation`. |
-| `no_obvious_conflict` | No obvious conflict in the filled-in numbers. **Does not mean it fits or the platform approved it.** |
+| `declared_conflict` | Declarations differ (space, weight, escort, or a requested help the Provider cannot give). Still talkable. Not Fraud hard deny. |
+| `needs_confirmation` | Unknown weight, escort `requires_confirmation`, or requested help is offered so fee must be negotiated. |
+| `no_obvious_conflict` | No obvious conflict in the filled-in numbers. **Does not mean it fits.** |
 
 `requiresHumanConfirmation` is **always** `true`.
 
-Space: sort each box's three sides and compare pairwise (rotation of a rough
-cuboid only). This is **not** packing proof: doors, arches, stacking, tilt,
-and restraint are out of scope. A numeric non-conflict still needs humans.
+Handling:
 
-Weight: both known and Demand kg > Provider kg → `declared_conflict`. Either
-unknown → `needs_confirmation`. No legal GVW inference.
+- Demand does not need a help type → Provider's corresponding boolean is ignored (no reason).
+- Demand needs loading and Provider `canHelpLoading=false` → `loading_help_unavailable`.
+- Demand needs unloading and Provider `canHelpUnloading=false` → `unloading_help_unavailable`.
+- Every requested help is offered → `handling_fee_negotiation_required` (`needs_confirmation`).
+- Unavailable outranks negotiation.
 
-Escort: Demand 1 + Provider `not_available` → `declared_conflict`. Provider
-`requires_confirmation` → `needs_confirmation`.
+Space: sort three sides and compare pairwise (rough cuboid rotation only;
+not packing proof). Weight: Demand known kg > Provider known kg → conflict;
+either unknown → confirmation. Escort: Demand 1 + `not_available` →
+conflict; `requires_confirmation` → confirmation.
 
-Handling coverage: `both` covers loading/unloading/both; `loading` covers
-loading only; `unloading` covers unloading only; `none` covers no assistance
-request. Demand `none` needs no coverage.
+Precedence: `declared_conflict` > `needs_confirmation` > `no_obvious_conflict`.
+Reasons are stable de-duplicated public keys. Comparison must not
+auto-accept, auto-reject, hard-deny, write fraud logs, or prove legality.
 
-Fee: either `negotiable` → confirmation; both `fixed` with different
-currency or Provider amount > Demand amount → confirmation; Provider
-amount ≤ Demand amount is not a fee conflict (accept still confirms the
-exact amount later); `voluntary_unpaid` is not a fee conflict and does not
-auto-assign the Demand offer as payable.
+## 7. Parser boundary
 
-Reason precedence: `declared_conflict` > `needs_confirmation` >
-`no_obvious_conflict`. Reasons are stable, de-duplicated public keys. They
-must not include phones, addresses, or raw amounts.
+Plain objects only; unknown keys rejected; arrays and prototype-polluted
+objects rejected; private/contact/identity/location/code/fee/bid/payment
+and leftover compensation/amount/currency keys rejected.
 
-The comparison must not auto-accept, auto-reject, hard-deny, write fraud
-logs, or prove vehicle legality / space / load safety.
+Runtime authenticity: module-private `WeakSet`. Parser freeze + register.
+Copies, JSON round-trip, `structuredClone`, and same-shape objects fail
+`isParsed*`. No exported runtime brand Symbol. The evaluator accepts only
+WeakSet-registered values; `compareDeclaredCargo` parses first.
 
-## 6. Parser boundary
-
-Parsers require plain objects, reject unknown keys, reject prototype-polluted
-objects and arrays-as-objects, and recursively reject private / contact /
-identity / location / code / bid / payment fields. Handling compensation is
-the only allowed money field. Parsers return branded
-`ParsedCargoRequirementV1` / `ParsedCargoCapacityV1`. The evaluator accepts
-only branded values (or `compareDeclaredCargo` which parses first).
-
-## 7. Out of this contract
+## 8. Out of this contract
 
 No per-item entry, presets, vehicle-class recommendation, trailer fallback,
-`guaranteed_fit`, photos, user/post ids, phones, plates, GPS, pickup/delivery
-codes, or main-fee overrides.
+`guaranteed_fit`, photos, user/post ids, phones, plates, GPS, codes, or
+handling/transport fee amounts.
 
-Legacy `count_small/medium/large/xlarge` stay the live luggage columns. They
-must not be cast to Cargo V2.
+Legacy `count_small/medium/large/xlarge` stay live luggage columns.
 
-## 8. This phase has no DB / UI / API
+## 9. This phase has no DB / UI / API
 
-No migration, no `posts` change, no application payload, no
-`MatchRequestSheet`, no hall button, no RPC. Real users still do not see a
-Cargo V2 form.
+No migration, no application payload, no `MatchRequestSheet`, no hall
+button, no RPC. Real users still do not see a Cargo V2 form.

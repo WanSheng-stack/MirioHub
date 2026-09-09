@@ -1,31 +1,23 @@
 /**
- * PHASE 6.7B.1A.2A — Cargo V2 aggregate-space contracts and strict parsers.
+ * PHASE 6.7B.1A.2B — Cargo V2 aggregate-space contracts and strict parsers.
  *
  * Not a database schema. Not on the production runtime path.
  * TypeScript types are not an authorization boundary; runtime parse is.
  * Server must re-parse; do not trust browser JSON.
+ * Parsed authenticity is a module-private WeakSet, not an exported Symbol.
  */
 
 import {
-  CARGO_AMOUNT_MINOR_MAX,
   CARGO_CONTRACT_VERSION,
-  CARGO_CURRENCIES,
   CARGO_DIMENSION_CM_MAX,
   CARGO_DIMENSION_CM_MIN,
   CARGO_ESCORT_ACCOMMODATIONS,
-  CARGO_HANDLING_SCOPES,
   CARGO_NOTE_MAX,
   CARGO_WEIGHT_KG_MAX,
   type CargoEscortAccommodation,
-  type CargoHandlingScope,
-  type SupportedCargoCurrency,
 } from "@/lib/cargo/cargoPolicy";
 
-export type {
-  CargoEscortAccommodation,
-  CargoHandlingScope,
-  SupportedCargoCurrency,
-};
+export type { CargoEscortAccommodation };
 
 export type CargoParseResult<T> =
   | { ok: true; value: T }
@@ -41,26 +33,14 @@ export type CargoWeight =
   | { kind: "known"; kg: number }
   | { kind: "unknown" };
 
-export type DemandHandlingCompensation =
-  | {
-      type: "fixed";
-      amountMinor: number;
-      currency: SupportedCargoCurrency;
-    }
-  | { type: "negotiable" };
-
-export type ProviderHandlingCompensation =
-  | DemandHandlingCompensation
-  | { type: "voluntary_unpaid" };
-
 export type CargoHandlingRequest = {
-  scope: CargoHandlingScope;
-  compensation?: DemandHandlingCompensation;
+  needsLoadingHelp: boolean;
+  needsUnloadingHelp: boolean;
 };
 
 export type CargoHandlingOffer = {
-  scope: CargoHandlingScope;
-  compensation?: ProviderHandlingCompensation;
+  canHelpLoading: boolean;
+  canHelpUnloading: boolean;
 };
 
 export type CargoRequirementV1 = {
@@ -82,16 +62,19 @@ export type CargoCapacityV1 = {
   note?: string;
 };
 
-export const PARSED_CARGO_REQUIREMENT = Symbol("ParsedCargoRequirementV1");
-export const PARSED_CARGO_CAPACITY = Symbol("ParsedCargoCapacityV1");
+declare const parsedRequirementBrand: unique symbol;
+declare const parsedCapacityBrand: unique symbol;
 
 export type ParsedCargoRequirementV1 = CargoRequirementV1 & {
-  readonly [PARSED_CARGO_REQUIREMENT]: true;
+  readonly [parsedRequirementBrand]: true;
 };
 
 export type ParsedCargoCapacityV1 = CargoCapacityV1 & {
-  readonly [PARSED_CARGO_CAPACITY]: true;
+  readonly [parsedCapacityBrand]: true;
 };
+
+const parsedRequirementValues = new WeakSet<object>();
+const parsedCapacityValues = new WeakSet<object>();
 
 const REQUIREMENT_KEYS = new Set([
   "version",
@@ -115,10 +98,8 @@ const CAPACITY_KEYS = new Set([
 const DIMENSION_KEYS = new Set(["length", "width", "height"]);
 const WEIGHT_KNOWN_KEYS = new Set(["kind", "kg"]);
 const WEIGHT_UNKNOWN_KEYS = new Set(["kind"]);
-const DEMAND_HANDLING_KEYS = new Set(["scope", "compensation"]);
-const PROVIDER_HANDLING_KEYS = new Set(["scope", "compensation"]);
-const FIXED_COMP_KEYS = new Set(["type", "amountMinor", "currency"]);
-const TYPE_ONLY_COMP_KEYS = new Set(["type"]);
+const DEMAND_HANDLING_KEYS = new Set(["needsLoadingHelp", "needsUnloadingHelp"]);
+const PROVIDER_HANDLING_KEYS = new Set(["canHelpLoading", "canHelpUnloading"]);
 
 const FORBIDDEN_KEY_ALIASES = new Set(
   [
@@ -177,6 +158,14 @@ const FORBIDDEN_KEY_ALIASES = new Set(
     "fee_override",
     "transportfee",
     "transport_fee",
+    "compensation",
+    "amountminor",
+    "amount_minor",
+    "currency",
+    "fixed",
+    "negotiable",
+    "voluntaryunpaid",
+    "voluntary_unpaid",
   ].map((k) => k.toLowerCase()),
 );
 
@@ -292,10 +281,7 @@ function parseDimensionsCm(
   });
 }
 
-function parseKg(
-  value: unknown,
-  field: string,
-): CargoParseResult<number> {
+function parseKg(value: unknown, field: string): CargoParseResult<number> {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fail("error.cargo_invalid_weight", field);
   }
@@ -324,79 +310,14 @@ function parseWeight(value: unknown, path: string): CargoParseResult<CargoWeight
   return fail("error.cargo_invalid_weight", `${path}.kind`);
 }
 
-function parseCurrency(
+function parseRequiredBoolean(
   value: unknown,
   field: string,
-): CargoParseResult<SupportedCargoCurrency> {
-  if (
-    typeof value !== "string" ||
-    !(CARGO_CURRENCIES as readonly string[]).includes(value)
-  ) {
-    return fail("error.cargo_invalid_currency", field);
+): CargoParseResult<boolean> {
+  if (typeof value !== "boolean") {
+    return fail("error.cargo_invalid_handling", field);
   }
-  return ok(value as SupportedCargoCurrency);
-}
-
-function parseFixedAmount(
-  rec: Record<string, unknown>,
-  path: string,
-): CargoParseResult<{
-  type: "fixed";
-  amountMinor: number;
-  currency: SupportedCargoCurrency;
-}> {
-  const keys = rejectUnknownKeys(rec, FIXED_COMP_KEYS, path);
-  if (!keys.ok) return keys;
-  if (!isSafeInt(rec.amountMinor) || rec.amountMinor <= 0) {
-    return fail("error.cargo_invalid_compensation", `${path}.amountMinor`);
-  }
-  if (rec.amountMinor > CARGO_AMOUNT_MINOR_MAX) {
-    return fail("error.cargo_invalid_compensation", `${path}.amountMinor`);
-  }
-  const currency = parseCurrency(rec.currency, `${path}.currency`);
-  if (!currency.ok) return currency;
-  return ok({
-    type: "fixed",
-    amountMinor: rec.amountMinor,
-    currency: currency.value,
-  });
-}
-
-function parseDemandCompensation(
-  value: unknown,
-  path: string,
-): CargoParseResult<DemandHandlingCompensation> {
-  if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_compensation", path);
-  }
-  if (value.type === "fixed") return parseFixedAmount(value, path);
-  if (value.type === "negotiable") {
-    const keys = rejectUnknownKeys(value, TYPE_ONLY_COMP_KEYS, path);
-    if (!keys.ok) return keys;
-    return ok({ type: "negotiable" });
-  }
-  return fail("error.cargo_invalid_compensation", `${path}.type`);
-}
-
-function parseProviderCompensation(
-  value: unknown,
-  path: string,
-): CargoParseResult<ProviderHandlingCompensation> {
-  if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_compensation", path);
-  }
-  if (value.type === "fixed") return parseFixedAmount(value, path);
-  if (value.type === "negotiable") {
-    const keys = rejectUnknownKeys(value, TYPE_ONLY_COMP_KEYS, path);
-    if (!keys.ok) return keys;
-    return ok({ type: "negotiable" });
-  }
-  if (value.type === "voluntary_unpaid") {
-    const keys = rejectUnknownKeys(value, TYPE_ONLY_COMP_KEYS, path);
-    if (!keys.ok) return keys;
-    return ok({ type: "voluntary_unpaid" });
-  }
-  return fail("error.cargo_invalid_compensation", `${path}.type`);
+  return ok(value);
 }
 
 function parseHandlingRequest(
@@ -409,27 +330,25 @@ function parseHandlingRequest(
   const keys = rejectUnknownKeys(value, DEMAND_HANDLING_KEYS, path);
   if (!keys.ok) return keys;
   if (
-    typeof value.scope !== "string" ||
-    !(CARGO_HANDLING_SCOPES as readonly string[]).includes(value.scope)
+    !Object.hasOwn(value, "needsLoadingHelp") ||
+    !Object.hasOwn(value, "needsUnloadingHelp")
   ) {
-    return fail("error.cargo_invalid_handling", `${path}.scope`);
+    return fail("error.cargo_invalid_handling", path);
   }
-  const scope = value.scope as CargoHandlingScope;
-  if (scope === "none") {
-    if (value.compensation !== undefined) {
-      return fail("error.cargo_invalid_compensation", `${path}.compensation`);
-    }
-    return ok({ scope: "none" });
-  }
-  if (value.compensation === undefined) {
-    return fail("error.cargo_invalid_compensation", `${path}.compensation`);
-  }
-  const compensation = parseDemandCompensation(
-    value.compensation,
-    `${path}.compensation`,
+  const loading = parseRequiredBoolean(
+    value.needsLoadingHelp,
+    `${path}.needsLoadingHelp`,
   );
-  if (!compensation.ok) return compensation;
-  return ok({ scope, compensation: compensation.value });
+  if (!loading.ok) return loading;
+  const unloading = parseRequiredBoolean(
+    value.needsUnloadingHelp,
+    `${path}.needsUnloadingHelp`,
+  );
+  if (!unloading.ok) return unloading;
+  return ok({
+    needsLoadingHelp: loading.value,
+    needsUnloadingHelp: unloading.value,
+  });
 }
 
 function parseHandlingOffer(
@@ -442,27 +361,25 @@ function parseHandlingOffer(
   const keys = rejectUnknownKeys(value, PROVIDER_HANDLING_KEYS, path);
   if (!keys.ok) return keys;
   if (
-    typeof value.scope !== "string" ||
-    !(CARGO_HANDLING_SCOPES as readonly string[]).includes(value.scope)
+    !Object.hasOwn(value, "canHelpLoading") ||
+    !Object.hasOwn(value, "canHelpUnloading")
   ) {
-    return fail("error.cargo_invalid_handling", `${path}.scope`);
+    return fail("error.cargo_invalid_handling", path);
   }
-  const scope = value.scope as CargoHandlingScope;
-  if (scope === "none") {
-    if (value.compensation !== undefined) {
-      return fail("error.cargo_invalid_compensation", `${path}.compensation`);
-    }
-    return ok({ scope: "none" });
-  }
-  if (value.compensation === undefined) {
-    return fail("error.cargo_invalid_compensation", `${path}.compensation`);
-  }
-  const compensation = parseProviderCompensation(
-    value.compensation,
-    `${path}.compensation`,
+  const loading = parseRequiredBoolean(
+    value.canHelpLoading,
+    `${path}.canHelpLoading`,
   );
-  if (!compensation.ok) return compensation;
-  return ok({ scope, compensation: compensation.value });
+  if (!loading.ok) return loading;
+  const unloading = parseRequiredBoolean(
+    value.canHelpUnloading,
+    `${path}.canHelpUnloading`,
+  );
+  if (!unloading.ok) return unloading;
+  return ok({
+    canHelpLoading: loading.value,
+    canHelpUnloading: unloading.value,
+  });
 }
 
 function parseNote(
@@ -487,63 +404,42 @@ function parseNote(
 function brandRequirement(
   value: CargoRequirementV1,
 ): ParsedCargoRequirementV1 {
-  const handling: CargoHandlingRequest = value.handlingRequest.compensation
-    ? {
-        scope: value.handlingRequest.scope,
-        compensation: Object.freeze({ ...value.handlingRequest.compensation }),
-      }
-    : { scope: value.handlingRequest.scope };
-  return Object.freeze({
+  const frozen = Object.freeze({
     version: 1 as const,
     requiredSpace: Object.freeze({ ...value.requiredSpace }),
     approximateWeightKg: Object.freeze({ ...value.approximateWeightKg }),
     escortPassengerCount: value.escortPassengerCount,
-    handlingRequest: Object.freeze(handling),
+    handlingRequest: Object.freeze({ ...value.handlingRequest }),
     ...(value.note !== undefined ? { note: value.note } : {}),
-    [PARSED_CARGO_REQUIREMENT]: true as const,
-  });
+  }) as ParsedCargoRequirementV1;
+  parsedRequirementValues.add(frozen);
+  return frozen;
 }
 
 function brandCapacity(value: CargoCapacityV1): ParsedCargoCapacityV1 {
-  const handling: CargoHandlingOffer = value.handlingOffer.compensation
-    ? {
-        scope: value.handlingOffer.scope,
-        compensation: Object.freeze({ ...value.handlingOffer.compensation }),
-      }
-    : { scope: value.handlingOffer.scope };
-  return Object.freeze({
+  const frozen = Object.freeze({
     version: 1 as const,
     basis: "current_trip_available_space" as const,
     availableSpace: Object.freeze({ ...value.availableSpace }),
     availablePayloadKg: Object.freeze({ ...value.availablePayloadKg }),
     escortAccommodation: value.escortAccommodation,
-    handlingOffer: Object.freeze(handling),
+    handlingOffer: Object.freeze({ ...value.handlingOffer }),
     ...(value.note !== undefined ? { note: value.note } : {}),
-    [PARSED_CARGO_CAPACITY]: true as const,
-  });
+  }) as ParsedCargoCapacityV1;
+  parsedCapacityValues.add(frozen);
+  return frozen;
 }
 
 export function isParsedCargoRequirementV1(
   value: unknown,
 ): value is ParsedCargoRequirementV1 {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { [PARSED_CARGO_REQUIREMENT]?: unknown })[
-      PARSED_CARGO_REQUIREMENT
-    ] === true
-  );
+  return typeof value === "object" && value !== null && parsedRequirementValues.has(value);
 }
 
 export function isParsedCargoCapacityV1(
   value: unknown,
 ): value is ParsedCargoCapacityV1 {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { [PARSED_CARGO_CAPACITY]?: unknown })[PARSED_CARGO_CAPACITY] ===
-      true
-  );
+  return typeof value === "object" && value !== null && parsedCapacityValues.has(value);
 }
 
 export function parseCargoRequirementV1(
@@ -650,7 +546,5 @@ export const CARGO_ERROR_KEYS = [
   "error.cargo_invalid_weight",
   "error.cargo_invalid_escort",
   "error.cargo_invalid_handling",
-  "error.cargo_invalid_compensation",
-  "error.cargo_invalid_currency",
   "error.cargo_private_field_forbidden",
 ] as const;

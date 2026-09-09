@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7B.1A.2A — declared-space comparison (never a fit guarantee).
+ * PHASE 6.7B.1A.2B — declared-space comparison (never a fit guarantee).
  *
  * Not on the production runtime path. Server must re-parse both snapshots
  * before any future accept. requiresHumanConfirmation is always true.
@@ -8,7 +8,6 @@
 
 import {
   isConflictReason,
-  providerScopeCoversDemand,
   sortedCargoReasons,
   type CargoDeclaredComparisonReason,
   type CargoDeclaredComparisonStatus,
@@ -79,30 +78,23 @@ function collectReasons(
     }
   }
 
-  if (
-    !providerScopeCoversDemand(
-      capacity.handlingOffer.scope,
-      requirement.handlingRequest.scope,
-    )
-  ) {
-    reasons.add("handling_scope_differs");
-  }
+  const needsLoading = requirement.handlingRequest.needsLoadingHelp;
+  const needsUnloading = requirement.handlingRequest.needsUnloadingHelp;
+  const canLoad = capacity.handlingOffer.canHelpLoading;
+  const canUnload = capacity.handlingOffer.canHelpUnloading;
 
-  const demandComp = requirement.handlingRequest.compensation;
-  const providerComp = capacity.handlingOffer.compensation;
-  if (demandComp && providerComp) {
-    if (demandComp.type === "negotiable" || providerComp.type === "negotiable") {
-      reasons.add("handling_compensation_requires_confirmation");
-    } else if (providerComp.type === "voluntary_unpaid") {
-      // Voluntary unpaid is not a fee conflict and does not mint a receivable
-      // from the Demand offered amount.
-    } else if (demandComp.type === "fixed" && providerComp.type === "fixed") {
-      if (demandComp.currency !== providerComp.currency) {
-        reasons.add("handling_compensation_currency_differs");
-      } else if (providerComp.amountMinor > demandComp.amountMinor) {
-        reasons.add("handling_compensation_amount_differs");
-      }
-    }
+  if (needsLoading && !canLoad) {
+    reasons.add("loading_help_unavailable");
+  }
+  if (needsUnloading && !canUnload) {
+    reasons.add("unloading_help_unavailable");
+  }
+  if (
+    (needsLoading || needsUnloading) &&
+    (!needsLoading || canLoad) &&
+    (!needsUnloading || canUnload)
+  ) {
+    reasons.add("handling_fee_negotiation_required");
   }
 
   return sortedCargoReasons(reasons);

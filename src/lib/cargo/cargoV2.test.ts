@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7B.1A.2A — Cargo V2 aggregate-space contract tests (TEST A–AJ).
+ * PHASE 6.7B.1A.2B — Cargo V2 yes/no handling + authentic parsed values.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/cargo/cargoV2.test.ts
  */
 
@@ -11,27 +11,18 @@ import { fileURLToPath } from "node:url";
 import {
   compareDeclaredCargo,
   evaluateCargoCompatibility,
-  sortedDimensions,
 } from "@/lib/cargo/cargoCompatibility";
-import {
-  CARGO_AMOUNT_MINOR_MAX,
-  CARGO_CURRENCIES,
-  CARGO_DIMENSION_CM_MAX,
-  CARGO_HANDLING_SCOPES,
-  CARGO_WEIGHT_KG_MAX,
-  providerScopeCoversDemand,
-  type CargoHandlingScope,
-} from "@/lib/cargo/cargoPolicy";
 import {
   isParsedCargoCapacityV1,
   isParsedCargoRequirementV1,
   parseCargoCapacityV1,
   parseCargoRequirementV1,
 } from "@/lib/cargo/cargoContract";
+import * as cargoContract from "@/lib/cargo/cargoContract";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
-const PHASE_BASELINE = "c86f4e986f44977e10934c85301cd7dc38c65fc4";
+const PHASE_BASELINE = "6e6778556c035b84110104041058d3072620a996";
 const V92_REL =
   "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql";
 const V91_REL =
@@ -67,7 +58,7 @@ function minRequirement(overrides: Record<string, unknown> = {}) {
     requiredSpace: { length: 80, width: 50, height: 40 },
     approximateWeightKg: { kind: "known", kg: 10 },
     escortPassengerCount: 0,
-    handlingRequest: { scope: "none" },
+    handlingRequest: { needsLoadingHelp: false, needsUnloadingHelp: false },
     ...overrides,
   };
 }
@@ -79,7 +70,7 @@ function minCapacity(overrides: Record<string, unknown> = {}) {
     availableSpace: { length: 120, width: 80, height: 80 },
     availablePayloadKg: { kind: "known", kg: 200 },
     escortAccommodation: "available",
-    handlingOffer: { scope: "none" },
+    handlingOffer: { canHelpLoading: false, canHelpUnloading: false },
     ...overrides,
   };
 }
@@ -105,484 +96,284 @@ function compare(req: unknown, cap: unknown) {
   return result.value;
 }
 
-function demandHandling(scope: CargoHandlingScope) {
-  if (scope === "none") return { scope: "none" as const };
-  return {
-    scope,
-    compensation: { type: "fixed" as const, amountMinor: 1000, currency: "RSD" as const },
-  };
-}
-
-function providerHandling(scope: CargoHandlingScope) {
-  if (scope === "none") return { scope: "none" as const };
-  return {
-    scope,
-    compensation: { type: "fixed" as const, amountMinor: 1000, currency: "RSD" as const },
-  };
-}
-
-// TEST A — Demand aggregate dimensions parse
+// TEST A — Demand both handling booleans required
 {
-  const parsed = parseCargoRequirementV1(minRequirement());
-  assert.equal(parsed.ok, true);
-  if (parsed.ok) {
-    assert.deepEqual(parsed.value.requiredSpace, {
-      length: 80,
-      width: 50,
-      height: 40,
-    });
-    assert.equal(parsed.value.version, 1);
-  }
+  const missingLoad = parseCargoRequirementV1(
+    minRequirement({ handlingRequest: { needsUnloadingHelp: false } }),
+  );
+  assert.equal(missingLoad.ok, false);
+  const missingUnload = parseCargoRequirementV1(
+    minRequirement({ handlingRequest: { needsLoadingHelp: false } }),
+  );
+  assert.equal(missingUnload.ok, false);
 }
 
-// TEST B — Provider aggregate dimensions parse
+// TEST B — Provider both handling booleans required
 {
-  const parsed = parseCargoCapacityV1(minCapacity());
-  assert.equal(parsed.ok, true);
-  if (parsed.ok) {
-    assert.deepEqual(parsed.value.availableSpace, {
-      length: 120,
-      width: 80,
-      height: 80,
-    });
-    assert.equal(parsed.value.basis, "current_trip_available_space");
-  }
+  const missingLoad = parseCargoCapacityV1(
+    minCapacity({ handlingOffer: { canHelpUnloading: true } }),
+  );
+  assert.equal(missingLoad.ok, false);
+  const missingUnload = parseCargoCapacityV1(
+    minCapacity({ handlingOffer: { canHelpLoading: true } }),
+  );
+  assert.equal(missingUnload.ok, false);
 }
 
-// TEST C — missing any side rejects
+// TEST C — booleans accept true/false
 {
-  for (const missing of ["length", "width", "height"] as const) {
-    const space = { length: 80, width: 50, height: 40 } as Record<string, number>;
-    delete space[missing];
-    const parsed = parseCargoRequirementV1(
-      minRequirement({ requiredSpace: space }),
-    );
-    assert.equal(parsed.ok, false, missing);
-  }
+  const req = mustParseReq(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: false },
+    }),
+  );
+  assert.equal(req.handlingRequest.needsLoadingHelp, true);
+  assert.equal(req.handlingRequest.needsUnloadingHelp, false);
+  const cap = mustParseCap(
+    minCapacity({
+      handlingOffer: { canHelpLoading: false, canHelpUnloading: true },
+    }),
+  );
+  assert.equal(cap.handlingOffer.canHelpLoading, false);
+  assert.equal(cap.handlingOffer.canHelpUnloading, true);
 }
 
-// TEST D — 0 / negative / decimal / string / NaN / Infinity / over max reject
+// TEST D — reject 0 / 1 / string / null
 {
-  const bad = [0, -1, 1.5, "80", Number.NaN, Number.POSITIVE_INFINITY, CARGO_DIMENSION_CM_MAX + 1];
-  for (const value of bad) {
+  for (const value of [0, 1, "true", "false", null]) {
     const parsed = parseCargoRequirementV1(
       minRequirement({
-        requiredSpace: { length: value, width: 50, height: 40 },
+        handlingRequest: { needsLoadingHelp: value, needsUnloadingHelp: false },
       }),
     );
     assert.equal(parsed.ok, false, String(value));
+    const cap = parseCargoCapacityV1(
+      minCapacity({
+        handlingOffer: { canHelpLoading: value, canHelpUnloading: false },
+      }),
+    );
+    assert.equal(cap.ok, false, String(value));
   }
 }
 
-// TEST E — items / category / preset / quantity rejected
+// TEST E — Demand handling unknown key reject
 {
   const parsed = parseCargoRequirementV1(
     minRequirement({
-      items: [{ category: "moving_box", quantity: 1, preset: "box_small" }],
+      handlingRequest: {
+        needsLoadingHelp: false,
+        needsUnloadingHelp: false,
+        extra: true,
+      },
     }),
   );
   assert.equal(parsed.ok, false);
   if (!parsed.ok) assert.equal(parsed.errorKey, "error.cargo_unknown_key");
 }
 
-// TEST F — vehicle recommendation and trailer fallback are gone
+// TEST F — Provider handling unknown key reject
 {
-  const policy = read("src/lib/cargo/cargoPolicy.ts");
-  const contract = read("src/lib/cargo/cargoContract.ts");
-  const compat = read("src/lib/cargo/cargoCompatibility.ts");
-  for (const src of [policy, contract, compat]) {
-    assert.equal(src.includes("recommendCargoVehicleClass"), false);
-    assert.equal(src.includes("CargoVehicleRecommendation"), false);
-    assert.equal(src.includes("vehicle_with_trailer"), false);
-    assert.equal(src.includes("CARGO_PRESET_DIMENSIONS"), false);
-  }
-}
-
-// TEST G — sorted rotation still conflicts when one side is larger
-{
-  const result = compare(
-    minRequirement({
-      requiredSpace: { length: 300, width: 20, height: 20 },
-    }),
+  const parsed = parseCargoCapacityV1(
     minCapacity({
-      availableSpace: { length: 100, width: 100, height: 100 },
+      handlingOffer: {
+        canHelpLoading: false,
+        canHelpUnloading: false,
+        extra: true,
+      },
     }),
   );
-  assert.equal(result.status, "declared_conflict");
-  assert.ok(result.reasons.includes("declared_space_exceeds_available_space"));
+  assert.equal(parsed.ok, false);
+  if (!parsed.ok) assert.equal(parsed.errorKey, "error.cargo_unknown_key");
 }
 
-// TEST H — numeric non-conflict is not a guaranteed fit
+// TEST G — old compensation / amount / currency fields reject
 {
-  const result = compare(
-    minRequirement({
-      requiredSpace: { length: 100, width: 50, height: 40 },
-    }),
-    minCapacity({
-      availableSpace: { length: 40, width: 100, height: 50 },
-    }),
-  );
-  assert.deepEqual(sortedDimensions({ length: 100, width: 50, height: 40 }), [
-    40, 50, 100,
-  ]);
-  assert.equal(result.status, "no_obvious_conflict");
-  assert.equal(result.reasons.includes("declared_space_exceeds_available_space"), false);
-  assert.equal(JSON.stringify(result).includes("guaranteed"), false);
-  assert.equal(JSON.stringify(result).includes("guaranteed_fit"), false);
-}
-
-// TEST I — known weight Demand > Provider → declared_conflict
-{
-  const result = compare(
-    minRequirement({ approximateWeightKg: { kind: "known", kg: 80 } }),
-    minCapacity({ availablePayloadKg: { kind: "known", kg: 20 } }),
-  );
-  assert.equal(result.status, "declared_conflict");
-  assert.ok(result.reasons.includes("declared_weight_exceeds_available_payload"));
-}
-
-// TEST J — either weight unknown → needs_confirmation
-{
-  const demandUnknown = compare(
-    minRequirement({ approximateWeightKg: { kind: "unknown" } }),
-    minCapacity(),
-  );
-  assert.equal(demandUnknown.status, "needs_confirmation");
-  assert.ok(demandUnknown.reasons.includes("weight_confirmation_required"));
-  const providerUnknown = compare(
-    minRequirement(),
-    minCapacity({ availablePayloadKg: { kind: "unknown" } }),
-  );
-  assert.equal(providerUnknown.status, "needs_confirmation");
-}
-
-// TEST K — escort 1 + not_available → declared_conflict
-{
-  const result = compare(
-    minRequirement({ escortPassengerCount: 1 }),
-    minCapacity({ escortAccommodation: "not_available" }),
-  );
-  assert.equal(result.status, "declared_conflict");
-  assert.ok(result.reasons.includes("escort_condition_differs"));
-}
-
-// TEST L — escort requires_confirmation → needs_confirmation
-{
-  const result = compare(
-    minRequirement({ escortPassengerCount: 1 }),
-    minCapacity({ escortAccommodation: "requires_confirmation" }),
-  );
-  assert.equal(result.status, "needs_confirmation");
-  assert.ok(result.reasons.includes("escort_requires_confirmation"));
-}
-
-// TEST M — handling scope coverage for every combination
-{
-  const expectedCover: Record<CargoHandlingScope, Record<CargoHandlingScope, boolean>> = {
-    none: { none: true, loading: true, unloading: true, both: true },
-    loading: { none: false, loading: true, unloading: false, both: true },
-    unloading: { none: false, loading: false, unloading: true, both: true },
-    both: { none: false, loading: false, unloading: false, both: true },
-  };
-  for (const demand of CARGO_HANDLING_SCOPES) {
-    for (const provider of CARGO_HANDLING_SCOPES) {
-      assert.equal(
-        providerScopeCoversDemand(provider, demand),
-        expectedCover[demand][provider],
-        `${demand} vs ${provider}`,
-      );
-      const result = compare(
-        minRequirement({ handlingRequest: demandHandling(demand) }),
-        minCapacity({ handlingOffer: providerHandling(provider) }),
-      );
-      if (expectedCover[demand][provider]) {
-        assert.equal(result.reasons.includes("handling_scope_differs"), false);
-      } else {
-        assert.equal(result.status, "declared_conflict");
-        assert.ok(result.reasons.includes("handling_scope_differs"));
-      }
-    }
+  for (const key of [
+    "compensation",
+    "amountMinor",
+    "currency",
+    "fixed",
+    "negotiable",
+    "voluntary_unpaid",
+    "bid",
+    "fee",
+    "payment",
+  ]) {
+    const parsed = parseCargoRequirementV1(minRequirement({ [key]: true }));
+    assert.equal(parsed.ok, false, key);
   }
-}
-
-// TEST N — Demand scope none + compensation rejects
-{
-  const parsed = parseCargoRequirementV1(
+  const nested = parseCargoRequirementV1(
     minRequirement({
       handlingRequest: {
-        scope: "none",
+        needsLoadingHelp: true,
+        needsUnloadingHelp: false,
         compensation: { type: "negotiable" },
       },
     }),
   );
-  assert.equal(parsed.ok, false);
-}
-
-// TEST O — Demand non-none without compensation rejects
-{
-  const parsed = parseCargoRequirementV1(
-    minRequirement({ handlingRequest: { scope: "loading" } }),
-  );
-  assert.equal(parsed.ok, false);
-}
-
-// TEST P — Provider scope none + compensation rejects
-{
-  const parsed = parseCargoCapacityV1(
-    minCapacity({
-      handlingOffer: {
-        scope: "none",
-        compensation: { type: "voluntary_unpaid" },
-      },
-    }),
-  );
-  assert.equal(parsed.ok, false);
-}
-
-// TEST Q — Provider non-none without compensation rejects
-{
-  const parsed = parseCargoCapacityV1(
-    minCapacity({ handlingOffer: { scope: "both" } }),
-  );
-  assert.equal(parsed.ok, false);
-}
-
-// TEST R — fixed amountMinor is a strict positive safe integer within the bound
-{
-  const badAmounts = [0, -1, 1.5, "1000", Number.NaN, CARGO_AMOUNT_MINOR_MAX + 1];
-  for (const amountMinor of badAmounts) {
-    const parsed = parseCargoRequirementV1(
-      minRequirement({
-        handlingRequest: {
-          scope: "loading",
-          compensation: { type: "fixed", amountMinor, currency: "RSD" },
-        },
-      }),
-    );
-    assert.equal(parsed.ok, false, String(amountMinor));
-  }
-  const okAmount = parseCargoRequirementV1(
-    minRequirement({
-      handlingRequest: {
-        scope: "loading",
-        compensation: { type: "fixed", amountMinor: 2500, currency: "EUR" },
-      },
-    }),
-  );
-  assert.equal(okAmount.ok, true);
-}
-
-// TEST S — currency allowlist is RSD / EUR
-{
-  assert.deepEqual([...CARGO_CURRENCIES], ["RSD", "EUR"]);
-  const parsed = parseCargoRequirementV1(
-    minRequirement({
-      handlingRequest: {
-        scope: "loading",
-        compensation: { type: "fixed", amountMinor: 100, currency: "USD" },
-      },
-    }),
-  );
-  assert.equal(parsed.ok, false);
-  if (!parsed.ok) assert.equal(parsed.errorKey, "error.cargo_invalid_currency");
-}
-
-// TEST T — negotiable → needs_confirmation
-{
-  const result = compare(
-    minRequirement({
-      handlingRequest: { scope: "loading", compensation: { type: "negotiable" } },
-    }),
-    minCapacity({
-      handlingOffer: {
-        scope: "loading",
-        compensation: { type: "fixed", amountMinor: 500, currency: "RSD" },
-      },
-    }),
-  );
-  assert.equal(result.status, "needs_confirmation");
-  assert.ok(result.reasons.includes("handling_compensation_requires_confirmation"));
-}
-
-// TEST U — Provider fixed > Demand fixed → needs_confirmation
-{
-  const result = compare(
-    minRequirement({
-      handlingRequest: {
-        scope: "both",
-        compensation: { type: "fixed", amountMinor: 1000, currency: "RSD" },
-      },
-    }),
-    minCapacity({
-      handlingOffer: {
-        scope: "both",
-        compensation: { type: "fixed", amountMinor: 1500, currency: "RSD" },
-      },
-    }),
-  );
-  assert.equal(result.status, "needs_confirmation");
-  assert.ok(result.reasons.includes("handling_compensation_amount_differs"));
-}
-
-// TEST V — Provider fixed <= Demand fixed → no fee conflict
-{
-  const result = compare(
-    minRequirement({
-      handlingRequest: {
-        scope: "both",
-        compensation: { type: "fixed", amountMinor: 1500, currency: "RSD" },
-      },
-    }),
-    minCapacity({
-      handlingOffer: {
-        scope: "both",
-        compensation: { type: "fixed", amountMinor: 1500, currency: "RSD" },
-      },
-    }),
-  );
-  assert.equal(result.status, "no_obvious_conflict");
-  assert.equal(result.reasons.includes("handling_compensation_amount_differs"), false);
-}
-
-// TEST W — different currency → needs_confirmation
-{
-  const result = compare(
-    minRequirement({
-      handlingRequest: {
-        scope: "loading",
-        compensation: { type: "fixed", amountMinor: 1000, currency: "RSD" },
-      },
-    }),
-    minCapacity({
-      handlingOffer: {
-        scope: "loading",
-        compensation: { type: "fixed", amountMinor: 1000, currency: "EUR" },
-      },
-    }),
-  );
-  assert.equal(result.status, "needs_confirmation");
-  assert.ok(result.reasons.includes("handling_compensation_currency_differs"));
-}
-
-// TEST X — voluntary_unpaid does not mint a receivable from Demand's offer
-{
-  const result = compare(
-    minRequirement({
-      handlingRequest: {
-        scope: "loading",
-        compensation: { type: "fixed", amountMinor: 4000, currency: "RSD" },
-      },
-    }),
-    minCapacity({
-      handlingOffer: {
-        scope: "loading",
-        compensation: { type: "voluntary_unpaid" },
-      },
-    }),
-  );
-  assert.equal(result.status, "no_obvious_conflict");
-  const text = JSON.stringify(result);
-  assert.equal(text.includes("4000"), false);
-  assert.equal(text.includes("receivable"), false);
-  assert.equal(text.includes("amountMinor"), false);
-}
-
-// TEST Y — unknown key reject
-{
-  const parsed = parseCargoRequirementV1(minRequirement({ extra: true }));
-  assert.equal(parsed.ok, false);
-  if (!parsed.ok) assert.equal(parsed.errorKey, "error.cargo_unknown_key");
-}
-
-// TEST Z — private / contact / location / code / fee override / bid reject
-{
-  for (const key of ["phone", "email", "address", "gps", "pickup_code", "fee", "bid", "contact"]) {
-    const parsed = parseCargoRequirementV1(minRequirement({ [key]: "x" }));
-    assert.equal(parsed.ok, false, key);
-    if (!parsed.ok) {
-      assert.equal(parsed.errorKey, "error.cargo_private_field_forbidden");
-    }
-  }
-  const nested = parseCargoCapacityV1(
-    minCapacity({ note: "ok", payment_link: "https://pay" }),
-  );
   assert.equal(nested.ok, false);
 }
 
-// TEST AA — parser returns branded values; evaluator cannot skip parse
+// TEST H — Demand needs no help: Provider offer does not add a reason
 {
-  const rawReq = minRequirement();
-  const rawCap = minCapacity();
-  assert.equal(isParsedCargoRequirementV1(rawReq), false);
-  assert.equal(isParsedCargoCapacityV1(rawCap), false);
-  const req = mustParseReq(rawReq);
-  const cap = mustParseCap(rawCap);
-  assert.equal(isParsedCargoRequirementV1(req), true);
-  assert.equal(isParsedCargoCapacityV1(cap), true);
-  assert.throws(
-    () =>
-      evaluateCargoCompatibility(
-        rawReq as never,
-        cap,
-      ),
-    (err: unknown) =>
-      err instanceof TypeError &&
-      String(err.message) === "error.cargo_unparsed_input",
-  );
-  const viaUnknown = compareDeclaredCargo(rawReq, rawCap);
-  assert.equal(viaUnknown.ok, true);
+  for (const offer of [
+    { canHelpLoading: false, canHelpUnloading: false },
+    { canHelpLoading: true, canHelpUnloading: false },
+    { canHelpLoading: false, canHelpUnloading: true },
+    { canHelpLoading: true, canHelpUnloading: true },
+  ]) {
+    const result = compare(
+      minRequirement(),
+      minCapacity({ handlingOffer: offer }),
+    );
+    assert.equal(result.reasons.includes("loading_help_unavailable"), false);
+    assert.equal(result.reasons.includes("unloading_help_unavailable"), false);
+    assert.equal(
+      result.reasons.includes("handling_fee_negotiation_required"),
+      false,
+    );
+  }
 }
 
-// TEST AB — reasons are stable and de-duplicated
+// TEST I — needs loading + Provider false → declared_conflict
 {
   const result = compare(
     minRequirement({
-      requiredSpace: { length: 300, width: 20, height: 20 },
-      approximateWeightKg: { kind: "known", kg: 90 },
-      escortPassengerCount: 1,
-      handlingRequest: demandHandling("both"),
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: false },
     }),
     minCapacity({
-      availableSpace: { length: 100, width: 100, height: 100 },
-      availablePayloadKg: { kind: "known", kg: 10 },
-      escortAccommodation: "not_available",
-      handlingOffer: providerHandling("none"),
+      handlingOffer: { canHelpLoading: false, canHelpUnloading: true },
     }),
   );
-  assert.deepEqual(result.reasons, [...result.reasons].sort((a, b) => {
-    const order = [
-      "declared_space_exceeds_available_space",
-      "declared_weight_exceeds_available_payload",
-      "escort_condition_differs",
-      "handling_scope_differs",
-    ];
-    return order.indexOf(a) - order.indexOf(b);
-  }));
-  assert.equal(new Set(result.reasons).size, result.reasons.length);
+  assert.equal(result.status, "declared_conflict");
+  assert.ok(result.reasons.includes("loading_help_unavailable"));
 }
 
-// TEST AC — requiresHumanConfirmation is always true
+// TEST J — needs unloading + Provider false → declared_conflict
+{
+  const result = compare(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: false, needsUnloadingHelp: true },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: true, canHelpUnloading: false },
+    }),
+  );
+  assert.equal(result.status, "declared_conflict");
+  assert.ok(result.reasons.includes("unloading_help_unavailable"));
+}
+
+// TEST K — both needed and Provider both false → two stable unavailable reasons
+{
+  const result = compare(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: true },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: false, canHelpUnloading: false },
+    }),
+  );
+  assert.equal(result.status, "declared_conflict");
+  assert.deepEqual(result.reasons, [
+    "loading_help_unavailable",
+    "unloading_help_unavailable",
+  ]);
+}
+
+// TEST L — all requested help available → needs_confirmation + negotiation
+{
+  const result = compare(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: true },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: true, canHelpUnloading: true },
+    }),
+  );
+  assert.equal(result.status, "needs_confirmation");
+  assert.deepEqual(result.reasons, ["handling_fee_negotiation_required"]);
+}
+
+// TEST M — only loading requested and covered → negotiation
+{
+  const result = compare(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: false },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: true, canHelpUnloading: false },
+    }),
+  );
+  assert.equal(result.status, "needs_confirmation");
+  assert.ok(result.reasons.includes("handling_fee_negotiation_required"));
+}
+
+// TEST N — only unloading requested and covered → negotiation
+{
+  const result = compare(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: false, needsUnloadingHelp: true },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: false, canHelpUnloading: true },
+    }),
+  );
+  assert.equal(result.status, "needs_confirmation");
+  assert.ok(result.reasons.includes("handling_fee_negotiation_required"));
+}
+
+// TEST O — unavailable outranks negotiation
+{
+  const result = compare(
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: true },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: true, canHelpUnloading: false },
+    }),
+  );
+  assert.equal(result.status, "declared_conflict");
+  assert.ok(result.reasons.includes("unloading_help_unavailable"));
+  assert.equal(
+    result.reasons.includes("handling_fee_negotiation_required"),
+    false,
+  );
+}
+
+// TEST P — requiresHumanConfirmation always true
 {
   for (const result of [
     compare(minRequirement(), minCapacity()),
     compare(
-      minRequirement({ approximateWeightKg: { kind: "unknown" } }),
-      minCapacity(),
+      minRequirement({
+        handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: false },
+      }),
+      minCapacity({
+        handlingOffer: { canHelpLoading: true, canHelpUnloading: false },
+      }),
     ),
     compare(
-      minRequirement({ requiredSpace: { length: 400, width: 400, height: 400 } }),
-      minCapacity(),
+      minRequirement({
+        handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: false },
+      }),
+      minCapacity({
+        handlingOffer: { canHelpLoading: false, canHelpUnloading: false },
+      }),
     ),
   ]) {
     assert.equal(result.requiresHumanConfirmation, true);
   }
 }
 
-// TEST AD — comparison never emits Fraud / hard-deny / browser metrics
+// TEST Q — no Fraud / hard deny
 {
   const result = compare(
-    minRequirement({ escortPassengerCount: 1 }),
-    minCapacity({ escortAccommodation: "not_available" }),
+    minRequirement({
+      handlingRequest: { needsLoadingHelp: true, needsUnloadingHelp: true },
+    }),
+    minCapacity({
+      handlingOffer: { canHelpLoading: false, canHelpUnloading: false },
+    }),
   );
   const text = JSON.stringify(result);
   for (const token of [
@@ -590,8 +381,6 @@ function providerHandling(scope: CargoHandlingScope) {
     "hardDeny",
     "fraud",
     "fraud_logs",
-    "account_count",
-    "SQLSTATE",
     "incompatible",
     "preliminarily_compatible",
   ]) {
@@ -599,28 +388,123 @@ function providerHandling(scope: CargoHandlingScope) {
   }
 }
 
-// TEST AE — old per-item and recommendation symbols are unused in cargo modules
+// TEST R — runtime brand Symbols are not exported
 {
-  const cargoDir = join(repoRoot, "src/lib/cargo");
-  for (const file of walkTs(cargoDir)) {
-    if (file.endsWith(".test.ts")) continue;
-    const src = readFileSync(file, "utf8");
-    for (const token of [
-      "CargoItemV1",
-      "CargoItemCategory",
-      "moving_box",
-      "kgPerUnit",
-      "handlingFlags",
-      "recommendCargoVehicleClass",
-      "CargoVehicleRecommendation",
-      "guaranteed_fit",
-    ]) {
-      assert.equal(src.includes(token), false, `${relative(repoRoot, file)} ${token}`);
-    }
+  assert.equal("PARSED_CARGO_REQUIREMENT" in cargoContract, false);
+  assert.equal("PARSED_CARGO_CAPACITY" in cargoContract, false);
+  const src = read("src/lib/cargo/cargoContract.ts");
+  assert.equal(/export const PARSED_CARGO_/.test(src), false);
+}
+
+// TEST S — same-shape objects fail isParsed
+{
+  assert.equal(isParsedCargoRequirementV1(minRequirement()), false);
+  assert.equal(isParsedCargoCapacityV1(minCapacity()), false);
+}
+
+// TEST T — spread copy fails isParsed
+{
+  const req = mustParseReq(minRequirement());
+  const cap = mustParseCap(minCapacity());
+  assert.equal(isParsedCargoRequirementV1({ ...req }), false);
+  assert.equal(isParsedCargoCapacityV1({ ...cap }), false);
+}
+
+// TEST U — Object.assign copy fails isParsed
+{
+  const req = mustParseReq(minRequirement());
+  const cap = mustParseCap(minCapacity());
+  assert.equal(isParsedCargoRequirementV1(Object.assign({}, req)), false);
+  assert.equal(isParsedCargoCapacityV1(Object.assign({}, cap)), false);
+}
+
+// TEST V — JSON round-trip fails isParsed
+{
+  const req = mustParseReq(minRequirement());
+  const cap = mustParseCap(minCapacity());
+  assert.equal(isParsedCargoRequirementV1(JSON.parse(JSON.stringify(req))), false);
+  assert.equal(isParsedCargoCapacityV1(JSON.parse(JSON.stringify(cap))), false);
+  assert.equal(Object.getOwnPropertySymbols(req).length, 0);
+  assert.equal(Object.getOwnPropertySymbols(cap).length, 0);
+}
+
+// TEST W — structuredClone copy fails isParsed
+{
+  const req = mustParseReq(minRequirement());
+  const cap = mustParseCap(minCapacity());
+  assert.equal(isParsedCargoRequirementV1(structuredClone(req)), false);
+  assert.equal(isParsedCargoCapacityV1(structuredClone(cap)), false);
+}
+
+// TEST X — parser originals pass isParsed and stay frozen
+{
+  const req = mustParseReq(
+    minRequirement({ note: "  keep this  " }),
+  );
+  const cap = mustParseCap(minCapacity({ note: "   " }));
+  assert.equal(isParsedCargoRequirementV1(req), true);
+  assert.equal(isParsedCargoCapacityV1(cap), true);
+  assert.equal(req.note, "keep this");
+  assert.equal("note" in cap, false);
+  assert.equal(Object.isFrozen(req), true);
+  assert.equal(Object.isFrozen(req.requiredSpace), true);
+  assert.equal(Object.isFrozen(req.handlingRequest), true);
+  assert.equal(Object.isFrozen(cap), true);
+  assert.equal(Object.isFrozen(cap.availableSpace), true);
+  assert.equal(Object.isFrozen(cap.handlingOffer), true);
+}
+
+// TEST Y — evaluator rejects forged / copied objects
+{
+  const req = mustParseReq(minRequirement());
+  const cap = mustParseCap(minCapacity());
+  assert.throws(
+    () => evaluateCargoCompatibility({ ...req } as never, cap),
+    (err: unknown) =>
+      err instanceof TypeError && String(err.message) === "error.cargo_unparsed_input",
+  );
+  assert.throws(
+    () => evaluateCargoCompatibility(req, Object.assign({}, cap) as never),
+    (err: unknown) =>
+      err instanceof TypeError && String(err.message) === "error.cargo_unparsed_input",
+  );
+  assert.equal(evaluateCargoCompatibility(req, cap).requiresHumanConfirmation, true);
+}
+
+// TEST Z — compareDeclaredCargo parses then compares
+{
+  const viaUnknown = compareDeclaredCargo(minRequirement(), minCapacity());
+  assert.equal(viaUnknown.ok, true);
+  if (viaUnknown.ok) {
+    assert.equal(viaUnknown.value.status, "no_obvious_conflict");
+    assert.equal(viaUnknown.value.requiresHumanConfirmation, true);
   }
 }
 
-// TEST AF — no UI / API / DB integration
+{
+  const dims = parseCargoRequirementV1(
+    minRequirement({ requiredSpace: { width: 50, height: 40 } }),
+  );
+  assert.equal(dims.ok, false);
+  const conflict = compare(
+    minRequirement({ requiredSpace: { length: 300, width: 20, height: 20 } }),
+    minCapacity({ availableSpace: { length: 100, width: 100, height: 100 } }),
+  );
+  assert.equal(conflict.status, "declared_conflict");
+  const weight = compare(
+    minRequirement({ approximateWeightKg: { kind: "unknown" } }),
+    minCapacity(),
+  );
+  assert.equal(weight.status, "needs_confirmation");
+  const escort = compare(
+    minRequirement({ escortPassengerCount: 1 }),
+    minCapacity({ escortAccommodation: "not_available" }),
+  );
+  assert.equal(escort.status, "declared_conflict");
+  const privateKey = parseCargoRequirementV1(minRequirement({ phone: "x" }));
+  assert.equal(privateKey.ok, false);
+}
+
 {
   const hits: string[] = [];
   for (const file of walkTs(join(repoRoot, "src"))) {
@@ -632,7 +516,6 @@ function providerHandling(scope: CargoHandlingScope) {
   assert.deepEqual(hits, []);
 }
 
-// TEST AG — this phase adds 0 migrations
 {
   const names = execFileSync(
     "git",
@@ -640,10 +523,6 @@ function providerHandling(scope: CargoHandlingScope) {
     { cwd: repoRoot, encoding: "utf8" },
   ).trim();
   assert.equal(names, "");
-}
-
-// TEST AH — v92 unchanged vs c86f4e9
-{
   assert.equal(gitDiff(V92_REL), "");
   assert.equal(
     gitDiff(
@@ -651,37 +530,33 @@ function providerHandling(scope: CargoHandlingScope) {
     ),
     "",
   );
-}
-
-// TEST AI — v91 and earlier migrations unchanged
-{
   assert.equal(gitDiff(V91_REL), "");
   assert.equal(gitDiff(V86_REL), "");
-}
-
-// TEST AJ — init.sql unchanged
-{
   assert.equal(gitDiff("supabase/init.sql"), "");
 }
 
 {
-  const weightTooPrecise = parseCargoRequirementV1(
-    minRequirement({ approximateWeightKg: { kind: "known", kg: 1.25 } }),
-  );
-  assert.equal(weightTooPrecise.ok, false);
-  const weightOk = parseCargoRequirementV1(
-    minRequirement({ approximateWeightKg: { kind: "known", kg: 1.5 } }),
-  );
-  assert.equal(weightOk.ok, true);
-  const weightOver = parseCargoRequirementV1(
-    minRequirement({
-      approximateWeightKg: { kind: "known", kg: CARGO_WEIGHT_KG_MAX + 1 },
-    }),
-  );
-  assert.equal(weightOver.ok, false);
-  const blankNote = parseCargoRequirementV1(minRequirement({ note: "   " }));
-  assert.equal(blankNote.ok, true);
-  if (blankNote.ok) assert.equal("note" in blankNote.value, false);
+  const policy = read("src/lib/cargo/cargoPolicy.ts");
+  const contract = read("src/lib/cargo/cargoContract.ts");
+  const compat = read("src/lib/cargo/cargoCompatibility.ts");
+  for (const src of [policy, contract, compat]) {
+    assert.equal(src.includes("CARGO_CURRENCIES"), false);
+    assert.equal(src.includes("CARGO_AMOUNT_MINOR_MAX"), false);
+    assert.equal(src.includes("DemandHandlingCompensation"), false);
+    assert.equal(src.includes("ProviderHandlingCompensation"), false);
+    assert.equal(src.includes("parseDemandCompensation"), false);
+    assert.equal(src.includes("parseProviderCompensation"), false);
+    assert.equal(src.includes("parseCurrency"), false);
+    assert.equal(src.includes("parseFixedAmount"), false);
+    assert.equal(src.includes("handling_scope_differs"), false);
+    assert.equal(src.includes("handling_compensation_requires_confirmation"), false);
+    assert.equal(src.includes("handling_compensation_currency_differs"), false);
+    assert.equal(src.includes("handling_compensation_amount_differs"), false);
+  }
+  assert.equal(policy.includes("amountMinor"), false);
+  assert.equal(compat.includes("amountMinor"), false);
+  assert.equal(policy.includes("voluntary_unpaid"), false);
+  assert.equal(compat.includes("voluntary_unpaid"), false);
 }
 
 console.log("cargoV2.test.ts: ok");

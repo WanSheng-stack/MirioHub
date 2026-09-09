@@ -1,7 +1,6 @@
 /**
- * PHASE 6.7B.1B.1 — testable MatchRequestSheet lifecycle / a11y helpers.
- * No DOM. Sheet calls these so Tab wrap, Escape lock, and error reset
- * are proven by execution, not source-string greps alone.
+ * PHASE 6.7B.1B.2 — testable MatchRequestSheet lifecycle / a11y helpers.
+ * No DOM. Parent owns serverErrorKey; the sheet never mirrors or hides it.
  */
 
 import { TRANSPORT_MODES } from "@/lib/posts";
@@ -22,23 +21,38 @@ export function shouldResetMatchRequestDraft(input: {
   return input.nextOpen && input.prevTargetId !== input.nextTargetId;
 }
 
-export function visibleServerErrorKey(
+/** Parent owns the key. A non-null key is always shown, including repeats. */
+export function displayedServerErrorKey(
   serverErrorKey: string | null,
-  errorGeneration: number,
-  dismissedGeneration: number,
 ): string | null {
-  if (!serverErrorKey) return null;
-  if (dismissedGeneration === errorGeneration) return null;
   return serverErrorKey;
 }
 
-export function errorGenerationAfterKeyChange(
-  prevKey: string | null,
-  nextKey: string | null,
-  prevGeneration: number,
-): number {
-  if (prevKey === nextKey) return prevGeneration;
-  return prevGeneration + 1;
+export function matchRequestCloseActions(submitting: boolean): {
+  clearServerError: boolean;
+  close: boolean;
+} {
+  if (!canDismissMatchRequestSheet(submitting)) {
+    return { clearServerError: false, close: false };
+  }
+  return { clearServerError: true, close: true };
+}
+
+export function shouldClearServerErrorOnUserEdit(actionType: string): boolean {
+  return actionType !== "RESET" && actionType !== "SET_FIELD_ERRORS";
+}
+
+export function matchRequestInitialFocusIndex(focusableCount: number): number | null {
+  if (focusableCount <= 0) return null;
+  return 0;
+}
+
+/** submitting must not remount the focus/restore lifecycle. */
+export function shouldRestartMatchRequestFocusLifecycle(input: {
+  submittingChanged: boolean;
+}): boolean {
+  void input.submittingChanged;
+  return false;
 }
 
 export type MatchRequestTabTrapResult = {

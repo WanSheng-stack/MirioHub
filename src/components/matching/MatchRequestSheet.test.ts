@@ -25,11 +25,14 @@ import {
 } from "@/lib/matching/matchRequestForm";
 import {
   canDismissMatchRequestSheet,
-  errorGenerationAfterKeyChange,
+  displayedServerErrorKey,
+  matchRequestCloseActions,
+  matchRequestInitialFocusIndex,
   matchRequestTabTrap,
+  shouldClearServerErrorOnUserEdit,
   shouldResetMatchRequestDraft,
+  shouldRestartMatchRequestFocusLifecycle,
   transportModesForMatchRequest,
-  visibleServerErrorKey,
 } from "@/lib/matching/matchRequestSheetBehavior";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -409,12 +412,23 @@ assert.equal(sheetSrc.includes("open !== wasOpen"), false);
 assert.equal(sheetSrc.includes("TRANSPORT_MODES"), false);
 assert.equal(/<button[\s\S]{0,220}absolute inset-0/.test(sheetSrc), false);
 assert.ok(sheetSrc.includes("matchRequestTabTrap"));
-assert.ok(sheetSrc.includes("canDismissMatchRequestSheet"));
-assert.ok(sheetSrc.includes("visibleServerErrorKey"));
+assert.ok(sheetSrc.includes("displayedServerErrorKey"));
 assert.ok(sheetSrc.includes("transportModesForMatchRequest"));
 assert.ok(sheetSrc.includes("onServerErrorClear"));
 assert.ok(sheetSrc.includes("shouldResetMatchRequestDraft"));
 assert.ok(sheetSrc.includes("key={props.targetPost.id}"));
+assert.ok(sheetSrc.includes("matchRequestInitialFocusIndex"));
+assert.ok(sheetSrc.includes("matchRequestCloseActions"));
+assert.ok(sheetSrc.includes("shouldClearServerErrorOnUserEdit"));
+assert.equal(sheetSrc.includes("onServerErrorClear?:"), false);
+assert.ok(sheetSrc.includes("onServerErrorClear: () => void"));
+assert.equal(sheetSrc.includes("setErrorTrack"), false);
+assert.equal(sheetSrc.includes("errorTrack"), false);
+assert.equal(sheetSrc.includes("dismissedGen"), false);
+assert.equal(sheetSrc.includes("visibleServerErrorKey"), false);
+assert.equal(sheetSrc.includes("errorGenerationAfterKeyChange"), false);
+assert.equal(sheetSrc.includes("[open, onOpenChange, submitting]"), false);
+assert.ok(sheetSrc.includes("submittingRef"));
 
 {
   assert.equal(canDismissMatchRequestSheet(true), false);
@@ -478,34 +492,62 @@ assert.ok(sheetSrc.includes("key={props.targetPost.id}"));
   assert.equal(matchRequestTabTrap({ key: "Escape", shiftKey: false }, 0, 5), null);
   assert.equal(matchRequestTabTrap({ key: "Tab", shiftKey: false }, 0, 0), null);
 
-  let generation = 0;
-  generation = errorGenerationAfterKeyChange(null, "error.matching_temporarily_unavailable", generation);
-  assert.equal(generation, 1);
+  const firstKey = "error.matching_temporarily_unavailable";
+  assert.equal(displayedServerErrorKey(firstKey), firstKey);
+  assert.equal(displayedServerErrorKey(firstKey), firstKey);
+  assert.deepEqual(serverErrorAlert(displayedServerErrorKey(firstKey)), {
+    role: "alert",
+    errorKey: firstKey,
+  });
+  assert.equal(displayedServerErrorKey(null), null);
+
+  assert.deepEqual(matchRequestCloseActions(true), {
+    clearServerError: false,
+    close: false,
+  });
+  assert.deepEqual(matchRequestCloseActions(false), {
+    clearServerError: true,
+    close: true,
+  });
+
+  let parentError: string | null = firstKey;
+  const clear = () => {
+    parentError = null;
+  };
+  const closeOnce = matchRequestCloseActions(false);
+  if (closeOnce.clearServerError) clear();
+  assert.equal(parentError, null);
+  parentError = firstKey;
+  const blocked = matchRequestCloseActions(true);
+  if (blocked.clearServerError) clear();
+  assert.equal(parentError, firstKey);
+
+  assert.equal(shouldClearServerErrorOnUserEdit("SET_MESSAGE"), true);
+  assert.equal(shouldClearServerErrorOnUserEdit("SET_TRANSPORT_MODE"), true);
+  assert.equal(shouldClearServerErrorOnUserEdit("RESET"), false);
+  assert.equal(shouldClearServerErrorOnUserEdit("SET_FIELD_ERRORS"), false);
+
+  parentError = firstKey;
+  if (shouldClearServerErrorOnUserEdit("SET_MESSAGE")) clear();
+  assert.equal(parentError, null);
+  parentError = firstKey;
+  if (shouldClearServerErrorOnUserEdit("SET_FIELD_ERRORS")) clear();
+  assert.equal(parentError, firstKey);
+  parentError = firstKey;
+  if (shouldClearServerErrorOnUserEdit("SET_MESSAGE")) clear();
+  parentError = firstKey;
+  assert.equal(displayedServerErrorKey(parentError), firstKey);
+
+  assert.equal(matchRequestInitialFocusIndex(4), 0);
+  assert.equal(matchRequestInitialFocusIndex(1), 0);
+  assert.equal(matchRequestInitialFocusIndex(0), null);
   assert.equal(
-    visibleServerErrorKey("error.matching_temporarily_unavailable", generation, 0),
-    "error.matching_temporarily_unavailable",
+    shouldRestartMatchRequestFocusLifecycle({ submittingChanged: true }),
+    false,
   );
   assert.equal(
-    visibleServerErrorKey("error.matching_temporarily_unavailable", generation, generation),
-    null,
-  );
-  generation = errorGenerationAfterKeyChange(
-    "error.matching_temporarily_unavailable",
-    "error.matching_temporarily_unavailable",
-    generation,
-  );
-  assert.equal(generation, 1);
-  generation = errorGenerationAfterKeyChange(
-    "error.matching_temporarily_unavailable",
-    null,
-    generation,
-  );
-  assert.equal(generation, 2);
-  assert.equal(visibleServerErrorKey(null, generation, 1), null);
-  generation = errorGenerationAfterKeyChange(null, "error.match_request_unknown_key", generation);
-  assert.equal(
-    visibleServerErrorKey("error.match_request_unknown_key", generation, 1),
-    "error.match_request_unknown_key",
+    shouldRestartMatchRequestFocusLifecycle({ submittingChanged: false }),
+    false,
   );
 
   assert.deepEqual(transportModesForMatchRequest("deliver"), []);

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PHASE 6.7B.1B.1 — unmounted match-request sheet.
+ * PHASE 6.7B.1B.2 — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
  * Deliver applications collect Cargo V2 aggregate space (applicant side only).
@@ -16,7 +16,7 @@
  * Closed sheets unmount; targetPost.id remounts the draft (shouldResetMatchRequestDraft).
  */
 
-import { useId, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { useId, useLayoutEffect, useReducer, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { ITEM_UNITS } from "@/lib/post-payload";
 import type { TransportMode } from "@/lib/types";
@@ -36,12 +36,13 @@ import {
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
 import {
-  canDismissMatchRequestSheet,
-  errorGenerationAfterKeyChange,
+  displayedServerErrorKey,
   MATCH_REQUEST_FOCUSABLE_SELECTOR,
+  matchRequestCloseActions,
+  matchRequestInitialFocusIndex,
   matchRequestTabTrap,
+  shouldClearServerErrorOnUserEdit,
   transportModesForMatchRequest,
-  visibleServerErrorKey,
 } from "@/lib/matching/matchRequestSheetBehavior";
 
 function tx(t: ReturnType<typeof useTranslations>, key: string): string {
@@ -65,7 +66,7 @@ export type MatchRequestSheetProps = {
   onSubmit: (payload: ApplicationPayloadV1) => void;
   submitting: boolean;
   serverErrorKey: string | null;
-  onServerErrorClear?: () => void;
+  onServerErrorClear: () => void;
 };
 
 export function MatchRequestSheet(props: MatchRequestSheetProps) {
@@ -88,52 +89,36 @@ function MatchRequestSheetBody({
   const tPublish = useTranslations("publish");
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [errorTrack, setErrorTrack] = useState({
-    key: serverErrorKey,
-    gen: 0,
-  });
-  const [dismissedGen, setDismissedGen] = useState(0);
+  const submittingRef = useRef(submitting);
+  const onOpenChangeRef = useRef(onOpenChange);
+  const onServerErrorClearRef = useRef(onServerErrorClear);
   const [form, dispatch] = useReducer(
     reduceMatchRequestForm,
     targetPost,
     createInitialMatchRequestForm,
   );
 
-  const errorGen =
-    errorTrack.key === serverErrorKey
-      ? errorTrack.gen
-      : errorGenerationAfterKeyChange(errorTrack.key, serverErrorKey, errorTrack.gen);
-  if (errorTrack.key !== serverErrorKey) {
-    setErrorTrack({ key: serverErrorKey, gen: errorGen });
-  }
-
-  const visibleError = visibleServerErrorKey(serverErrorKey, errorGen, dismissedGen);
-
-  function dismissServerError() {
-    setDismissedGen(errorGen);
-    onServerErrorClear?.();
-  }
-
   function apply(action: MatchRequestFormAction) {
-    if (action.type !== "RESET" && action.type !== "SET_FIELD_ERRORS") {
-      dismissServerError();
+    if (shouldClearServerErrorOnUserEdit(action.type)) {
+      onServerErrorClear();
     }
     dispatch(action);
   }
 
   function requestClose() {
-    if (!canDismissMatchRequestSheet(submitting)) return;
-    onOpenChange(false);
+    const actions = matchRequestCloseActions(submitting);
+    if (actions.clearServerError) onServerErrorClear();
+    if (actions.close) onOpenChange(false);
   }
 
   useLayoutEffect(() => {
-    onServerErrorClear?.();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only stale error clear
-  }, []);
+    submittingRef.current = submitting;
+    onOpenChangeRef.current = onOpenChange;
+    onServerErrorClearRef.current = onServerErrorClear;
+  });
 
   useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
 
     function focusables(): HTMLElement[] {
       if (!panelRef.current) return [];
@@ -142,26 +127,32 @@ function MatchRequestSheetBody({
       ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
     }
 
+    const nodes = focusables();
+    const initial = matchRequestInitialFocusIndex(nodes.length);
+    if (initial !== null) nodes[initial]?.focus();
+    else panelRef.current?.focus();
+
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        if (!canDismissMatchRequestSheet(submitting)) return;
-        onOpenChange(false);
+        const actions = matchRequestCloseActions(submittingRef.current);
+        if (actions.clearServerError) onServerErrorClearRef.current();
+        if (actions.close) onOpenChangeRef.current(false);
         return;
       }
       if (event.key !== "Tab") return;
-      const nodes = focusables();
-      if (nodes.length === 0) return;
+      const trapNodes = focusables();
+      if (trapNodes.length === 0) return;
       const current = document.activeElement;
-      const currentIndex = nodes.findIndex((el) => el === current);
+      const currentIndex = trapNodes.findIndex((el) => el === current);
       const trap = matchRequestTabTrap(
         { key: event.key, shiftKey: event.shiftKey },
         currentIndex,
-        nodes.length,
+        trapNodes.length,
       );
       if (!trap) return;
       event.preventDefault();
-      nodes[trap.nextIndex]?.focus();
+      trapNodes[trap.nextIndex]?.focus();
     }
 
     window.addEventListener("keydown", onKey);
@@ -169,7 +160,7 @@ function MatchRequestSheetBody({
       window.removeEventListener("keydown", onKey);
       previous?.focus?.();
     };
-  }, [open, onOpenChange, submitting]);
+  }, []);
 
   if (!open) return null;
 
@@ -177,7 +168,7 @@ function MatchRequestSheetBody({
   const hints = collectFieldHints(form, targetPost);
   const fieldMsg = (field: keyof MatchRequestFormState["fieldErrors"]) =>
     form.fieldErrors[field] ?? hints[field];
-  const alert = serverErrorAlert(visibleError);
+  const alert = serverErrorAlert(displayedServerErrorKey(serverErrorKey));
   const busy = submitting;
   const modeOptions = transportModesForMatchRequest(targetPost.category);
   const showTransportSelect = isProviderApplicant && modeOptions.length > 0;

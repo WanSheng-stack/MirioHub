@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PHASE 6.7B.1B.3 — unmounted match-request sheet.
+ * PHASE 6.7B.1B.4 — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
  * Deliver applications collect Cargo V2 aggregate space (applicant side only).
@@ -36,16 +36,14 @@ import {
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
 import {
-  canRestoreMatchRequestTriggerFocus,
   displayedServerErrorKey,
-  isMatchRequestFocusableCandidate,
+  isEligibleMatchRequestFocusTarget,
   isStayInPanelTrap,
   MATCH_REQUEST_FOCUSABLE_SELECTOR,
   matchRequestCloseActions,
   matchRequestInitialFocusIndex,
   matchRequestTabTrap,
-  readMatchRequestFocusCandidate,
-  readMatchRequestRestoreTarget,
+  readMatchRequestFocusEligibility,
   shouldClearServerErrorOnUserEdit,
   transportModesForMatchRequest,
 } from "@/lib/matching/matchRequestSheetBehavior";
@@ -129,7 +127,9 @@ function MatchRequestSheetBody({
       if (!panelRef.current) return [];
       return Array.from(
         panelRef.current.querySelectorAll<HTMLElement>(MATCH_REQUEST_FOCUSABLE_SELECTOR),
-      ).filter((el) => isMatchRequestFocusableCandidate(readMatchRequestFocusCandidate(el)));
+      ).filter((el) =>
+        isEligibleMatchRequestFocusTarget(readMatchRequestFocusEligibility(el)),
+      );
     }
 
     const nodes = focusables();
@@ -166,8 +166,11 @@ function MatchRequestSheetBody({
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (canRestoreMatchRequestTriggerFocus(readMatchRequestRestoreTarget(previous))) {
-        previous?.focus();
+      if (
+        previous &&
+        isEligibleMatchRequestFocusTarget(readMatchRequestFocusEligibility(previous))
+      ) {
+        previous.focus();
       }
     };
   }, []);

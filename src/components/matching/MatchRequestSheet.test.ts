@@ -25,9 +25,9 @@ import {
 } from "@/lib/matching/matchRequestForm";
 import {
   canDismissMatchRequestSheet,
-  canRestoreMatchRequestTriggerFocus,
+  collectMatchRequestFocusEligibility,
   displayedServerErrorKey,
-  isMatchRequestFocusableCandidate,
+  isEligibleMatchRequestFocusTarget,
   isStayInPanelTrap,
   matchRequestCloseActions,
   matchRequestInitialFocusIndex,
@@ -36,7 +36,7 @@ import {
   shouldResetMatchRequestDraft,
   shouldRestartMatchRequestFocusLifecycle,
   transportModesForMatchRequest,
-  type MatchRequestFocusCandidate,
+  type MatchRequestFocusTreeNode,
 } from "@/lib/matching/matchRequestSheetBehavior";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +44,7 @@ const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
 const sheetSrc = read("src/components/matching/MatchRequestSheet.tsx");
+const behaviorSrc = read("src/lib/matching/matchRequestSheetBehavior.ts");
 const payloadSrc = read("src/lib/matching/applicationPayload.ts");
 const postCard = read("src/components/hall/PostCard.tsx");
 const homePage = read("src/app/[locale]/page.tsx");
@@ -433,10 +434,19 @@ assert.equal(sheetSrc.includes("visibleServerErrorKey"), false);
 assert.equal(sheetSrc.includes("errorGenerationAfterKeyChange"), false);
 assert.equal(sheetSrc.includes("[open, onOpenChange, submitting]"), false);
 assert.ok(sheetSrc.includes("submittingRef"));
-assert.ok(sheetSrc.includes("isMatchRequestFocusableCandidate"));
-assert.ok(sheetSrc.includes("canRestoreMatchRequestTriggerFocus"));
+assert.ok(sheetSrc.includes("isEligibleMatchRequestFocusTarget"));
+assert.ok(sheetSrc.includes("readMatchRequestFocusEligibility"));
 assert.ok(sheetSrc.includes("isStayInPanelTrap"));
 assert.equal(sheetSrc.includes("if (trapNodes.length === 0) return;"), false);
+assert.equal(sheetSrc.includes("isMatchRequestFocusableCandidate"), false);
+assert.equal(sheetSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
+assert.equal(sheetSrc.includes("readMatchRequestRestoreTarget"), false);
+assert.ok(behaviorSrc.includes("inputTypeHidden"));
+assert.ok(behaviorSrc.includes("inertInTree"));
+assert.ok(behaviorSrc.includes("displayNoneInTree"));
+assert.ok(behaviorSrc.includes("visibilityHiddenInTree"));
+assert.ok(behaviorSrc.includes("input:not([disabled]):not([type='hidden'])"));
+assert.equal(behaviorSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
 
 {
   assert.equal(canDismissMatchRequestSheet(true), false);
@@ -504,115 +514,126 @@ assert.equal(sheetSrc.includes("if (trapNodes.length === 0) return;"), false);
   const emptyShift = matchRequestTabTrap({ key: "Tab", shiftKey: true }, -1, 0);
   assert.deepEqual(emptyShift, { preventDefault: true, stayInPanel: true });
 
-  const visibleCandidate: MatchRequestFocusCandidate = {
-    isConnected: true,
+  const visibleNode: MatchRequestFocusTreeNode = {
     hidden: false,
-    disabled: false,
-    tabIndex: 0,
     ariaHidden: false,
-    ancestorHidden: false,
+    inert: false,
     display: "block",
     visibility: "visible",
   };
-  assert.equal(isMatchRequestFocusableCandidate(visibleCandidate), true);
+  function eligibility(overrides: {
+    isConnected?: boolean;
+    disabled?: boolean;
+    tabIndex?: number;
+    inputTypeHidden?: boolean;
+    chain?: MatchRequestFocusTreeNode[];
+  } = {}) {
+    return collectMatchRequestFocusEligibility({
+      isConnected: overrides.isConnected ?? true,
+      disabled: overrides.disabled ?? false,
+      tabIndex: overrides.tabIndex ?? 0,
+      inputTypeHidden: overrides.inputTypeHidden ?? false,
+      chain: overrides.chain ?? [visibleNode],
+    });
+  }
+  const eligible = eligibility();
+  assert.equal(eligible.inertInTree, false);
+  assert.equal(eligible.displayNoneInTree, false);
+  assert.equal(eligible.visibilityHiddenInTree, false);
+  assert.equal(eligible.inputTypeHidden, false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligible), true);
+  const ancestorBlocked = collectMatchRequestFocusEligibility({
+    isConnected: true,
+    disabled: false,
+    tabIndex: 0,
+    inputTypeHidden: false,
+    chain: [
+      visibleNode,
+      { ...visibleNode, inert: true, display: "none", visibility: "hidden" },
+    ],
+  });
+  assert.equal(ancestorBlocked.inertInTree, true);
+  assert.equal(ancestorBlocked.displayNoneInTree, true);
+  assert.equal(ancestorBlocked.visibilityHiddenInTree, true);
+  assert.equal(isEligibleMatchRequestFocusTarget(ancestorBlocked), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ isConnected: false })), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ disabled: true })), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: -1 })), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ inputTypeHidden: true })), false);
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, isConnected: false }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({ chain: [{ ...visibleNode, hidden: true }] }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, hidden: true }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({ chain: [{ ...visibleNode, ariaHidden: true }] }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, ancestorHidden: true }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({ chain: [{ ...visibleNode, inert: true }] }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, ariaHidden: true }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({
+        chain: [visibleNode, { ...visibleNode, inert: true }],
+      }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, disabled: true }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({ chain: [{ ...visibleNode, display: "none" }] }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, tabIndex: -1 }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({
+        chain: [visibleNode, { ...visibleNode, display: "none" }],
+      }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, display: "none" }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({ chain: [{ ...visibleNode, visibility: "hidden" }] }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, visibility: "hidden" }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({ chain: [{ ...visibleNode, visibility: "collapse" }] }),
+    ),
     false,
   );
   assert.equal(
-    isMatchRequestFocusableCandidate({ ...visibleCandidate, visibility: "collapse" }),
+    isEligibleMatchRequestFocusTarget(
+      eligibility({
+        chain: [visibleNode, { ...visibleNode, visibility: "hidden" }],
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isEligibleMatchRequestFocusTarget(
+      eligibility({
+        chain: [visibleNode, { ...visibleNode, hidden: true }],
+      }),
+    ),
     false,
   );
 
-  assert.equal(canRestoreMatchRequestTriggerFocus(null), false);
-  assert.equal(
-    canRestoreMatchRequestTriggerFocus({
-      isConnected: true,
-      hidden: false,
-      disabled: false,
-      display: "inline",
-      visibility: "visible",
-    }),
-    true,
-  );
-  assert.equal(
-    canRestoreMatchRequestTriggerFocus({
-      isConnected: false,
-      hidden: false,
-      disabled: false,
-      display: "inline",
-      visibility: "visible",
-    }),
-    false,
-  );
-  assert.equal(
-    canRestoreMatchRequestTriggerFocus({
-      isConnected: true,
-      hidden: true,
-      disabled: false,
-      display: "inline",
-      visibility: "visible",
-    }),
-    false,
-  );
-  assert.equal(
-    canRestoreMatchRequestTriggerFocus({
-      isConnected: true,
-      hidden: false,
-      disabled: true,
-      display: "inline",
-      visibility: "visible",
-    }),
-    false,
-  );
-  assert.equal(
-    canRestoreMatchRequestTriggerFocus({
-      isConnected: true,
-      hidden: false,
-      disabled: false,
-      display: "none",
-      visibility: "visible",
-    }),
-    false,
-  );
-  assert.equal(
-    canRestoreMatchRequestTriggerFocus({
-      isConnected: true,
-      hidden: false,
-      disabled: false,
-      display: "inline",
-      visibility: "hidden",
-    }),
-    false,
-  );
+  const restoreFacts = eligibility();
+  const tabFacts = eligibility();
+  assert.deepEqual(restoreFacts, tabFacts);
+  assert.equal(isEligibleMatchRequestFocusTarget(restoreFacts), true);
+  assert.equal(isEligibleMatchRequestFocusTarget(tabFacts), true);
 
   const firstKey = "error.matching_temporarily_unavailable";
   assert.equal(displayedServerErrorKey(firstKey), firstKey);

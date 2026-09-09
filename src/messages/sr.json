@@ -175,7 +175,11 @@
     "match_request_cargo_required": "Unesite broj komada prtljaga / tereta.",
     "match_request_need_demand_quantity": "Unesite bar jednu stvarnu količinu potražnje.",
     "match_request_invalid_budget": "Unesite ispravan opseg budžeta.",
-    "match_request_passenger_count_bounds": "Broj sedišta mora biti ceo broj u važećem rasponu (putovanje 1–4, pratnja 0–4)."
+    "match_request_passenger_count_bounds": "Broj sedišta mora biti ceo broj u važećem rasponu (putovanje 1–4, pratnja 0–4).",
+    "invalid_transport_mode": "Način prevoza nije važeći. Izaberite ponovo.",
+    "transport_mode_already_set": "Način prevoza za ovu objavu je već određen i ne može se ovde menjati.",
+    "transport_escort_field_not_allowed": "Za ovaj tip objave ne možete uneti broj osoba koje prate teret.",
+    "transport_travel_item_field_not_allowed": "Za veliki teret ne koristite polje za sitni prtljag. Unesite ponovo."
   },
   "success": {
     "posted": "Uspešno objavljeno.",

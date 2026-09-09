@@ -175,7 +175,11 @@
     "match_request_cargo_required": "请填写行李/货物件数。",
     "match_request_need_demand_quantity": "请至少填写一项实际需求数量。",
     "match_request_invalid_budget": "请填写有效的预算区间。",
-    "match_request_passenger_count_bounds": "座位数须为现有产品范围内的整数（出行 1–4，押货 0–4）。"
+    "match_request_passenger_count_bounds": "座位数须为现有产品范围内的整数（出行 1–4，押货 0–4）。",
+    "invalid_transport_mode": "运输方式无效，请重新选择。",
+    "transport_mode_already_set": "该帖子的运输方式已经确定，无法在此修改。",
+    "transport_escort_field_not_allowed": "当前发布类型不能填写押货人数。",
+    "transport_travel_item_field_not_allowed": "大件运输不能使用随身小件字段，请重新填写。"
   },
   "success": {
     "posted": "发布成功。",

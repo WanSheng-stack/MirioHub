@@ -309,14 +309,54 @@ export function getTransportFieldVisibility(input: {
   };
 }
 
-function hasDefinedField(
+export type TransportQuantityFields = {
+  peopleCount?: unknown;
+  peopleCapacity?: unknown;
+  travelItemUnits?: unknown;
+  escortPassengerCount?: unknown;
+};
+
+export type TransportDeclaredFieldsInput = TransportQuantityFields & {
+  lane: TransportServiceLane;
+  postType: PostType;
+};
+
+export type TransportDeclaredFieldsSuccess = {
+  ok: true;
+  peopleCount: number | null;
+  peopleCapacity: number | null;
+  travelItemUnits: number | null;
+  escortPassengerCount: number | null;
+};
+
+export type TransportDeclaredFieldsResult =
+  | TransportDeclaredFieldsSuccess
+  | { ok: false; errorKey: string };
+
+/** Own-property and not `undefined`. Missing keys are not treated as present. */
+export function isTransportFieldPresent(
   input: object,
-  key: keyof TransportCapabilityInput,
+  key: keyof TransportQuantityFields,
 ): boolean {
   return (
     Object.prototype.hasOwnProperty.call(input, key) &&
     (input as Record<string, unknown>)[key] !== undefined
   );
+}
+
+export function copyPresentTransportFields(input: object): TransportQuantityFields {
+  const fields: TransportQuantityFields = {};
+  for (const key of [
+    "peopleCount",
+    "peopleCapacity",
+    "travelItemUnits",
+    "escortPassengerCount",
+  ] as const) {
+    if (isTransportFieldPresent(input, key)) {
+      fields[key] = (input as Record<string, unknown>)[key];
+    }
+  }
+  return fields;
 }
 
 export function parsePolicyQuantity(
@@ -337,10 +377,10 @@ export function parsePolicyQuantity(
 }
 
 function readQuantity(
-  input: TransportCapabilityInput,
-  key: "peopleCount" | "peopleCapacity" | "travelItemUnits" | "escortPassengerCount",
+  input: TransportQuantityFields,
+  key: keyof TransportQuantityFields,
 ): { ok: true; value: number | null } | { ok: false; errorKey: string } {
-  if (!hasDefinedField(input, key)) return { ok: true, value: null };
+  if (!isTransportFieldPresent(input, key)) return { ok: true, value: null };
   const parsed = parsePolicyQuantity((input as Record<string, unknown>)[key]);
   if (!parsed.ok) return parsed;
   return { ok: true, value: parsed.value };
@@ -355,19 +395,19 @@ function peopleValueForCombo(
   return peopleCapacity ?? 0;
 }
 
-export function validateTransportCapability(
-  input: TransportCapabilityInput,
-): TransportValidationResult {
-  const current = getTransportPolicy(input.mode);
-  if (!current) {
-    return { ok: false, errorKey: "error.transport_mode_unknown" };
-  }
-  if (!isModeAllowedForLane(input.mode, input.lane)) {
-    return { ok: false, errorKey: "error.transport_mode_not_allowed_for_lane" };
-  }
+/**
+ * Role / scene field gates shared by the transport capability validator and
+ * safety facts. Escort is Deliver Demand only — never a Provider public seat
+ * field. travelItemUnits is Travel only; Deliver must not silently ignore it.
+ */
+export function validateTransportDeclaredFields(
+  input: TransportDeclaredFieldsInput,
+): TransportDeclaredFieldsResult {
+  const hasPeopleCount = isTransportFieldPresent(input, "peopleCount");
+  const hasPeopleCapacity = isTransportFieldPresent(input, "peopleCapacity");
+  const hasTravelItemUnits = isTransportFieldPresent(input, "travelItemUnits");
+  const hasEscort = isTransportFieldPresent(input, "escortPassengerCount");
 
-  const hasPeopleCount = hasDefinedField(input, "peopleCount");
-  const hasPeopleCapacity = hasDefinedField(input, "peopleCapacity");
   if (input.postType === "demand" && hasPeopleCapacity) {
     return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
   }
@@ -376,6 +416,19 @@ export function validateTransportCapability(
   }
   if (input.lane === "deliver" && (hasPeopleCount || hasPeopleCapacity)) {
     return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
+  }
+  if (input.lane === "travel" && hasPeopleCount && input.postType !== "demand") {
+    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
+  }
+  if (input.lane === "travel" && hasPeopleCapacity && input.postType !== "provider") {
+    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
+  }
+
+  if (input.lane === "deliver" && hasTravelItemUnits) {
+    return { ok: false, errorKey: "error.transport_travel_item_field_not_allowed" };
+  }
+  if (hasEscort && (input.lane !== "deliver" || input.postType !== "demand")) {
+    return { ok: false, errorKey: "error.transport_escort_field_not_allowed" };
   }
 
   const countRead = readQuantity(input, "peopleCount");
@@ -387,12 +440,38 @@ export function validateTransportCapability(
   const escortRead = readQuantity(input, "escortPassengerCount");
   if (!escortRead.ok) return escortRead;
 
-  if (input.lane === "travel" && escortRead.value !== null) {
-    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
+  if (
+    escortRead.value !== null &&
+    escortRead.value > DELIVER_ESCORT_PASSENGER_MAX
+  ) {
+    return { ok: false, errorKey: "error.transport_escort_bounds" };
   }
 
-  const peopleCount = countRead.value;
-  const peopleCapacity = capacityRead.value;
+  return {
+    ok: true,
+    peopleCount: countRead.value,
+    peopleCapacity: capacityRead.value,
+    travelItemUnits: itemsRead.value,
+    escortPassengerCount: escortRead.value,
+  };
+}
+
+export function validateTransportCapability(
+  input: TransportCapabilityInput,
+): TransportValidationResult {
+  const current = getTransportPolicy(input.mode);
+  if (!current) {
+    return { ok: false, errorKey: "error.transport_mode_unknown" };
+  }
+  if (!isModeAllowedForLane(input.mode, input.lane)) {
+    return { ok: false, errorKey: "error.transport_mode_not_allowed_for_lane" };
+  }
+
+  const declared = validateTransportDeclaredFields(input);
+  if (!declared.ok) return declared;
+
+  const peopleCount = declared.peopleCount;
+  const peopleCapacity = declared.peopleCapacity;
   const isCar = input.mode === "car";
 
   const checkPeopleBound = (
@@ -426,21 +505,12 @@ export function validateTransportCapability(
       peopleCount,
       peopleCapacity,
     );
-    const items = itemsRead.value ?? 0;
+    const items = declared.travelItemUnits ?? 0;
     if (people > 0 && !isCar) {
       return { ok: false, errorKey: "error.transport_people_not_allowed" };
     }
     if (people === 0 && items === 0) {
       return { ok: false, errorKey: "error.transport_travel_empty" };
-    }
-  }
-
-  if (escortRead.value !== null) {
-    if (
-      escortRead.value > DELIVER_ESCORT_PASSENGER_MAX ||
-      input.lane !== "deliver"
-    ) {
-      return { ok: false, errorKey: "error.transport_escort_bounds" };
     }
   }
 

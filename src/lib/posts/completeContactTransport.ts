@@ -15,10 +15,32 @@ import {
 export const COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY =
   "error.transport_mode_already_set";
 
+export const COMPLETE_CONTACT_TRANSPORT_REREAD_FAILED_LOG =
+  "[complete-contact] transport reread failed";
+
+export const COMPLETE_CONTACT_TRANSPORT_REREAD_MISSING_LOG =
+  "[complete-contact] transport reread missing";
+
 export type CompleteContactTransportDecision =
   | { kind: "omit" }
   | { kind: "fill"; mode: ValidV1TransportMode }
   | { kind: "reject"; errorKey: string };
+
+export type CompleteContactTransportRereadResult =
+  | { kind: "idempotent" }
+  | {
+      kind: "conflict";
+      errorKey: typeof COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY;
+    }
+  | {
+      kind: "failed";
+      errorKey: "error.submit_failed";
+      log: string;
+    };
+
+export type CompleteContactTransportRereadResponse =
+  | { ok: true }
+  | { ok: false; errorKey: string; status: 400 | 500; log?: string };
 
 export function decideCompleteContactTransport(input: {
   isOwner: boolean;
@@ -59,6 +81,58 @@ export function decideAfterConditionalFillMiss(input: {
   return {
     kind: "reject",
     errorKey: COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY,
+  };
+}
+
+/**
+ * Interprets the secondary SELECT after a conditional fill miss.
+ * Query errors and missing rows are safe failures, never a transport conflict.
+ * Does not copy Supabase message/details/hint into logs or browser JSON.
+ */
+export function interpretCompleteContactTransportReread(input: {
+  intendedMode: ValidV1TransportMode;
+  error: object | null | undefined;
+  row: { transport_mode?: string | null } | null | undefined;
+}): CompleteContactTransportRereadResult {
+  if (input.error) {
+    return {
+      kind: "failed",
+      errorKey: "error.submit_failed",
+      log: COMPLETE_CONTACT_TRANSPORT_REREAD_FAILED_LOG,
+    };
+  }
+  if (input.row == null) {
+    return {
+      kind: "failed",
+      errorKey: "error.submit_failed",
+      log: COMPLETE_CONTACT_TRANSPORT_REREAD_MISSING_LOG,
+    };
+  }
+  const raced = decideAfterConditionalFillMiss({
+    intendedMode: input.intendedMode,
+    currentMode: input.row.transport_mode ?? null,
+  });
+  if (raced.kind === "reject") {
+    return {
+      kind: "conflict",
+      errorKey: COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY,
+    };
+  }
+  return { kind: "idempotent" };
+}
+
+export function completeContactTransportRereadResponse(
+  result: CompleteContactTransportRereadResult,
+): CompleteContactTransportRereadResponse {
+  if (result.kind === "idempotent") return { ok: true };
+  if (result.kind === "conflict") {
+    return { ok: false, errorKey: result.errorKey, status: 400 };
+  }
+  return {
+    ok: false,
+    errorKey: result.errorKey,
+    status: 500,
+    log: result.log,
   };
 }
 

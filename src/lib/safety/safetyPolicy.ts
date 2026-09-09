@@ -5,15 +5,22 @@
  * already-validated contracts. Do not trust browser-supplied mode, category,
  * role, lane, or counts.
  *
- * resolveSafetyModules accepts only ValidatedSafetyFacts from validateSafetyFacts.
+ * resolveSafetyModules accepts only ValidatedSafetyFacts so callers do not
+ * pass raw objects by accident. That branded type is a TypeScript call-site
+ * constraint, not an authorization boundary. Runtime safety still comes from
+ * validateSafetyFacts (and the shared transport field validator it reuses).
  */
 
 import type { PostCategory } from "@/lib/post-payload";
 import type { PostType } from "@/lib/types";
 import {
+  copyPresentTransportFields,
   getTransportPolicy,
   isModeAllowedForLane,
+  isTransportFieldPresent,
   parsePolicyQuantity,
+  validateTransportCapability,
+  validateTransportDeclaredFields,
   type TransportServiceLane,
 } from "@/lib/transport/transportPolicy";
 
@@ -127,10 +134,28 @@ function optionalQuantity(
   rec: Record<string, unknown>,
   key: string,
 ): { ok: true; value: number } | { ok: false; errorKey: string } {
-  if (!(key in rec) || rec[key] === undefined || rec[key] === null) {
+  if (!isTransportFieldPresent(rec, key as "peopleCount")) {
     return { ok: true, value: 0 };
   }
   return parsePolicyQuantity(rec[key]);
+}
+
+function localCategoryQuantityError(
+  rec: Record<string, unknown>,
+): string | null {
+  if (
+    isTransportFieldPresent(rec, "peopleCount") ||
+    isTransportFieldPresent(rec, "peopleCapacity")
+  ) {
+    return "error.transport_people_field_not_allowed";
+  }
+  if (isTransportFieldPresent(rec, "escortPassengerCount")) {
+    return "error.transport_escort_field_not_allowed";
+  }
+  if (isTransportFieldPresent(rec, "travelItemUnits")) {
+    return "error.transport_travel_item_field_not_allowed";
+  }
+  return null;
 }
 
 export function validateSafetyFacts(input: unknown): SafetyFactsResult {
@@ -176,20 +201,20 @@ export function validateSafetyFacts(input: unknown): SafetyFactsResult {
     postType = rec.postType;
   }
 
-  const peopleCount = optionalQuantity(rec, "peopleCount");
-  if (!peopleCount.ok) return peopleCount;
-  const peopleCapacity = optionalQuantity(rec, "peopleCapacity");
-  if (!peopleCapacity.ok) return peopleCapacity;
-  const travelItemUnits = optionalQuantity(rec, "travelItemUnits");
-  if (!travelItemUnits.ok) return travelItemUnits;
-  const escortPassengerCount = optionalQuantity(rec, "escortPassengerCount");
-  if (!escortPassengerCount.ok) return escortPassengerCount;
+  const hasPeopleCount = isTransportFieldPresent(rec, "peopleCount");
+  const hasPeopleCapacity = isTransportFieldPresent(rec, "peopleCapacity");
+  const hasEscort = isTransportFieldPresent(rec, "escortPassengerCount");
+  const hasTravelItemUnits = isTransportFieldPresent(rec, "travelItemUnits");
+  const hasRoleQuantity = hasPeopleCount || hasPeopleCapacity || hasEscort;
+  const hasTransportQuantity = hasRoleQuantity || hasTravelItemUnits;
 
-  if (postType === "demand" && "peopleCapacity" in rec && rec.peopleCapacity != null) {
-    return fail("error.transport_people_field_not_allowed");
+  if (hasRoleQuantity && postType === null) {
+    return fail("error.safety_facts_invalid_role");
   }
-  if (postType === "provider" && "peopleCount" in rec && rec.peopleCount != null) {
-    return fail("error.transport_people_field_not_allowed");
+
+  if (category === "buy" || category === "onsite" || category === "errand") {
+    const localError = localCategoryQuantityError(rec);
+    if (localError) return fail(localError);
   }
 
   let transportMode: string | null = null;
@@ -206,6 +231,40 @@ export function validateSafetyFacts(input: unknown): SafetyFactsResult {
       return fail("error.safety_facts_lane_mode_conflict");
     }
   }
+
+  if ((category === "travel" || category === "deliver") && hasTransportQuantity) {
+    const transportLane: TransportServiceLane = lane ?? category;
+    const quantityFields = copyPresentTransportFields(rec);
+    if (hasTravelItemUnits && transportLane === "deliver" && postType === null) {
+      return fail("error.transport_travel_item_field_not_allowed");
+    }
+    if (postType !== null) {
+      const declared = validateTransportDeclaredFields({
+        lane: transportLane,
+        postType,
+        ...quantityFields,
+      });
+      if (!declared.ok) return fail(declared.errorKey);
+      if (transportMode) {
+        const capability = validateTransportCapability({
+          lane: transportLane,
+          postType,
+          mode: transportMode,
+          ...quantityFields,
+        });
+        if (!capability.ok) return fail(capability.errorKey);
+      }
+    }
+  }
+
+  const peopleCount = optionalQuantity(rec, "peopleCount");
+  if (!peopleCount.ok) return peopleCount;
+  const peopleCapacity = optionalQuantity(rec, "peopleCapacity");
+  if (!peopleCapacity.ok) return peopleCapacity;
+  const travelItemUnits = optionalQuantity(rec, "travelItemUnits");
+  if (!travelItemUnits.ok) return travelItemUnits;
+  const escortPassengerCount = optionalQuantity(rec, "escortPassengerCount");
+  if (!escortPassengerCount.ok) return escortPassengerCount;
 
   const value: ValidatedSafetyFacts = {
     [VALIDATED_SAFETY_FACTS]: true,

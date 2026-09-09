@@ -24,26 +24,49 @@ WHERE n.nspname = 'public'
 -- EXPECT: no cargo_van, light_truck, box_truck, vehicle_with_trailer, boat modes
 -- EXPECT: RAISE EXCEPTION 'error.invalid_transport_mode' for other values
 
--- C. ACL — EXECUTE false for app roles
+-- C. ACL — catalog check for PUBLIC (oid 0), anon, authenticated, service_role
+-- Do not pass the PUBLIC pseudo-role as a username to has_function_privilege.
+-- Function-owner implicit rights are not treated as PUBLIC EXECUTE.
+WITH fn AS (
+  SELECT p.oid, p.proowner, p.proacl
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'insert_stage1_post_v86'
+    AND pg_get_function_identity_arguments(p.oid)
+      = 'uuid, uuid, text, text, jsonb, bigint, text'
+),
+acl AS (
+  SELECT
+    CASE
+      WHEN a.grantee = 0 THEN 'PUBLIC'
+      ELSE r.rolname
+    END AS role_name,
+    a.privilege_type
+  FROM fn
+  CROSS JOIN LATERAL aclexplode(
+    COALESCE(fn.proacl, acldefault('f'::"char", fn.proowner))
+  ) AS a
+  LEFT JOIN pg_roles r
+    ON r.oid = a.grantee
+   AND a.grantee <> 0
+)
 SELECT
-  r.rolname AS grantee,
-  has_function_privilege(
-    r.oid,
-    'public.insert_stage1_post_v86(uuid, uuid, text, text, jsonb, bigint, text)',
-    'EXECUTE'
-  ) AS can_execute
-FROM pg_roles r
-WHERE r.rolname IN ('anon', 'authenticated')
-ORDER BY 1;
--- EXPECT: can_execute false
-
-SELECT
-  has_function_privilege(
-    'public',
-    'public.insert_stage1_post_v86(uuid, uuid, text, text, jsonb, bigint, text)',
-    'EXECUTE'
-  ) AS public_can_execute;
--- EXPECT: false (PUBLIC)
+  COALESCE(bool_or(role_name = 'PUBLIC' AND privilege_type = 'EXECUTE'), false)
+    AS public_can_execute,
+  COALESCE(bool_or(role_name = 'anon' AND privilege_type = 'EXECUTE'), false)
+    AS anon_can_execute,
+  COALESCE(bool_or(role_name = 'authenticated' AND privilege_type = 'EXECUTE'), false)
+    AS authenticated_can_execute,
+  COALESCE(bool_or(role_name = 'service_role' AND privilege_type = 'EXECUTE'), false)
+    AS service_role_can_execute
+FROM acl;
+-- EXPECT: one structured row
+-- EXPECT public_can_execute = false
+-- EXPECT anon_can_execute = false
+-- EXPECT authenticated_can_execute = false
+-- EXPECT service_role_can_execute = false
+-- (no GRANT EXECUTE; owner implicit rights are not PUBLIC)
 
 -- D. posts.transport_mode CHECK was not altered by this migration
 SELECT pg_get_constraintdef(c.oid) AS def

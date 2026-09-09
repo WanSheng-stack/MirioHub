@@ -56,8 +56,9 @@ import {
 } from '@/lib/post-form/submitPost';
 import {
   completeContactTransportFillFilter,
-  decideAfterConditionalFillMiss,
+  completeContactTransportRereadResponse,
   decideCompleteContactTransport,
+  interpretCompleteContactTransportReread,
 } from '@/lib/posts/completeContactTransport';
 import { evaluatePublishIntercept } from '@/lib/security/evaluateFraudIntercept';
 import { geocodeAddress, toGeographyPointWkt } from '@/lib/route-kms';
@@ -111,7 +112,7 @@ async function applyTransportFill(
     userId: string;
     decision: ReturnType<typeof decideCompleteContactTransport>;
   },
-): Promise<{ ok: true } | { ok: false; errorKey: string }> {
+): Promise<{ ok: true } | { ok: false; errorKey: string; status: 400 | 500 }> {
   if (input.decision.kind !== 'fill') return { ok: true };
   const filter = completeContactTransportFillFilter({
     postId: input.postId,
@@ -127,23 +128,30 @@ async function applyTransportFill(
     .maybeSingle();
   if (error) {
     console.error('[complete-contact] transport fill failed');
-    return { ok: false, errorKey: 'error.submit_failed' };
+    return { ok: false, errorKey: 'error.submit_failed', status: 500 };
   }
   if (data) return { ok: true };
-  const { data: current } = await supabase
+  const { data: current, error: rereadError } = await supabase
     .from('posts')
     .select('transport_mode')
     .eq('id', filter.id)
     .eq('user_id', filter.user_id)
     .maybeSingle();
-  const raced = decideAfterConditionalFillMiss({
+  const interpreted = interpretCompleteContactTransportReread({
     intendedMode: input.decision.mode,
-    currentMode:
-      (current as { transport_mode?: string | null } | null)?.transport_mode ??
-      null,
+    error: rereadError,
+    row: current as { transport_mode?: string | null } | null,
   });
-  if (raced.kind === 'reject') {
-    return { ok: false, errorKey: raced.errorKey };
+  const response = completeContactTransportRereadResponse(interpreted);
+  if (!response.ok) {
+    if (response.log) {
+      console.error(response.log);
+    }
+    return {
+      ok: false,
+      errorKey: response.errorKey,
+      status: response.status,
+    };
   }
   return { ok: true };
 }
@@ -429,7 +437,7 @@ export async function POST(request: Request) {
         if (!filled.ok) {
           return NextResponse.json(
             { ok: false, errorKey: filled.errorKey },
-            { status: 400 },
+            { status: filled.status },
           );
         }
         if (hasPhone && normalizedPhoneForPost) {
@@ -481,7 +489,7 @@ export async function POST(request: Request) {
   if (!filled.ok) {
     return NextResponse.json(
       { ok: false, errorKey: filled.errorKey },
-      { status: 400 },
+      { status: filled.status },
     );
   }
 

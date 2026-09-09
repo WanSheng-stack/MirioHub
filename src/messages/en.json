@@ -175,7 +175,11 @@
     "match_request_cargo_required": "Please enter luggage / cargo counts.",
     "match_request_need_demand_quantity": "Enter at least one actual demand quantity.",
     "match_request_invalid_budget": "Please enter a valid budget range.",
-    "match_request_passenger_count_bounds": "Seat count must be an integer in the current product range (travel 1–4, escort 0–4)."
+    "match_request_passenger_count_bounds": "Seat count must be an integer in the current product range (travel 1–4, escort 0–4).",
+    "invalid_transport_mode": "The transport option is invalid. Please choose again.",
+    "transport_mode_already_set": "Transport for this post is already set and cannot be changed here.",
+    "transport_escort_field_not_allowed": "This listing type cannot include a cargo escort count.",
+    "transport_travel_item_field_not_allowed": "Large cargo cannot use the small-item field. Please fill this in again."
   },
   "success": {
     "posted": "Published successfully.",

@@ -1,6 +1,6 @@
 /**
- * PHASE 6.7B.1B.2 — testable MatchRequestSheet lifecycle / a11y helpers.
- * No DOM. Parent owns serverErrorKey; the sheet never mirrors or hides it.
+ * PHASE 6.7B.1B.3 — testable MatchRequestSheet lifecycle / a11y helpers.
+ * Parent owns serverErrorKey. Focus helpers stay DOM-free except explicit readers.
  */
 
 import { TRANSPORT_MODES } from "@/lib/posts";
@@ -55,17 +55,25 @@ export function shouldRestartMatchRequestFocusLifecycle(input: {
   return false;
 }
 
-export type MatchRequestTabTrapResult = {
-  preventDefault: true;
-  nextIndex: number;
-};
+export type MatchRequestTabTrapResult =
+  | { preventDefault: true; stayInPanel: true }
+  | { preventDefault: true; nextIndex: number };
+
+export function isStayInPanelTrap(
+  trap: MatchRequestTabTrapResult,
+): trap is { preventDefault: true; stayInPanel: true } {
+  return "stayInPanel" in trap;
+}
 
 export function matchRequestTabTrap(
   event: { key: string; shiftKey: boolean },
   currentIndex: number,
   count: number,
 ): MatchRequestTabTrapResult | null {
-  if (event.key !== "Tab" || count <= 0) return null;
+  if (event.key !== "Tab") return null;
+  if (count <= 0) {
+    return { preventDefault: true, stayInPanel: true };
+  }
   if (currentIndex < 0) {
     return { preventDefault: true, nextIndex: event.shiftKey ? count - 1 : 0 };
   }
@@ -76,6 +84,82 @@ export function matchRequestTabTrap(
     return { preventDefault: true, nextIndex: 0 };
   }
   return null;
+}
+
+export type MatchRequestFocusCandidate = {
+  isConnected: boolean;
+  hidden: boolean;
+  disabled: boolean;
+  tabIndex: number;
+  ariaHidden: boolean;
+  ancestorHidden: boolean;
+  display: string;
+  visibility: string;
+};
+
+export function isMatchRequestFocusableCandidate(
+  el: MatchRequestFocusCandidate,
+): boolean {
+  if (!el.isConnected) return false;
+  if (el.hidden || el.ancestorHidden || el.ariaHidden) return false;
+  if (el.disabled) return false;
+  if (el.tabIndex === -1) return false;
+  if (el.display === "none") return false;
+  if (el.visibility === "hidden" || el.visibility === "collapse") return false;
+  return true;
+}
+
+export function readMatchRequestFocusCandidate(
+  el: HTMLElement,
+): MatchRequestFocusCandidate {
+  const style = getComputedStyle(el);
+  return {
+    isConnected: el.isConnected,
+    hidden: el.hidden,
+    disabled: el.hasAttribute("disabled"),
+    tabIndex: el.tabIndex,
+    ariaHidden: el.getAttribute("aria-hidden") === "true",
+    ancestorHidden: Boolean(
+      el.parentElement?.closest("[hidden], [aria-hidden='true']"),
+    ),
+    display: style.display,
+    visibility: style.visibility,
+  };
+}
+
+export type MatchRequestRestoreTarget = {
+  isConnected: boolean;
+  hidden: boolean;
+  disabled: boolean;
+  display: string;
+  visibility: string;
+} | null;
+
+export function canRestoreMatchRequestTriggerFocus(
+  target: MatchRequestRestoreTarget,
+): boolean {
+  if (!target) return false;
+  if (!target.isConnected) return false;
+  if (target.hidden || target.disabled) return false;
+  if (target.display === "none") return false;
+  if (target.visibility === "hidden" || target.visibility === "collapse") {
+    return false;
+  }
+  return true;
+}
+
+export function readMatchRequestRestoreTarget(
+  el: HTMLElement | null,
+): MatchRequestRestoreTarget {
+  if (!el) return null;
+  const style = getComputedStyle(el);
+  return {
+    isConnected: el.isConnected,
+    hidden: el.hidden,
+    disabled: el.hasAttribute("disabled"),
+    display: style.display,
+    visibility: style.visibility,
+  };
 }
 
 export const MATCH_REQUEST_FOCUSABLE_SELECTOR = [

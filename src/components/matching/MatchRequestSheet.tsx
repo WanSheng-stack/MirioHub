@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PHASE 6.7B.1B.2 — unmounted match-request sheet.
+ * PHASE 6.7B.1B.3 — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
  * Deliver applications collect Cargo V2 aggregate space (applicant side only).
@@ -36,11 +36,16 @@ import {
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
 import {
+  canRestoreMatchRequestTriggerFocus,
   displayedServerErrorKey,
+  isMatchRequestFocusableCandidate,
+  isStayInPanelTrap,
   MATCH_REQUEST_FOCUSABLE_SELECTOR,
   matchRequestCloseActions,
   matchRequestInitialFocusIndex,
   matchRequestTabTrap,
+  readMatchRequestFocusCandidate,
+  readMatchRequestRestoreTarget,
   shouldClearServerErrorOnUserEdit,
   transportModesForMatchRequest,
 } from "@/lib/matching/matchRequestSheetBehavior";
@@ -124,7 +129,7 @@ function MatchRequestSheetBody({
       if (!panelRef.current) return [];
       return Array.from(
         panelRef.current.querySelectorAll<HTMLElement>(MATCH_REQUEST_FOCUSABLE_SELECTOR),
-      ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
+      ).filter((el) => isMatchRequestFocusableCandidate(readMatchRequestFocusCandidate(el)));
     }
 
     const nodes = focusables();
@@ -142,7 +147,6 @@ function MatchRequestSheetBody({
       }
       if (event.key !== "Tab") return;
       const trapNodes = focusables();
-      if (trapNodes.length === 0) return;
       const current = document.activeElement;
       const currentIndex = trapNodes.findIndex((el) => el === current);
       const trap = matchRequestTabTrap(
@@ -152,13 +156,19 @@ function MatchRequestSheetBody({
       );
       if (!trap) return;
       event.preventDefault();
+      if (isStayInPanelTrap(trap)) {
+        panelRef.current?.focus();
+        return;
+      }
       trapNodes[trap.nextIndex]?.focus();
     }
 
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      previous?.focus?.();
+      if (canRestoreMatchRequestTriggerFocus(readMatchRequestRestoreTarget(previous))) {
+        previous?.focus();
+      }
     };
   }, []);
 

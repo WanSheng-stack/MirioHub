@@ -10,6 +10,7 @@ import {
   OWNER_POST_SELECT,
   PUBLIC_SAFE_POST_SELECT,
 } from "@/lib/posts/publicPostSelect";
+import { loadPublicProfileCardNames } from "@/lib/posts/publicProfileCards";
 import type { Post } from "@/lib/types";
 
 type Props = { params: Promise<{ locale: string }> };
@@ -48,11 +49,16 @@ export default async function HomePage({ params }: Props) {
   const providerMatchMap = computeProviderMatchInfo(demands, providers);
   const demandMatchMap = computeDemandMatchInfo(demands, providers);
 
-  const authorIds = [...new Set(rows.map((p) => p.user_id))];
-  const { data: cards } = authorIds.length
-    ? await supabase.from("profile_cards").select("id, full_name").in("id", authorIds)
-    : { data: [] as { id: string; full_name: string | null }[] };
-  const names = new Map((cards ?? []).map((c) => [c.id, c.full_name]));
+  const names = await loadPublicProfileCardNames({
+    authorIds: rows.map((p) => p.user_id),
+    rpc: async (fn, args) => {
+      const { data, error } = await supabase.rpc(fn, args);
+      return { data, error };
+    },
+    onSafeFailure(log) {
+      console.error(log);
+    },
+  });
 
   const hallBundles = rows.map((post) => ({
     post,

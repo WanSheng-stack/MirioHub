@@ -140,3 +140,25 @@ must not modify it.
   accommodation enum; remaining-trip space is not nameplate volume.
 - **Risk if wired early:** Treats incomplete four-tier rows as a fit
   decision, or shows Provider “seat count” on public cards.
+
+## 10. `public.profile_cards` (dropped live; still in frozen `init.sql`)
+
+- **Current state:** PHASE 6.6A.1 drops the live Security Definer view.
+  Hall names use `get_public_profile_cards_v92(uuid[])` (id + `full_name`
+  only). Match-hall admin reads `profiles` `id, full_name` directly.
+  `supabase/init.sql` still defines the old six-column view; that file is
+  not live schema authority and must not be edited this phase.
+- **Future replacement:** None. Do not recreate a public profile view
+  that projects plate / vehicle / facebook / viber.
+- **Earliest safe deletion of the init.sql snapshot:** When `init.sql` is
+  allowed to be rewritten to match live schema.
+- **Preconditions:** Live verify shows `to_regclass('public.profile_cards')`
+  is null; production TS callers of `profile_cards` remain zero.
+- **Risk if recreated early:** Reopens Security Advisor
+  `security_definer_view` and re-leaks contact fields to anon SELECT.
+
+`public.public_posts_safe` remains the hall public-read privacy boundary.
+PHASE 6.6A.1 does **not** set `security_invoker=true` on it. The expected
+remaining Security Advisor item after v92 is that view’s Security Definer
+flag. Replace it in a later dedicated phase; do not clear Advisor count
+by breaking anonymous hall reads.

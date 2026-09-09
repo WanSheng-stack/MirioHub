@@ -1,6 +1,11 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PUBLIC_SAFE_POST_SELECT } from "@/lib/posts/publicPostSelect";
+import {
+  MATCH_HALL_AUTHOR_NAME_LOOKUP_FAILED_LOG,
+  PUBLIC_AUTHOR_NAME_SELECT,
+  interpretPublicAuthorNameRows,
+} from "@/lib/posts/publicProfileCards";
 import { calculateRouteMatchScore } from "@/lib/route/calculateRouteMatchScore";
 import type { RouteScorePost } from "@/lib/route/calculateRouteMatchScore";
 import {
@@ -89,10 +94,18 @@ export async function buildMatchHall(input: {
   );
 
   const authorIds = [...new Set(candidates.map((c) => c.user_id))];
-  const { data: cards } = authorIds.length
-    ? await admin.from("profile_cards").select("id, full_name").in("id", authorIds)
-    : { data: [] as { id: string; full_name: string | null }[] };
-  const names = new Map((cards ?? []).map((c) => [c.id, c.full_name]));
+  let nameQuery: { data: unknown; error: unknown } = { data: [], error: null };
+  if (authorIds.length) {
+    const result = await admin
+      .from("profiles")
+      .select(PUBLIC_AUTHOR_NAME_SELECT)
+      .in("id", authorIds);
+    nameQuery = result;
+    if (result.error) {
+      console.error(MATCH_HALL_AUTHOR_NAME_LOOKUP_FAILED_LOG);
+    }
+  }
+  const names = interpretPublicAuthorNameRows(nameQuery);
 
   const completedCounts = new Map<string, number>();
   if (authorIds.length) {

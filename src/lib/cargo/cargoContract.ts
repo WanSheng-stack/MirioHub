@@ -1,193 +1,124 @@
 /**
- * PHASE 6.7B.1A.2 — Cargo V2 domain contracts and strict parsers.
+ * PHASE 6.7B.1A.2A — Cargo V2 aggregate-space contracts and strict parsers.
  *
  * Not a database schema. Not on the production runtime path.
- * Parsers do not write to the database and do not trust browser input.
  * TypeScript types are not an authorization boundary; runtime parse is.
+ * Server must re-parse; do not trust browser JSON.
  */
 
 import {
-  isTargetDeliverTransportMode,
-  type TargetDeliverTransportMode,
-} from "@/lib/transport/transportPolicy";
-import {
-  CARGO_BULKY_CATEGORIES,
-  CARGO_CARRY_DISTANCE_M_MAX,
+  CARGO_AMOUNT_MINOR_MAX,
   CARGO_CONTRACT_VERSION,
-  CARGO_DESCRIPTION_MAX,
+  CARGO_CURRENCIES,
   CARGO_DIMENSION_CM_MAX,
   CARGO_DIMENSION_CM_MIN,
-  CARGO_ELEVATOR_STATES,
   CARGO_ESCORT_ACCOMMODATIONS,
-  CARGO_HANDLING_FLAG_MAX,
-  CARGO_HANDLING_FLAGS,
-  CARGO_HANDLING_REQUESTS,
-  CARGO_ITEM_CATEGORIES,
-  CARGO_ITEM_MAX,
-  CARGO_ITEM_MIN,
-  CARGO_LEVEL_MAX,
-  CARGO_LEVEL_MIN,
+  CARGO_HANDLING_SCOPES,
   CARGO_NOTE_MAX,
-  CARGO_PAYLOAD_KG_MAX,
-  CARGO_PRESET_DIMENSIONS_CM,
-  CARGO_QUANTITY_MAX,
-  CARGO_QUANTITY_MIN,
-  CARGO_RECOMMENDATION_THRESHOLDS,
-  CARGO_SIZE_PRESETS,
-  CARGO_SUPPORT_LEVELS,
-  CARGO_VEHICLE_CLASSES,
   CARGO_WEIGHT_KG_MAX,
-  isTransportModeVehicleClassCompatible,
-  type CargoDimensionsCm,
-  type CargoElevatorState,
   type CargoEscortAccommodation,
-  type CargoHandlingFlag,
-  type CargoHandlingRequest,
-  type CargoItemCategory,
-  type CargoSizePreset,
-  type CargoSupportLevel,
-  type CargoVehicleClass,
+  type CargoHandlingScope,
+  type SupportedCargoCurrency,
 } from "@/lib/cargo/cargoPolicy";
 
 export type {
-  CargoDimensionsCm,
-  CargoElevatorState,
   CargoEscortAccommodation,
-  CargoHandlingFlag,
-  CargoHandlingRequest,
-  CargoItemCategory,
-  CargoSizePreset,
-  CargoSupportLevel,
-  CargoVehicleClass,
+  CargoHandlingScope,
+  SupportedCargoCurrency,
 };
 
 export type CargoParseResult<T> =
   | { ok: true; value: T }
   | { ok: false; errorKey: string; field?: string };
 
-export type CargoMeasurement =
-  | { kind: "custom"; dimensionsCm: CargoDimensionsCm }
-  | { kind: "preset"; preset: CargoSizePreset }
-  | { kind: "unknown" };
-
-export type CargoWeight =
-  | { kind: "known"; kgPerUnit: number }
-  | { kind: "unknown" };
-
-export type CargoItemV1 = {
-  category: CargoItemCategory;
-  description?: string;
-  quantity: number;
-  measurement: CargoMeasurement;
-  weight: CargoWeight;
-  handlingFlags: CargoHandlingFlag[];
+export type CargoDimensionsCm = {
+  length: number;
+  width: number;
+  height: number;
 };
 
-export type CargoLocationAccess = {
-  level: number | null;
-  elevator: CargoElevatorState;
-  carryDistanceMeters?: number | null;
+export type CargoWeight =
+  | { kind: "known"; kg: number }
+  | { kind: "unknown" };
+
+export type DemandHandlingCompensation =
+  | {
+      type: "fixed";
+      amountMinor: number;
+      currency: SupportedCargoCurrency;
+    }
+  | { type: "negotiable" };
+
+export type ProviderHandlingCompensation =
+  | DemandHandlingCompensation
+  | { type: "voluntary_unpaid" };
+
+export type CargoHandlingRequest = {
+  scope: CargoHandlingScope;
+  compensation?: DemandHandlingCompensation;
+};
+
+export type CargoHandlingOffer = {
+  scope: CargoHandlingScope;
+  compensation?: ProviderHandlingCompensation;
 };
 
 export type CargoRequirementV1 = {
   version: 1;
-  items: CargoItemV1[];
-  requestedVehicleClass?: CargoVehicleClass | null;
-  pickupHandling: CargoHandlingRequest;
-  dropoffHandling: CargoHandlingRequest;
-  pickupAccess: CargoLocationAccess;
-  dropoffAccess: CargoLocationAccess;
+  requiredSpace: CargoDimensionsCm;
+  approximateWeightKg: CargoWeight;
   escortPassengerCount: 0 | 1;
+  handlingRequest: CargoHandlingRequest;
   note?: string;
 };
-
-export type CargoAvailableSpace =
-  | { kind: "known"; dimensionsCm: CargoDimensionsCm }
-  | { kind: "unknown" };
-
-export type CargoPayloadKg =
-  | { kind: "known"; kg: number }
-  | { kind: "unknown" };
 
 export type CargoCapacityV1 = {
   version: 1;
   basis: "current_trip_available_space";
-  transportMode: TargetDeliverTransportMode;
-  vehicleClass: CargoVehicleClass;
-  availableSpace: CargoAvailableSpace;
-  availablePayloadKg: CargoPayloadKg;
-  loadingHelp: CargoSupportLevel;
-  unloadingHelp: CargoSupportLevel;
+  availableSpace: CargoDimensionsCm;
+  availablePayloadKg: CargoWeight;
   escortAccommodation: CargoEscortAccommodation;
-  supportedHandlingFlags: CargoHandlingFlag[];
+  handlingOffer: CargoHandlingOffer;
   note?: string;
 };
 
-export type CargoRecommendationReason =
-  | "insufficient_dimensions"
-  | "insufficient_weight"
-  | "advisory_small_cargo_van"
-  | "advisory_medium_cargo_van"
-  | "advisory_large_cargo_van"
-  | "advisory_light_truck"
-  | "advisory_box_truck"
-  | "advisory_vehicle_with_trailer"
-  | "advisory_water_cargo"
-  | "bulky_item_human_confirm"
-  | "valuable_item_human_confirm"
-  | "estimated_preset_only";
+export const PARSED_CARGO_REQUIREMENT = Symbol("ParsedCargoRequirementV1");
+export const PARSED_CARGO_CAPACITY = Symbol("ParsedCargoCapacityV1");
 
-export type CargoVehicleRecommendation = {
-  recommendedClass: CargoVehicleClass | null;
-  confidence: "estimated" | "insufficient_data";
-  reasons: CargoRecommendationReason[];
+export type ParsedCargoRequirementV1 = CargoRequirementV1 & {
+  readonly [PARSED_CARGO_REQUIREMENT]: true;
+};
+
+export type ParsedCargoCapacityV1 = CargoCapacityV1 & {
+  readonly [PARSED_CARGO_CAPACITY]: true;
 };
 
 const REQUIREMENT_KEYS = new Set([
   "version",
-  "items",
-  "requestedVehicleClass",
-  "pickupHandling",
-  "dropoffHandling",
-  "pickupAccess",
-  "dropoffAccess",
+  "requiredSpace",
+  "approximateWeightKg",
   "escortPassengerCount",
+  "handlingRequest",
   "note",
 ]);
 
-const ITEM_KEYS = new Set([
-  "category",
-  "description",
-  "quantity",
-  "measurement",
-  "weight",
-  "handlingFlags",
-]);
-
-const MEASUREMENT_CUSTOM_KEYS = new Set(["kind", "dimensionsCm"]);
-const MEASUREMENT_PRESET_KEYS = new Set(["kind", "preset"]);
-const MEASUREMENT_UNKNOWN_KEYS = new Set(["kind"]);
-const DIMENSION_KEYS = new Set(["length", "width", "height"]);
-const WEIGHT_KNOWN_KEYS = new Set(["kind", "kgPerUnit"]);
-const WEIGHT_UNKNOWN_KEYS = new Set(["kind"]);
-const ACCESS_KEYS = new Set(["level", "elevator", "carryDistanceMeters"]);
 const CAPACITY_KEYS = new Set([
   "version",
   "basis",
-  "transportMode",
-  "vehicleClass",
   "availableSpace",
   "availablePayloadKg",
-  "loadingHelp",
-  "unloadingHelp",
   "escortAccommodation",
-  "supportedHandlingFlags",
+  "handlingOffer",
   "note",
 ]);
-const SPACE_KNOWN_KEYS = new Set(["kind", "dimensionsCm"]);
-const SPACE_UNKNOWN_KEYS = new Set(["kind"]);
-const PAYLOAD_KNOWN_KEYS = new Set(["kind", "kg"]);
-const PAYLOAD_UNKNOWN_KEYS = new Set(["kind"]);
+
+const DIMENSION_KEYS = new Set(["length", "width", "height"]);
+const WEIGHT_KNOWN_KEYS = new Set(["kind", "kg"]);
+const WEIGHT_UNKNOWN_KEYS = new Set(["kind"]);
+const DEMAND_HANDLING_KEYS = new Set(["scope", "compensation"]);
+const PROVIDER_HANDLING_KEYS = new Set(["scope", "compensation"]);
+const FIXED_COMP_KEYS = new Set(["type", "amountMinor", "currency"]);
+const TYPE_ONLY_COMP_KEYS = new Set(["type"]);
 
 const FORBIDDEN_KEY_ALIASES = new Set(
   [
@@ -213,6 +144,12 @@ const FORBIDDEN_KEY_ALIASES = new Set(
     "fee",
     "bid",
     "payment",
+    "paymentlink",
+    "payment_link",
+    "bank",
+    "iban",
+    "credential",
+    "contact",
     "photo",
     "photourl",
     "photo_url",
@@ -223,6 +160,10 @@ const FORBIDDEN_KEY_ALIASES = new Set(
     "deliverycode",
     "delivery_code",
     "code",
+    "identity",
+    "idcard",
+    "id_card",
+    "passport",
     "hazardous",
     "dangerous_goods",
     "dangerousgoods",
@@ -232,10 +173,10 @@ const FORBIDDEN_KEY_ALIASES = new Set(
     "contraband",
     "explosive",
     "flammable",
-    "identity",
-    "idcard",
-    "id_card",
-    "passport",
+    "feeoverride",
+    "fee_override",
+    "transportfee",
+    "transport_fee",
   ].map((k) => k.toLowerCase()),
 );
 
@@ -297,38 +238,6 @@ function rejectUnknownKeys(
   return ok(true);
 }
 
-function parseTrimmedString(
-  value: unknown,
-  field: string,
-  max: number,
-  required: boolean,
-): CargoParseResult<string | undefined> {
-  if (value === undefined || value === null) {
-    return required
-      ? fail("error.cargo_description_required", field)
-      : ok(undefined);
-  }
-  if (typeof value !== "string") {
-    return fail("error.cargo_invalid_payload", field);
-  }
-  if (CONTROL_CHARS.test(value)) {
-    return fail("error.cargo_invalid_payload", field);
-  }
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return required
-      ? fail("error.cargo_description_required", field)
-      : ok(undefined);
-  }
-  if (trimmed.length > max) {
-    return fail(
-      required ? "error.cargo_description_required" : "error.cargo_invalid_payload",
-      field,
-    );
-  }
-  return ok(trimmed);
-}
-
 function isSafeInt(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -363,6 +272,13 @@ function parseDimensionsCm(
   }
   const keys = rejectUnknownKeys(value, DIMENSION_KEYS, path);
   if (!keys.ok) return keys;
+  if (
+    value.length === undefined ||
+    value.width === undefined ||
+    value.height === undefined
+  ) {
+    return fail("error.cargo_invalid_dimensions", path);
+  }
   const length = parseDimensionCm(value.length, `${path}.length`);
   if (!length.ok) return length;
   const width = parseDimensionCm(value.width, `${path}.width`);
@@ -376,48 +292,14 @@ function parseDimensionsCm(
   });
 }
 
-function parseMeasurement(
-  value: unknown,
-  path: string,
-): CargoParseResult<CargoMeasurement> {
-  if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_dimensions", path);
-  }
-  if (value.kind === "custom") {
-    const keys = rejectUnknownKeys(value, MEASUREMENT_CUSTOM_KEYS, path);
-    if (!keys.ok) return keys;
-    const dims = parseDimensionsCm(value.dimensionsCm, `${path}.dimensionsCm`);
-    if (!dims.ok) return dims;
-    return ok({ kind: "custom", dimensionsCm: dims.value });
-  }
-  if (value.kind === "preset") {
-    const keys = rejectUnknownKeys(value, MEASUREMENT_PRESET_KEYS, path);
-    if (!keys.ok) return keys;
-    if (
-      typeof value.preset !== "string" ||
-      !(CARGO_SIZE_PRESETS as readonly string[]).includes(value.preset)
-    ) {
-      return fail("error.cargo_invalid_dimensions", `${path}.preset`);
-    }
-    return ok({ kind: "preset", preset: value.preset as CargoSizePreset });
-  }
-  if (value.kind === "unknown") {
-    const keys = rejectUnknownKeys(value, MEASUREMENT_UNKNOWN_KEYS, path);
-    if (!keys.ok) return keys;
-    return ok({ kind: "unknown" });
-  }
-  return fail("error.cargo_invalid_dimensions", `${path}.kind`);
-}
-
-function parseUnitWeight(
+function parseKg(
   value: unknown,
   field: string,
-  max: number,
 ): CargoParseResult<number> {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fail("error.cargo_invalid_weight", field);
   }
-  if (value <= 0 || value > max || !atMostOneDecimal(value)) {
+  if (value <= 0 || value > CARGO_WEIGHT_KG_MAX || !atMostOneDecimal(value)) {
     return fail("error.cargo_invalid_weight", field);
   }
   return ok(value);
@@ -430,13 +312,9 @@ function parseWeight(value: unknown, path: string): CargoParseResult<CargoWeight
   if (value.kind === "known") {
     const keys = rejectUnknownKeys(value, WEIGHT_KNOWN_KEYS, path);
     if (!keys.ok) return keys;
-    const kg = parseUnitWeight(
-      value.kgPerUnit,
-      `${path}.kgPerUnit`,
-      CARGO_WEIGHT_KG_MAX,
-    );
+    const kg = parseKg(value.kg, `${path}.kg`);
     if (!kg.ok) return kg;
-    return ok({ kind: "known", kgPerUnit: kg.value });
+    return ok({ kind: "known", kg: kg.value });
   }
   if (value.kind === "unknown") {
     const keys = rejectUnknownKeys(value, WEIGHT_UNKNOWN_KEYS, path);
@@ -446,121 +324,145 @@ function parseWeight(value: unknown, path: string): CargoParseResult<CargoWeight
   return fail("error.cargo_invalid_weight", `${path}.kind`);
 }
 
-function parseHandlingFlags(
+function parseCurrency(
   value: unknown,
-  path: string,
-): CargoParseResult<CargoHandlingFlag[]> {
-  if (!Array.isArray(value)) {
-    return fail("error.cargo_invalid_handling_flag", path);
+  field: string,
+): CargoParseResult<SupportedCargoCurrency> {
+  if (
+    typeof value !== "string" ||
+    !(CARGO_CURRENCIES as readonly string[]).includes(value)
+  ) {
+    return fail("error.cargo_invalid_currency", field);
   }
-  if (value.length > CARGO_HANDLING_FLAG_MAX) {
-    return fail("error.cargo_invalid_handling_flag", path);
-  }
-  const seen = new Set<string>();
-  for (const flag of value) {
-    if (
-      typeof flag !== "string" ||
-      !(CARGO_HANDLING_FLAGS as readonly string[]).includes(flag)
-    ) {
-      return fail("error.cargo_invalid_handling_flag", path);
-    }
-    if (seen.has(flag)) {
-      return fail("error.cargo_invalid_handling_flag", path);
-    }
-    seen.add(flag);
-  }
-  return ok(CARGO_HANDLING_FLAGS.filter((flag) => seen.has(flag)));
+  return ok(value as SupportedCargoCurrency);
 }
 
-function parseItem(value: unknown, path: string): CargoParseResult<CargoItemV1> {
-  if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_payload", path);
+function parseFixedAmount(
+  rec: Record<string, unknown>,
+  path: string,
+): CargoParseResult<{
+  type: "fixed";
+  amountMinor: number;
+  currency: SupportedCargoCurrency;
+}> {
+  const keys = rejectUnknownKeys(rec, FIXED_COMP_KEYS, path);
+  if (!keys.ok) return keys;
+  if (!isSafeInt(rec.amountMinor) || rec.amountMinor <= 0) {
+    return fail("error.cargo_invalid_compensation", `${path}.amountMinor`);
   }
-  const keys = rejectUnknownKeys(value, ITEM_KEYS, path);
+  if (rec.amountMinor > CARGO_AMOUNT_MINOR_MAX) {
+    return fail("error.cargo_invalid_compensation", `${path}.amountMinor`);
+  }
+  const currency = parseCurrency(rec.currency, `${path}.currency`);
+  if (!currency.ok) return currency;
+  return ok({
+    type: "fixed",
+    amountMinor: rec.amountMinor,
+    currency: currency.value,
+  });
+}
+
+function parseDemandCompensation(
+  value: unknown,
+  path: string,
+): CargoParseResult<DemandHandlingCompensation> {
+  if (!isPlainObject(value)) {
+    return fail("error.cargo_invalid_compensation", path);
+  }
+  if (value.type === "fixed") return parseFixedAmount(value, path);
+  if (value.type === "negotiable") {
+    const keys = rejectUnknownKeys(value, TYPE_ONLY_COMP_KEYS, path);
+    if (!keys.ok) return keys;
+    return ok({ type: "negotiable" });
+  }
+  return fail("error.cargo_invalid_compensation", `${path}.type`);
+}
+
+function parseProviderCompensation(
+  value: unknown,
+  path: string,
+): CargoParseResult<ProviderHandlingCompensation> {
+  if (!isPlainObject(value)) {
+    return fail("error.cargo_invalid_compensation", path);
+  }
+  if (value.type === "fixed") return parseFixedAmount(value, path);
+  if (value.type === "negotiable") {
+    const keys = rejectUnknownKeys(value, TYPE_ONLY_COMP_KEYS, path);
+    if (!keys.ok) return keys;
+    return ok({ type: "negotiable" });
+  }
+  if (value.type === "voluntary_unpaid") {
+    const keys = rejectUnknownKeys(value, TYPE_ONLY_COMP_KEYS, path);
+    if (!keys.ok) return keys;
+    return ok({ type: "voluntary_unpaid" });
+  }
+  return fail("error.cargo_invalid_compensation", `${path}.type`);
+}
+
+function parseHandlingRequest(
+  value: unknown,
+  path: string,
+): CargoParseResult<CargoHandlingRequest> {
+  if (!isPlainObject(value)) {
+    return fail("error.cargo_invalid_handling", path);
+  }
+  const keys = rejectUnknownKeys(value, DEMAND_HANDLING_KEYS, path);
   if (!keys.ok) return keys;
   if (
-    typeof value.category !== "string" ||
-    !(CARGO_ITEM_CATEGORIES as readonly string[]).includes(value.category)
+    typeof value.scope !== "string" ||
+    !(CARGO_HANDLING_SCOPES as readonly string[]).includes(value.scope)
   ) {
-    return fail("error.cargo_invalid_category", `${path}.category`);
+    return fail("error.cargo_invalid_handling", `${path}.scope`);
   }
-  const category = value.category as CargoItemCategory;
-  const description = parseTrimmedString(
-    value.description,
-    `${path}.description`,
-    CARGO_DESCRIPTION_MAX,
-    category === "other",
+  const scope = value.scope as CargoHandlingScope;
+  if (scope === "none") {
+    if (value.compensation !== undefined) {
+      return fail("error.cargo_invalid_compensation", `${path}.compensation`);
+    }
+    return ok({ scope: "none" });
+  }
+  if (value.compensation === undefined) {
+    return fail("error.cargo_invalid_compensation", `${path}.compensation`);
+  }
+  const compensation = parseDemandCompensation(
+    value.compensation,
+    `${path}.compensation`,
   );
-  if (!description.ok) return description;
-  if (!isSafeInt(value.quantity)) {
-    return fail("error.cargo_invalid_quantity", `${path}.quantity`);
-  }
-  if (
-    value.quantity < CARGO_QUANTITY_MIN ||
-    value.quantity > CARGO_QUANTITY_MAX
-  ) {
-    return fail("error.cargo_invalid_quantity", `${path}.quantity`);
-  }
-  const measurement = parseMeasurement(value.measurement, `${path}.measurement`);
-  if (!measurement.ok) return measurement;
-  const weight = parseWeight(value.weight, `${path}.weight`);
-  if (!weight.ok) return weight;
-  const flags = parseHandlingFlags(value.handlingFlags, `${path}.handlingFlags`);
-  if (!flags.ok) return flags;
-  const item: CargoItemV1 = {
-    category,
-    quantity: value.quantity,
-    measurement: measurement.value,
-    weight: weight.value,
-    handlingFlags: flags.value,
-  };
-  if (description.value !== undefined) item.description = description.value;
-  return ok(item);
+  if (!compensation.ok) return compensation;
+  return ok({ scope, compensation: compensation.value });
 }
 
-function parseAccess(
+function parseHandlingOffer(
   value: unknown,
   path: string,
-): CargoParseResult<CargoLocationAccess> {
+): CargoParseResult<CargoHandlingOffer> {
   if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_access", path);
+    return fail("error.cargo_invalid_handling", path);
   }
-  const keys = rejectUnknownKeys(value, ACCESS_KEYS, path);
+  const keys = rejectUnknownKeys(value, PROVIDER_HANDLING_KEYS, path);
   if (!keys.ok) return keys;
-  let level: number | null;
-  if (value.level === null) {
-    level = null;
-  } else if (!isSafeInt(value.level)) {
-    return fail("error.cargo_invalid_access", `${path}.level`);
-  } else if (value.level < CARGO_LEVEL_MIN || value.level > CARGO_LEVEL_MAX) {
-    return fail("error.cargo_invalid_access", `${path}.level`);
-  } else {
-    level = value.level;
-  }
   if (
-    typeof value.elevator !== "string" ||
-    !(CARGO_ELEVATOR_STATES as readonly string[]).includes(value.elevator)
+    typeof value.scope !== "string" ||
+    !(CARGO_HANDLING_SCOPES as readonly string[]).includes(value.scope)
   ) {
-    return fail("error.cargo_invalid_access", `${path}.elevator`);
+    return fail("error.cargo_invalid_handling", `${path}.scope`);
   }
-  const access: CargoLocationAccess = {
-    level,
-    elevator: value.elevator as CargoElevatorState,
-  };
-  if (value.carryDistanceMeters !== undefined) {
-    if (value.carryDistanceMeters === null) {
-      access.carryDistanceMeters = null;
-    } else if (
-      !isSafeInt(value.carryDistanceMeters) ||
-      value.carryDistanceMeters < 0 ||
-      value.carryDistanceMeters > CARGO_CARRY_DISTANCE_M_MAX
-    ) {
-      return fail("error.cargo_invalid_access", `${path}.carryDistanceMeters`);
-    } else {
-      access.carryDistanceMeters = value.carryDistanceMeters;
+  const scope = value.scope as CargoHandlingScope;
+  if (scope === "none") {
+    if (value.compensation !== undefined) {
+      return fail("error.cargo_invalid_compensation", `${path}.compensation`);
     }
+    return ok({ scope: "none" });
   }
-  return ok(access);
+  if (value.compensation === undefined) {
+    return fail("error.cargo_invalid_compensation", `${path}.compensation`);
+  }
+  const compensation = parseProviderCompensation(
+    value.compensation,
+    `${path}.compensation`,
+  );
+  if (!compensation.ok) return compensation;
+  return ok({ scope, compensation: compensation.value });
 }
 
 function parseNote(
@@ -582,9 +484,71 @@ function parseNote(
   return ok(trimmed);
 }
 
+function brandRequirement(
+  value: CargoRequirementV1,
+): ParsedCargoRequirementV1 {
+  const handling: CargoHandlingRequest = value.handlingRequest.compensation
+    ? {
+        scope: value.handlingRequest.scope,
+        compensation: Object.freeze({ ...value.handlingRequest.compensation }),
+      }
+    : { scope: value.handlingRequest.scope };
+  return Object.freeze({
+    version: 1 as const,
+    requiredSpace: Object.freeze({ ...value.requiredSpace }),
+    approximateWeightKg: Object.freeze({ ...value.approximateWeightKg }),
+    escortPassengerCount: value.escortPassengerCount,
+    handlingRequest: Object.freeze(handling),
+    ...(value.note !== undefined ? { note: value.note } : {}),
+    [PARSED_CARGO_REQUIREMENT]: true as const,
+  });
+}
+
+function brandCapacity(value: CargoCapacityV1): ParsedCargoCapacityV1 {
+  const handling: CargoHandlingOffer = value.handlingOffer.compensation
+    ? {
+        scope: value.handlingOffer.scope,
+        compensation: Object.freeze({ ...value.handlingOffer.compensation }),
+      }
+    : { scope: value.handlingOffer.scope };
+  return Object.freeze({
+    version: 1 as const,
+    basis: "current_trip_available_space" as const,
+    availableSpace: Object.freeze({ ...value.availableSpace }),
+    availablePayloadKg: Object.freeze({ ...value.availablePayloadKg }),
+    escortAccommodation: value.escortAccommodation,
+    handlingOffer: Object.freeze(handling),
+    ...(value.note !== undefined ? { note: value.note } : {}),
+    [PARSED_CARGO_CAPACITY]: true as const,
+  });
+}
+
+export function isParsedCargoRequirementV1(
+  value: unknown,
+): value is ParsedCargoRequirementV1 {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { [PARSED_CARGO_REQUIREMENT]?: unknown })[
+      PARSED_CARGO_REQUIREMENT
+    ] === true
+  );
+}
+
+export function isParsedCargoCapacityV1(
+  value: unknown,
+): value is ParsedCargoCapacityV1 {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { [PARSED_CARGO_CAPACITY]?: unknown })[PARSED_CARGO_CAPACITY] ===
+      true
+  );
+}
+
 export function parseCargoRequirementV1(
   input: unknown,
-): CargoParseResult<CargoRequirementV1> {
+): CargoParseResult<ParsedCargoRequirementV1> {
   if (!isPlainObject(input)) {
     return fail("error.cargo_invalid_payload");
   }
@@ -595,126 +559,40 @@ export function parseCargoRequirementV1(
   if (input.version !== CARGO_CONTRACT_VERSION) {
     return fail("error.cargo_invalid_payload", "requirement.version");
   }
-  if (!Array.isArray(input.items)) {
-    return fail("error.cargo_items_required", "requirement.items");
-  }
-  if (input.items.length < CARGO_ITEM_MIN) {
-    return fail("error.cargo_items_required", "requirement.items");
-  }
-  if (input.items.length > CARGO_ITEM_MAX) {
-    return fail("error.cargo_too_many_items", "requirement.items");
-  }
-  const items: CargoItemV1[] = [];
-  for (let i = 0; i < input.items.length; i += 1) {
-    const item = parseItem(input.items[i], `requirement.items.${i}`);
-    if (!item.ok) return item;
-    items.push(item.value);
-  }
-  if (
-    typeof input.pickupHandling !== "string" ||
-    !(CARGO_HANDLING_REQUESTS as readonly string[]).includes(input.pickupHandling)
-  ) {
-    return fail("error.cargo_invalid_payload", "requirement.pickupHandling");
-  }
-  if (
-    typeof input.dropoffHandling !== "string" ||
-    !(CARGO_HANDLING_REQUESTS as readonly string[]).includes(input.dropoffHandling)
-  ) {
-    return fail("error.cargo_invalid_payload", "requirement.dropoffHandling");
-  }
-  const pickupAccess = parseAccess(input.pickupAccess, "requirement.pickupAccess");
-  if (!pickupAccess.ok) return pickupAccess;
-  const dropoffAccess = parseAccess(
-    input.dropoffAccess,
-    "requirement.dropoffAccess",
+  const requiredSpace = parseDimensionsCm(
+    input.requiredSpace,
+    "requirement.requiredSpace",
   );
-  if (!dropoffAccess.ok) return dropoffAccess;
+  if (!requiredSpace.ok) return requiredSpace;
+  const weight = parseWeight(
+    input.approximateWeightKg,
+    "requirement.approximateWeightKg",
+  );
+  if (!weight.ok) return weight;
   if (input.escortPassengerCount !== 0 && input.escortPassengerCount !== 1) {
     return fail("error.cargo_invalid_escort", "requirement.escortPassengerCount");
   }
-  let requestedVehicleClass: CargoVehicleClass | null | undefined;
-  if (input.requestedVehicleClass !== undefined) {
-    if (input.requestedVehicleClass === null) {
-      requestedVehicleClass = null;
-    } else if (
-      typeof input.requestedVehicleClass !== "string" ||
-      !(CARGO_VEHICLE_CLASSES as readonly string[]).includes(
-        input.requestedVehicleClass,
-      )
-    ) {
-      return fail(
-        "error.cargo_invalid_vehicle_class",
-        "requirement.requestedVehicleClass",
-      );
-    } else {
-      requestedVehicleClass = input.requestedVehicleClass as CargoVehicleClass;
-    }
-  }
+  const handling = parseHandlingRequest(
+    input.handlingRequest,
+    "requirement.handlingRequest",
+  );
+  if (!handling.ok) return handling;
   const note = parseNote(input.note, "requirement.note");
   if (!note.ok) return note;
   const parsed: CargoRequirementV1 = {
     version: 1,
-    items,
-    pickupHandling: input.pickupHandling as CargoHandlingRequest,
-    dropoffHandling: input.dropoffHandling as CargoHandlingRequest,
-    pickupAccess: pickupAccess.value,
-    dropoffAccess: dropoffAccess.value,
+    requiredSpace: requiredSpace.value,
+    approximateWeightKg: weight.value,
     escortPassengerCount: input.escortPassengerCount,
+    handlingRequest: handling.value,
   };
-  if (requestedVehicleClass !== undefined) {
-    parsed.requestedVehicleClass = requestedVehicleClass;
-  }
   if (note.value !== undefined) parsed.note = note.value;
-  return ok(parsed);
-}
-
-function parseAvailableSpace(
-  value: unknown,
-  path: string,
-): CargoParseResult<CargoAvailableSpace> {
-  if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_dimensions", path);
-  }
-  if (value.kind === "known") {
-    const keys = rejectUnknownKeys(value, SPACE_KNOWN_KEYS, path);
-    if (!keys.ok) return keys;
-    const dims = parseDimensionsCm(value.dimensionsCm, `${path}.dimensionsCm`);
-    if (!dims.ok) return dims;
-    return ok({ kind: "known", dimensionsCm: dims.value });
-  }
-  if (value.kind === "unknown") {
-    const keys = rejectUnknownKeys(value, SPACE_UNKNOWN_KEYS, path);
-    if (!keys.ok) return keys;
-    return ok({ kind: "unknown" });
-  }
-  return fail("error.cargo_invalid_dimensions", `${path}.kind`);
-}
-
-function parsePayloadKg(
-  value: unknown,
-  path: string,
-): CargoParseResult<CargoPayloadKg> {
-  if (!isPlainObject(value)) {
-    return fail("error.cargo_invalid_weight", path);
-  }
-  if (value.kind === "known") {
-    const keys = rejectUnknownKeys(value, PAYLOAD_KNOWN_KEYS, path);
-    if (!keys.ok) return keys;
-    const kg = parseUnitWeight(value.kg, `${path}.kg`, CARGO_PAYLOAD_KG_MAX);
-    if (!kg.ok) return kg;
-    return ok({ kind: "known", kg: kg.value });
-  }
-  if (value.kind === "unknown") {
-    const keys = rejectUnknownKeys(value, PAYLOAD_UNKNOWN_KEYS, path);
-    if (!keys.ok) return keys;
-    return ok({ kind: "unknown" });
-  }
-  return fail("error.cargo_invalid_weight", `${path}.kind`);
+  return ok(brandRequirement(parsed));
 }
 
 export function parseCargoCapacityV1(
   input: unknown,
-): CargoParseResult<CargoCapacityV1> {
+): CargoParseResult<ParsedCargoCapacityV1> {
   if (!isPlainObject(input)) {
     return fail("error.cargo_invalid_payload");
   }
@@ -728,49 +606,16 @@ export function parseCargoCapacityV1(
   if (input.basis !== "current_trip_available_space") {
     return fail("error.cargo_invalid_payload", "capacity.basis");
   }
-  if (
-    typeof input.transportMode !== "string" ||
-    !isTargetDeliverTransportMode(input.transportMode)
-  ) {
-    return fail("error.cargo_invalid_vehicle_class", "capacity.transportMode");
-  }
-  if (
-    typeof input.vehicleClass !== "string" ||
-    !(CARGO_VEHICLE_CLASSES as readonly string[]).includes(input.vehicleClass)
-  ) {
-    return fail("error.cargo_invalid_vehicle_class", "capacity.vehicleClass");
-  }
-  const vehicleClass = input.vehicleClass as CargoVehicleClass;
-  if (
-    !isTransportModeVehicleClassCompatible(input.transportMode, vehicleClass)
-  ) {
-    return fail(
-      "error.cargo_transport_vehicle_mismatch",
-      "capacity.vehicleClass",
-    );
-  }
-  const space = parseAvailableSpace(
+  const availableSpace = parseDimensionsCm(
     input.availableSpace,
     "capacity.availableSpace",
   );
-  if (!space.ok) return space;
-  const payload = parsePayloadKg(
+  if (!availableSpace.ok) return availableSpace;
+  const payload = parseWeight(
     input.availablePayloadKg,
     "capacity.availablePayloadKg",
   );
   if (!payload.ok) return payload;
-  if (
-    typeof input.loadingHelp !== "string" ||
-    !(CARGO_SUPPORT_LEVELS as readonly string[]).includes(input.loadingHelp)
-  ) {
-    return fail("error.cargo_invalid_payload", "capacity.loadingHelp");
-  }
-  if (
-    typeof input.unloadingHelp !== "string" ||
-    !(CARGO_SUPPORT_LEVELS as readonly string[]).includes(input.unloadingHelp)
-  ) {
-    return fail("error.cargo_invalid_payload", "capacity.unloadingHelp");
-  }
   if (
     typeof input.escortAccommodation !== "string" ||
     !(CARGO_ESCORT_ACCOMMODATIONS as readonly string[]).includes(
@@ -779,179 +624,33 @@ export function parseCargoCapacityV1(
   ) {
     return fail("error.cargo_invalid_escort", "capacity.escortAccommodation");
   }
-  const flags = parseHandlingFlags(
-    input.supportedHandlingFlags,
-    "capacity.supportedHandlingFlags",
+  const handling = parseHandlingOffer(
+    input.handlingOffer,
+    "capacity.handlingOffer",
   );
-  if (!flags.ok) return flags;
+  if (!handling.ok) return handling;
   const note = parseNote(input.note, "capacity.note");
   if (!note.ok) return note;
   const parsed: CargoCapacityV1 = {
     version: 1,
     basis: "current_trip_available_space",
-    transportMode: input.transportMode,
-    vehicleClass,
-    availableSpace: space.value,
+    availableSpace: availableSpace.value,
     availablePayloadKg: payload.value,
-    loadingHelp: input.loadingHelp as CargoSupportLevel,
-    unloadingHelp: input.unloadingHelp as CargoSupportLevel,
     escortAccommodation: input.escortAccommodation as CargoEscortAccommodation,
-    supportedHandlingFlags: flags.value,
+    handlingOffer: handling.value,
   };
   if (note.value !== undefined) parsed.note = note.value;
-  return ok(parsed);
-}
-
-export function resolvedItemDimensions(
-  item: CargoItemV1,
-): CargoDimensionsCm | null {
-  if (item.measurement.kind === "custom") return item.measurement.dimensionsCm;
-  if (item.measurement.kind === "preset") {
-    return CARGO_PRESET_DIMENSIONS_CM[item.measurement.preset];
-  }
-  return null;
-}
-
-export function itemVolumeCm3(dims: CargoDimensionsCm, quantity: number): number {
-  const volume = dims.length * dims.width * dims.height * quantity;
-  return Number.isFinite(volume) ? volume : Number.POSITIVE_INFINITY;
-}
-
-export function itemWeightKg(item: CargoItemV1): number | null {
-  if (item.weight.kind !== "known") return null;
-  const total = item.quantity * item.weight.kgPerUnit;
-  return Number.isFinite(total) ? total : Number.POSITIVE_INFINITY;
-}
-
-function longestSide(dims: CargoDimensionsCm): number {
-  return Math.max(dims.length, dims.width, dims.height);
-}
-
-function pickClassForTotals(
-  volumeCm3: number,
-  weightKg: number,
-  longestCm: number,
-): CargoVehicleClass {
-  const t = CARGO_RECOMMENDATION_THRESHOLDS;
-  const fits = (band: {
-    maxVolumeCm3: number;
-    maxPayloadKg: number;
-    maxLongestSideCm: number;
-  }) =>
-    volumeCm3 <= band.maxVolumeCm3 &&
-    weightKg <= band.maxPayloadKg &&
-    longestCm <= band.maxLongestSideCm;
-  if (fits(t.smallCargoVan)) return "small_cargo_van";
-  if (fits(t.mediumCargoVan)) return "medium_cargo_van";
-  if (fits(t.largeCargoVan)) return "large_cargo_van";
-  if (fits(t.lightTruck)) return "light_truck";
-  if (fits(t.boxTruck)) return "box_truck";
-  return "vehicle_with_trailer";
-}
-
-function uniqueReasons(
-  reasons: CargoRecommendationReason[],
-): CargoRecommendationReason[] {
-  return [...new Set(reasons)];
-}
-
-export function recommendCargoVehicleClass(
-  requirement: CargoRequirementV1,
-): CargoVehicleRecommendation {
-  const reasons: CargoRecommendationReason[] = [];
-  let missingDims = false;
-  let missingWeight = false;
-  let usedPreset = false;
-  let volumeCm3 = 0;
-  let weightKg = 0;
-  let longestCm = 0;
-  let knownAny = false;
-
-  for (const item of requirement.items) {
-    const dims = resolvedItemDimensions(item);
-    if (!dims) missingDims = true;
-    else {
-      knownAny = true;
-      volumeCm3 += itemVolumeCm3(dims, item.quantity);
-      longestCm = Math.max(longestCm, longestSide(dims));
-      if (item.measurement.kind === "preset") usedPreset = true;
-    }
-    const weight = itemWeightKg(item);
-    if (weight === null) missingWeight = true;
-    else weightKg += weight;
-    if (CARGO_BULKY_CATEGORIES.has(item.category)) {
-      reasons.push("bulky_item_human_confirm");
-    }
-    if (item.handlingFlags.includes("valuable")) {
-      reasons.push("valuable_item_human_confirm");
-    }
-    if (item.handlingFlags.includes("oversized_shape")) {
-      reasons.push("bulky_item_human_confirm");
-    }
-  }
-
-  const requested = requirement.requestedVehicleClass;
-  if (
-    requested === "cargo_boat" ||
-    requested === "private_cargo_boat" ||
-    requested === "other_water_cargo"
-  ) {
-    if (missingDims) reasons.push("insufficient_dimensions");
-    if (missingWeight) reasons.push("insufficient_weight");
-    reasons.push("advisory_water_cargo");
-    return {
-      recommendedClass: requested,
-      confidence: missingDims || missingWeight ? "insufficient_data" : "estimated",
-      reasons: uniqueReasons(reasons),
-    };
-  }
-
-  if (!knownAny || missingDims || missingWeight) {
-    if (missingDims) reasons.push("insufficient_dimensions");
-    if (missingWeight) reasons.push("insufficient_weight");
-    return {
-      recommendedClass: knownAny
-        ? pickClassForTotals(volumeCm3 || 1, weightKg || 1, longestCm || 1)
-        : null,
-      confidence: "insufficient_data",
-      reasons: uniqueReasons(reasons),
-    };
-  }
-
-  if (usedPreset) reasons.push("estimated_preset_only");
-  const recommendedClass = pickClassForTotals(volumeCm3, weightKg, longestCm);
-  const classReason = {
-    small_cargo_van: "advisory_small_cargo_van",
-    medium_cargo_van: "advisory_medium_cargo_van",
-    large_cargo_van: "advisory_large_cargo_van",
-    light_truck: "advisory_light_truck",
-    box_truck: "advisory_box_truck",
-    vehicle_with_trailer: "advisory_vehicle_with_trailer",
-  } as const;
-  if (recommendedClass in classReason) {
-    reasons.push(classReason[recommendedClass as keyof typeof classReason]);
-  }
-  return {
-    recommendedClass,
-    confidence: "estimated",
-    reasons: uniqueReasons(reasons),
-  };
+  return ok(brandCapacity(parsed));
 }
 
 export const CARGO_ERROR_KEYS = [
   "error.cargo_invalid_payload",
   "error.cargo_unknown_key",
-  "error.cargo_items_required",
-  "error.cargo_too_many_items",
-  "error.cargo_invalid_category",
-  "error.cargo_description_required",
-  "error.cargo_invalid_quantity",
   "error.cargo_invalid_dimensions",
   "error.cargo_invalid_weight",
-  "error.cargo_invalid_handling_flag",
-  "error.cargo_invalid_vehicle_class",
-  "error.cargo_transport_vehicle_mismatch",
-  "error.cargo_invalid_access",
   "error.cargo_invalid_escort",
+  "error.cargo_invalid_handling",
+  "error.cargo_invalid_compensation",
+  "error.cargo_invalid_currency",
   "error.cargo_private_field_forbidden",
 ] as const;

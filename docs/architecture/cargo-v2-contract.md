@@ -1,117 +1,142 @@
-# Cargo V2 contract (PHASE 6.7B.1A.2)
+# Cargo V2 contract (PHASE 6.7B.1A.2A)
 
-Domain types only. This phase does **not** add database columns, RPCs, APIs,
-UI, or production runtime imports. Server-side re-validation remains mandatory
-before any future accept.
+MirioHub V1 is a rideshare-style information match platform. It is **not** a
+professional logistics dispatcher, vehicle recommender, or 3D packing engine.
 
-Error keys are a contract for a later 6.7B.1B sheet wiring pass. Trilingual
-browser copy is **not** added in this phase.
+This file is a parse-only domain contract. This phase does **not** add
+database columns, RPCs, APIs, UI, or production runtime imports. Server-side
+re-parse remains mandatory before any future accept. Trilingual browser copy
+is **not** added here.
 
-## 1. Travel vs Deliver
+## 1. What each side declares
 
-- **Travel** keeps people fields (`peopleCount` / `peopleCapacity`) and
-  `travelItemUnits` for ordinary small items / luggage. That lane is not Cargo
-  V2.
-- **Deliver** is the only lane that uses `CargoRequirementV1` (Demand) and
-  `CargoCapacityV1` (Provider current-trip remaining space).
-- Do not fold furniture, appliances, or mattresses into `travelItemUnits`.
-- Do not treat Cargo V2 as a replacement for the live four-tier luggage
-  columns in this phase.
+- **Demand** estimates the **overall** length / width / height this shipment
+  roughly needs, as one aggregate box in centimetres. There is **no**
+  per-item list, category, quantity, or size preset.
+- **Provider** declares the **remaining** length / width / height still
+  available on **this trip** after their own belongings. That is not vehicle
+  nameplate volume.
+- The system only compares those two declarations. It does **not** recommend
+  a van class, trailer, or boat. It does **not** prove the goods will fit.
+  It does **not** judge legal payload.
 
-## 2. Requirement vs current-trip capacity
+## 2. Humans still confirm offline
 
-- `CargoRequirementV1` is what this Demand needs to move **this time**.
-- `CargoCapacityV1` is what this Provider can still offer **on this trip**
-  after subtracting their own goods. The `basis` value is always
-  `current_trip_available_space`.
-- It is **not** the vehicle nameplate volume or legal GVW. Nameplate figures
-  must not be copied into `availableSpace` / `availablePayloadKg` as if they
-  were remaining capacity.
+Both parties must still confirm with text, photos (later, in the
+handover/chat flow — **not uploaded in this contract**), and in-person
+checks:
 
-## 3. Vehicle class is a pre-filter
+- actual cargo shape
+- vehicle openings
+- wheel arches / irregular cabin space
+- whether items can rotate or stack
+- true remaining space
+- weight and safe restraint
+- loading and unloading conditions
 
-`recommendCargoVehicleClass` is Demand-form help. Confidence is `estimated`
-or `insufficient_data`. It is not a hard deny, not a guaranteed fit, and not
-an accept decision. Thresholds live in `cargoPolicy.ts` and may be
-recalibrated from real usage. They are not copied from any third-party fleet
-catalog.
+A `no_obvious_conflict` result is **not** platform approval, a verified
+vehicle, or a guaranteed load.
 
-## 4. Size, weight, and handling
+## 3. Structures
 
-- Custom dimensions are centimetres, integers 1–2000, as a rough bounding box.
-- Presets are fill-in shortcuts with centralized estimate sizes. A numeric
-  “looks like it fits” preset still needs human confirmation.
-- `measurement.kind = "unknown"` is legal and forces confirmation.
-- Known weight is kg per unit, `> 0`, `<= 10000`, at most one decimal.
-- Pickup and dropoff handling are separate. Default product rule: a ride-along
-  cargo trip does **not** automatically include moving labour. Provider help
-  must be confirmed explicitly and is not priced in this phase.
-- Location access records floor, elevator, and carry distance only. It does
-  not store an address or GPS.
+`CargoRequirementV1` (Demand): `version`, `requiredSpace`,
+`approximateWeightKg`, `escortPassengerCount` (0 or 1), `handlingRequest`,
+optional `note`.
 
-## 5. Unknown is legal, and it blocks preliminary compatibility
+`CargoCapacityV1` (Provider): `version`, `basis =
+current_trip_available_space`, `availableSpace`, `availablePayloadKg`,
+`escortAccommodation`, `handlingOffer`, optional `note`.
 
-Unknown item size, unknown item weight, unknown remaining space, unknown
-remaining payload, unknown floor/elevator, or unknown carry distance when
-Provider help is requested all yield at least `needs_confirmation`.
+Dimensions are required integers, centimetres, `> 0`, finite, safe integers,
+with a centralized input ceiling in `cargoPolicy.ts`. The ceiling is only an
+input safety bound.
 
-## 6. Three compatibility statuses
+Weight is `{ kind: "known", kg }` (positive, finite, at most one decimal,
+capped) or `{ kind: "unknown" }`. Unknown is legal and forces
+`needs_confirmation`. Known kg is **this trip's declared remaining payload**,
+not GVW from a nameplate.
+
+## 4. Escort and handling
+
+Demand escort is 0 or 1. Provider does **not** enter a generic seat count.
+`available` is a self-report. The platform must not show verified / safe /
+approved. An escort mismatch is a declared-condition conflict, not a Fraud
+hard deny.
+
+Handling uses one scope: `none` | `loading` | `unloading` | `both`.
+Compensation exists only when scope is not `none`.
+
+- Demand compensation: willing-to-pay handling help (`fixed` or
+  `negotiable`). Currency V1: `RSD` | `EUR`. `amountMinor` is a positive
+  safe integer (RSD minor units / EUR cents). Display formatting is later UI.
+- Provider compensation: hoped-for handling help (`fixed`, `negotiable`, or
+  `voluntary_unpaid`). `voluntary_unpaid` means the Provider offers unpaid
+  help voluntarily; the platform is not requiring free labour. It does **not**
+  turn the Demand offered amount into a Provider receivable.
+
+Handling assistance is separate from the main transport fee. The final
+agreed handling terms belong in a later `agreement_snapshot`, not in this
+phase.
+
+## 5. Declared comparison (not a fit verdict)
+
+Statuses:
 
 | Status | Meaning |
 | --- | --- |
-| `incompatible` | Objective filled-in numbers conflict (piece too large, total volume or weight over remaining capacity, escort or loading help clearly unavailable). |
-| `needs_confirmation` | Missing estimates, presets, special handling, stairs, or “requires confirmation” labour/escort. |
-| `preliminarily_compatible` | No obvious numeric conflict in the filled-in data. |
+| `declared_conflict` | Filled-in declarations differ (space, weight, escort, or handling scope). Parties can still talk. Not a Fraud hard deny. |
+| `needs_confirmation` | Unknown weight, negotiable fee, currency/amount gap, or Provider escort `requires_confirmation`. |
+| `no_obvious_conflict` | No obvious conflict in the filled-in numbers. **Does not mean it fits or the platform approved it.** |
 
-## 7. `requiresHumanConfirmation` is always `true`
+`requiresHumanConfirmation` is **always** `true`.
 
-Even `preliminarily_compatible` only means: no obvious remaining-space
-conflict was found in the submitted numbers. Both parties must still check
-goods, vehicle, loading, and safety before accept.
+Space: sort each box's three sides and compare pairwise (rotation of a rough
+cuboid only). This is **not** packing proof: doors, arches, stacking, tilt,
+and restraint are out of scope. A numeric non-conflict still needs humans.
 
-## 8. The platform does not guarantee a fit
+Weight: both known and Demand kg > Provider kg → `declared_conflict`. Either
+unknown → `needs_confirmation`. No legal GVW inference.
 
-Do not use `guaranteed_fit`, `safe`, `verified`, or `approved`. Remaining
-volume not exceeded is **not** a 3D packing proof.
+Escort: Demand 1 + Provider `not_available` → `declared_conflict`. Provider
+`requires_confirmation` → `needs_confirmation`.
 
-## 9. The platform does not verify vehicle, papers, or insurance
+Handling coverage: `both` covers loading/unloading/both; `loading` covers
+loading only; `unloading` covers unloading only; `none` covers no assistance
+request. Demand `none` needs no coverage.
 
-Capacity and escort `available` are Provider declarations. Legal seats, belts,
-and load-after-stow safety are accept-time human checks. The platform does
-not inspect vehicles, licences, or insurance.
+Fee: either `negotiable` → confirmation; both `fixed` with different
+currency or Provider amount > Demand amount → confirmation; Provider
+amount ≤ Demand amount is not a fee conflict (accept still confirms the
+exact amount later); `voluntary_unpaid` is not a fee conflict and does not
+auto-assign the Demand offer as payable.
 
-## 10. Dangerous goods are out of V1
+Reason precedence: `declared_conflict` > `needs_confirmation` >
+`no_obvious_conflict`. Reasons are stable, de-duplicated public keys. They
+must not include phones, addresses, or raw amounts.
 
-There is no hazardous / weapon / contraband category. Those keys are
-rejected. Handling flags never mean “licensed dangerous goods”.
+The comparison must not auto-accept, auto-reject, hard-deny, write fraud
+logs, or prove vehicle legality / space / load safety.
 
-## 11. Photos and identity documents are not uploaded here
+## 6. Parser boundary
 
-The contract forbids user id, post id, phone, email, plate, address, GPS,
-fee, bid, payment, photo URLs, and pickup/delivery codes.
+Parsers require plain objects, reject unknown keys, reject prototype-polluted
+objects and arrays-as-objects, and recursively reject private / contact /
+identity / location / code / bid / payment fields. Handling compensation is
+the only allowed money field. Parsers return branded
+`ParsedCargoRequirementV1` / `ParsedCargoCapacityV1`. The evaluator accepts
+only branded values (or `compareDeclaredCargo` which parses first).
 
-## 12. Legacy four-tier luggage cannot be upgraded losslessly
+## 7. Out of this contract
 
-Production still uses `count_small/medium/large/xlarge`. Those counts must
-not be cast to `CargoRequirementV1`. They lack size, weight, and handling.
-A future read-only adapter can at most emit `needs_confirmation`. `xlarge`
-must not auto-pick a vehicle class. See `deferred-cleanup.md`.
+No per-item entry, presets, vehicle-class recommendation, trailer fallback,
+`guaranteed_fit`, photos, user/post ids, phones, plates, GPS, pickup/delivery
+codes, or main-fee overrides.
 
-## 13. This phase has no DB / UI / API
+Legacy `count_small/medium/large/xlarge` stay the live luggage columns. They
+must not be cast to Cargo V2.
+
+## 8. This phase has no DB / UI / API
 
 No migration, no `posts` change, no application payload, no
-`MatchRequestSheet`, no hall button, no RPC.
-
-## 14. Future 6.7B.1B application sheet
-
-Wire parsers behind an unmounted or newly versioned request sheet. Add
-zh/en/sr copy for the cargo error keys at that time. Do not treat browser
-JSON as trusted.
-
-## 15. Future accept-time re-read
-
-Before accept, the server must rebuild both snapshots from stored rows (or
-the request snapshot plus a fresh Provider capacity declaration), re-run
-`parseCargoRequirementV1` / `parseCargoCapacityV1` / 
-`evaluateCargoCompatibility`, and still require human confirmation. Do not
-trust a previously computed `preliminarily_compatible` flag from the client.
+`MatchRequestSheet`, no hall button, no RPC. Real users still do not see a
+Cargo V2 form.

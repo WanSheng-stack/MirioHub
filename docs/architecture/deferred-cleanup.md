@@ -124,22 +124,23 @@ must not modify it.
 
 ## 9. Cargo V2 domain contract (not on the production path)
 
-- **Current state:** PHASE 6.7B.1A.2 added parse-only TypeScript contracts
-  under `src/lib/cargo/`. Nothing imports them from UI, APIs, or RPCs.
-  Legacy `count_small/medium/large/xlarge` remain the production luggage
-  model. Those columns are not renamed, migrated, or cast to
-  `CargoRequirementV1`.
+- **Current state:** PHASE 6.7B.1A.2A is a parse-only aggregate-space
+  contract under `src/lib/cargo/`. Demand declares overall required L×W×H;
+  Provider declares this-trip remaining L×W×H. Nothing imports these types
+  from UI, APIs, or RPCs. Legacy `count_small/medium/large/xlarge` remain
+  the production luggage model and are not cast to `CargoRequirementV1`.
 - **Future replacement:** 6.7B.1B may wire the parsers to an application
-  sheet. 6.7D accept-time must re-read both snapshots and re-run
-  compatibility. A read-only legacy adapter, if ever added, can at most
-  emit `needs_confirmation` because four-tier counts lack size, weight,
-  and handling. Do not infer a vehicle class from `xlarge`.
+  sheet. 6.7D accept-time must re-parse both snapshots and re-run declared
+  comparison. A read-only legacy adapter, if ever added, can at most emit
+  `needs_confirmation` because four-tier counts lack size and weight.
 - **Earliest safe production use:** After sheet wiring, trilingual error
   copy, and server-side re-parse on accept. Not this phase.
-- **Preconditions:** Product keeps escort as Demand 0/1 vs Provider
-  accommodation enum; remaining-trip space is not nameplate volume.
+- **Preconditions:** Escort stays Demand 0/1 vs Provider accommodation;
+  remaining-trip space is not nameplate volume; no vehicle-class
+  recommendation; photos stay in a later handover flow, not this contract.
 - **Risk if wired early:** Treats incomplete four-tier rows as a fit
-  decision, or shows Provider “seat count” on public cards.
+  decision, or shows Provider “seat count” / verified-safe copy on public
+  cards.
 
 ## 10. `public.profile_cards` (dropped live; still in frozen `init.sql`)
 
@@ -171,3 +172,16 @@ After a successful v92 apply, Security Advisor is expected to still report
 Do not claim that v92 leaves only one Advisor finding. Do not clear
 Advisor count by breaking anonymous hall reads or by SET ROLE / ALTER
 OWNER against PostGIS.
+
+## 11. Google avatar hotlink
+
+- **Current state:** Profile may still use the Google-provided photo URL
+  directly. That hotlink can return 429 / ORB. The current fallback is
+  initials, not a proxy.
+- **Future replacement:** Controlled avatar storage or a tightly scoped
+  same-origin proxy, after a separate security review.
+- **Earliest safe production use:** After review. Do **not** build an
+  unrestricted image proxy.
+- **Preconditions:** Allowlist, size limits, and no open-relay fetch of
+  arbitrary URLs.
+- **Risk if built early:** SSRF and quota abuse via an open image proxy.

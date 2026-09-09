@@ -393,7 +393,7 @@ export function collectFieldHints(
   }
 
   if (role === "provider") {
-    if (!form.transportMode) {
+    if (target.category !== "deliver" && !form.transportMode) {
       errors.transportMode = "error.match_request_transport_mode_required";
     }
     if (target.category === "travel") {
@@ -462,6 +462,18 @@ function assembleTypedPayload(
   const message = form.message.trim() ? form.message : undefined;
 
   if (applicantRole === "provider") {
+    if (target.category === "deliver") {
+      const cargoCapacity = parseCargoCapacityV1(assembleCargoCapacityCandidate(form));
+      if (!cargoCapacity.ok) return null;
+      return {
+        version: 1,
+        applicantRole: "provider",
+        targetPostType: "demand",
+        targetCategory: "deliver",
+        cargoCapacity: cargoCapacity.value,
+        message,
+      };
+    }
     if (!form.transportMode) return null;
     const transportMode = form.transportMode;
     if (target.category === "travel") {
@@ -478,19 +490,6 @@ function assembleTypedPayload(
         transportMode,
         availablePassengerSeats,
         availableCargo: optionalCargo(form),
-        message,
-      };
-    }
-    if (target.category === "deliver") {
-      const cargoCapacity = parseCargoCapacityV1(assembleCargoCapacityCandidate(form));
-      if (!cargoCapacity.ok) return null;
-      return {
-        version: 1,
-        applicantRole: "provider",
-        targetPostType: "demand",
-        targetCategory: "deliver",
-        transportMode,
-        cargoCapacity: cargoCapacity.value,
         message,
       };
     }

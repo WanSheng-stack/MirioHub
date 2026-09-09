@@ -155,10 +155,10 @@ Fraud 水位、hard deny、audit fail-closed **保持代码不变量**，不进 
 | C4 | Deliver Demand cargo 可全 0（escort>0 即可） | `applicationPayload.ts` | 1B |
 | C5 | Deliver escort 字段名 `escortSeats`，范围 0–4 | payload / messages | 1B 对齐 `escortPassengerCount` 0/1 |
 | C6 | Provider Deliver cargo 可全 0 | payload | 1B |
-| C7 | `MatchRequestSheet` 在 render 阶段比较 `open` 后 `dispatch` | `MatchRequestSheet.tsx` | 1B |
-| C8 | `targetPost.id` 变化可能保留旧草稿 | `matchRequestForm` / sheet | 1B |
-| C9 | 输入后不清除 `serverErrorKey` | sheet props | 1B |
-| C10 | dialog 无完整 focus trap | sheet | 1B |
+| C7 | `MatchRequestSheet` 在 render 阶段比较 `open` 后 `dispatch` | `MatchRequestSheet.tsx` | **6.7B.1B.1 已修**（`useLayoutEffect` + `shouldResetMatchRequestDraft`） |
+| C8 | `targetPost.id` 变化可能保留旧草稿 | `matchRequestForm` / sheet | **6.7B.1B.1 已修** |
+| C9 | 输入后不清除 `serverErrorKey` | sheet props | **6.7B.1B.1 已修**（generation + `onServerErrorClear`） |
+| C10 | dialog 无完整 focus trap | sheet | **6.7B.1B.1 已修**（`matchRequestTabTrap`；submitting 时不可关闭） |
 | C11 | 若测试用 `git diff HEAD` 只能证明工作树干净 | 6.7B 测试目前是读工作树文件；1A 起相对基线必须显式比 `6866e7ca03fe9d905cf5d70918d94571e5e5100b` | 1A 已遵守 |
 | C12 | `calculateFinalFee` Travel 人数 = private?4 : `escort_seats\|\|1` | `post-fee.ts` + form 把 companions 写入 escort | 1C（不改费率常数，只改取值来源需产品确认） |
 | C13 | Deliver 旧 passenger-scene 与押货费用耦合 | `isPassengerScene` / fee | 1C |

@@ -82,7 +82,6 @@ function demandDeliverOffer(overrides: Record<string, unknown> = {}) {
     applicantRole: "provider",
     targetPostType: "demand",
     targetCategory: "deliver",
-    transportMode: "van",
     cargoCapacity: minCapacity(),
     ...overrides,
   };
@@ -286,7 +285,7 @@ function demandDeliverOffer(overrides: Record<string, unknown> = {}) {
   assert.equal(parsed.ok, true);
   if (parsed.ok && parsed.value.targetCategory === "deliver") {
     assert.equal(parsed.value.applicantRole, "provider");
-    assert.equal(parsed.value.transportMode, "van");
+    assert.equal("transportMode" in parsed.value, false);
     assert.equal("cargoCapacity" in parsed.value, true);
     assert.equal("availableCargo" in parsed.value, false);
     assert.equal("availablePassengerSeats" in parsed.value, false);
@@ -299,11 +298,24 @@ function demandDeliverOffer(overrides: Record<string, unknown> = {}) {
       applicantRole: "provider",
       targetPostType: "demand",
       targetCategory: "deliver",
-      transportMode: "van",
       availableCargo: { small: 1, medium: 0, large: 0, xlarge: 0 },
     }).ok,
     false,
   );
+  const leftoverMode = parseApplicationPayloadV1(
+    demandDeliverOffer({ transportMode: "van" }),
+  );
+  assert.equal(leftoverMode.ok, false);
+  if (!leftoverMode.ok) {
+    assert.equal(leftoverMode.errorKey, "error.match_request_unknown_key");
+  }
+  const leftoverWalking = parseApplicationPayloadV1(
+    demandDeliverOffer({ transportMode: "walking" }),
+  );
+  assert.equal(leftoverWalking.ok, false);
+  if (!leftoverWalking.ok) {
+    assert.equal(leftoverWalking.errorKey, "error.match_request_unknown_key");
+  }
   assert.equal(
     parseApplicationPayloadV1(
       demandDeliverOffer({

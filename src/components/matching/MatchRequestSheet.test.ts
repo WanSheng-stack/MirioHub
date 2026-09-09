@@ -23,6 +23,14 @@ import {
   showsHandlingFeeNegotiation,
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
+import {
+  canDismissMatchRequestSheet,
+  errorGenerationAfterKeyChange,
+  matchRequestTabTrap,
+  shouldResetMatchRequestDraft,
+  transportModesForMatchRequest,
+  visibleServerErrorKey,
+} from "@/lib/matching/matchRequestSheetBehavior";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
@@ -100,7 +108,6 @@ function fillCargoSpace(form: ReturnType<typeof createInitialMatchRequestForm>) 
 
 function validProviderDeliverForm() {
   let form = createInitialMatchRequestForm(demandDeliver);
-  form = reduceMatchRequestForm(form, { type: "SET_TRANSPORT_MODE", value: "van" });
   form = fillCargoSpace(form);
   form = reduceMatchRequestForm(form, {
     type: "SET_ESCORT_ACCOMMODATION",
@@ -175,6 +182,7 @@ function validProviderOfferForm() {
     if (result.payload.targetCategory === "deliver" && result.payload.applicantRole === "provider") {
       assert.equal(result.payload.cargoCapacity.handlingOffer.canHelpLoading, true);
       assert.equal(result.payload.cargoCapacity.handlingOffer.canHelpUnloading, false);
+      assert.equal("transportMode" in result.payload, false);
     }
   }
   assert.equal(showsHandlingFeeNegotiation(form, "provider"), true);
@@ -201,6 +209,20 @@ function validProviderOfferForm() {
   const result = attemptMatchRequestSubmit(empty, demandDeliver, false);
   assert.equal(result.kind, "invalid");
   assert.ok(collectFieldHints(empty, demandDeliver).cargoSpace);
+  assert.equal(collectFieldHints(empty, demandDeliver).transportMode, undefined);
+}
+
+{
+  let leftover = validProviderDeliverForm();
+  leftover = reduceMatchRequestForm(leftover, {
+    type: "SET_TRANSPORT_MODE",
+    value: "walking",
+  });
+  const result = attemptMatchRequestSubmit(leftover, demandDeliver, false);
+  assert.equal(result.kind, "submitted", JSON.stringify(result));
+  if (result.kind === "submitted") {
+    assert.equal("transportMode" in result.payload, false);
+  }
 }
 
 // TEST Q invalid form does not call onSubmit
@@ -382,5 +404,114 @@ assert.ok(sheetSrc.includes("Do not mount this on PostCard"));
 assert.equal(sheetSrc.includes("window.alert"), false);
 assert.ok(sheetSrc.includes("Escape"));
 assert.ok(sheetSrc.includes("disabled={busy}"));
+assert.equal(sheetSrc.includes("setWasOpen"), false);
+assert.equal(sheetSrc.includes("open !== wasOpen"), false);
+assert.equal(sheetSrc.includes("TRANSPORT_MODES"), false);
+assert.equal(/<button[\s\S]{0,220}absolute inset-0/.test(sheetSrc), false);
+assert.ok(sheetSrc.includes("matchRequestTabTrap"));
+assert.ok(sheetSrc.includes("canDismissMatchRequestSheet"));
+assert.ok(sheetSrc.includes("visibleServerErrorKey"));
+assert.ok(sheetSrc.includes("transportModesForMatchRequest"));
+assert.ok(sheetSrc.includes("onServerErrorClear"));
+assert.ok(sheetSrc.includes("shouldResetMatchRequestDraft"));
+assert.ok(sheetSrc.includes("key={props.targetPost.id}"));
+
+{
+  assert.equal(canDismissMatchRequestSheet(true), false);
+  assert.equal(canDismissMatchRequestSheet(false), true);
+
+  assert.equal(
+    shouldResetMatchRequestDraft({
+      prevOpen: false,
+      nextOpen: true,
+      prevTargetId: "a",
+      nextTargetId: "a",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldResetMatchRequestDraft({
+      prevOpen: true,
+      nextOpen: false,
+      prevTargetId: "a",
+      nextTargetId: "a",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldResetMatchRequestDraft({
+      prevOpen: true,
+      nextOpen: true,
+      prevTargetId: "a",
+      nextTargetId: "b",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldResetMatchRequestDraft({
+      prevOpen: true,
+      nextOpen: true,
+      prevTargetId: "a",
+      nextTargetId: "a",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldResetMatchRequestDraft({
+      prevOpen: false,
+      nextOpen: false,
+      prevTargetId: "a",
+      nextTargetId: "b",
+    }),
+    false,
+  );
+
+  const wrapForward = matchRequestTabTrap({ key: "Tab", shiftKey: false }, 4, 5);
+  assert.deepEqual(wrapForward, { preventDefault: true, nextIndex: 0 });
+  const wrapBackward = matchRequestTabTrap({ key: "Tab", shiftKey: true }, 0, 5);
+  assert.deepEqual(wrapBackward, { preventDefault: true, nextIndex: 4 });
+  assert.equal(matchRequestTabTrap({ key: "Tab", shiftKey: false }, 2, 5), null);
+  const escaped = matchRequestTabTrap({ key: "Tab", shiftKey: false }, -1, 5);
+  assert.deepEqual(escaped, { preventDefault: true, nextIndex: 0 });
+  const escapedShift = matchRequestTabTrap({ key: "Tab", shiftKey: true }, -1, 5);
+  assert.deepEqual(escapedShift, { preventDefault: true, nextIndex: 4 });
+  assert.equal(matchRequestTabTrap({ key: "Escape", shiftKey: false }, 0, 5), null);
+  assert.equal(matchRequestTabTrap({ key: "Tab", shiftKey: false }, 0, 0), null);
+
+  let generation = 0;
+  generation = errorGenerationAfterKeyChange(null, "error.matching_temporarily_unavailable", generation);
+  assert.equal(generation, 1);
+  assert.equal(
+    visibleServerErrorKey("error.matching_temporarily_unavailable", generation, 0),
+    "error.matching_temporarily_unavailable",
+  );
+  assert.equal(
+    visibleServerErrorKey("error.matching_temporarily_unavailable", generation, generation),
+    null,
+  );
+  generation = errorGenerationAfterKeyChange(
+    "error.matching_temporarily_unavailable",
+    "error.matching_temporarily_unavailable",
+    generation,
+  );
+  assert.equal(generation, 1);
+  generation = errorGenerationAfterKeyChange(
+    "error.matching_temporarily_unavailable",
+    null,
+    generation,
+  );
+  assert.equal(generation, 2);
+  assert.equal(visibleServerErrorKey(null, generation, 1), null);
+  generation = errorGenerationAfterKeyChange(null, "error.match_request_unknown_key", generation);
+  assert.equal(
+    visibleServerErrorKey("error.match_request_unknown_key", generation, 1),
+    "error.match_request_unknown_key",
+  );
+
+  assert.deepEqual(transportModesForMatchRequest("deliver"), []);
+  assert.ok(transportModesForMatchRequest("travel").includes("car"));
+  assert.ok(transportModesForMatchRequest("travel").includes("walking"));
+  assert.equal(transportModesForMatchRequest("buy").includes("flight"), true);
+}
 
 console.log("MatchRequestSheet.test.ts: ok");

@@ -8,6 +8,7 @@
  * Deliver applications use Cargo V2 aggregate space:
  * - Provider → Demand deliver: cargoCapacity (this-trip remaining space)
  * - Demand → Provider deliver: cargoRequirement (overall required space)
+ * Provider deliver offers do not inherit Travel's top-level transportMode.
  * Travel still uses four-tier luggage counts. Handling flags are advisory.
  * This module does not write match_requests, match_contracts, or
  * agreement_snapshot.
@@ -69,11 +70,11 @@ type EnvelopeV1 = {
 type ProviderOfferBase = EnvelopeV1 & {
   applicantRole: "provider";
   targetPostType: "demand";
-  transportMode: TransportMode;
 };
 
 export type ProviderOfferTravelV1 = ProviderOfferBase & {
   targetCategory: "travel";
+  transportMode: TransportMode;
   availablePassengerSeats: number;
   availableCargo?: CargoCountsV1;
 };
@@ -85,6 +86,7 @@ export type ProviderOfferDeliverV1 = ProviderOfferBase & {
 
 export type ProviderOfferLocalV1 = ProviderOfferBase & {
   targetCategory: "buy" | "onsite" | "errand";
+  transportMode: TransportMode;
 };
 
 type DemandApplyBase = EnvelopeV1 & {
@@ -210,7 +212,6 @@ const ALLOWED_BY_VARIANT: Record<string, ReadonlySet<string>> = {
   ]),
   "provider:demand:deliver": new Set([
     ...ENVELOPE_KEYS,
-    "transportMode",
     "cargoCapacity",
   ]),
   "provider:demand:buy": new Set([...ENVELOPE_KEYS, "transportMode"]),
@@ -413,6 +414,22 @@ export function parseApplicationPayloadV1(
   const message = messageResult.value;
 
   if (applicantRole === "provider" && targetPostType === "demand") {
+    if (rec.targetCategory === "deliver") {
+      const cargoCapacity = parseCargoCapacityV1(rec.cargoCapacity);
+      if (!cargoCapacity.ok) return fail(cargoCapacity.errorKey);
+      return {
+        ok: true,
+        value: omitUndefined({
+          version: 1,
+          applicantRole: "provider",
+          targetPostType: "demand",
+          targetCategory: "deliver",
+          cargoCapacity: cargoCapacity.value,
+          message,
+        }),
+      };
+    }
+
     if (!isTransportMode(rec.transportMode)) {
       return fail("error.match_request_transport_mode_required");
     }
@@ -441,23 +458,6 @@ export function parseApplicationPayloadV1(
           transportMode: rec.transportMode,
           availablePassengerSeats,
           availableCargo,
-          message,
-        }),
-      };
-    }
-
-    if (rec.targetCategory === "deliver") {
-      const cargoCapacity = parseCargoCapacityV1(rec.cargoCapacity);
-      if (!cargoCapacity.ok) return fail(cargoCapacity.errorKey);
-      return {
-        ok: true,
-        value: omitUndefined({
-          version: 1,
-          applicantRole: "provider",
-          targetPostType: "demand",
-          targetCategory: "deliver",
-          transportMode: rec.transportMode,
-          cargoCapacity: cargoCapacity.value,
           message,
         }),
       };

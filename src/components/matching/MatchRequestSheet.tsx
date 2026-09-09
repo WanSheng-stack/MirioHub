@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PHASE 6.7B.1B — unmounted match-request sheet.
+ * PHASE 6.7B.1B.1 — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
  * Deliver applications collect Cargo V2 aggregate space (applicant side only).
@@ -13,11 +13,11 @@
  *
  * Do not mount this on PostCard or the homepage this round.
  * Do not write match_requests, match_contracts, or agreement_snapshot.
+ * Closed sheets unmount; targetPost.id remounts the draft (shouldResetMatchRequestDraft).
  */
 
-import { useEffect, useId, useReducer, useRef, useState } from "react";
+import { useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { TRANSPORT_MODES } from "@/lib/posts";
 import { ITEM_UNITS } from "@/lib/post-payload";
 import type { TransportMode } from "@/lib/types";
 import type { ApplicationPayloadV1 } from "@/lib/matching/applicationPayload";
@@ -31,9 +31,18 @@ import {
   reduceMatchRequestForm,
   serverErrorAlert,
   showsHandlingFeeNegotiation,
+  type MatchRequestFormAction,
   type MatchRequestFormState,
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
+import {
+  canDismissMatchRequestSheet,
+  errorGenerationAfterKeyChange,
+  MATCH_REQUEST_FOCUSABLE_SELECTOR,
+  matchRequestTabTrap,
+  transportModesForMatchRequest,
+  visibleServerErrorKey,
+} from "@/lib/matching/matchRequestSheetBehavior";
 
 function tx(t: ReturnType<typeof useTranslations>, key: string): string {
   return (t as unknown as (k: string) => string)(key);
@@ -56,15 +65,22 @@ export type MatchRequestSheetProps = {
   onSubmit: (payload: ApplicationPayloadV1) => void;
   submitting: boolean;
   serverErrorKey: string | null;
+  onServerErrorClear?: () => void;
 };
 
-export function MatchRequestSheet({
+export function MatchRequestSheet(props: MatchRequestSheetProps) {
+  if (!props.open) return null;
+  return <MatchRequestSheetBody key={props.targetPost.id} {...props} />;
+}
+
+function MatchRequestSheetBody({
   targetPost,
   open,
   onOpenChange,
   onSubmit,
   submitting,
   serverErrorKey,
+  onServerErrorClear,
 }: MatchRequestSheetProps) {
   const t = useTranslations("matchRequest");
   const tHall = useTranslations("hall");
@@ -72,51 +88,102 @@ export function MatchRequestSheet({
   const tPublish = useTranslations("publish");
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [wasOpen, setWasOpen] = useState(open);
+  const [errorTrack, setErrorTrack] = useState({
+    key: serverErrorKey,
+    gen: 0,
+  });
+  const [dismissedGen, setDismissedGen] = useState(0);
   const [form, dispatch] = useReducer(
     reduceMatchRequestForm,
     targetPost,
     createInitialMatchRequestForm,
   );
-  const displayForm =
-    open !== wasOpen ? createInitialMatchRequestForm(targetPost) : form;
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    dispatch({
-      type: "RESET",
-      target: targetPost,
-    });
+
+  const errorGen =
+    errorTrack.key === serverErrorKey
+      ? errorTrack.gen
+      : errorGenerationAfterKeyChange(errorTrack.key, serverErrorKey, errorTrack.gen);
+  if (errorTrack.key !== serverErrorKey) {
+    setErrorTrack({ key: serverErrorKey, gen: errorGen });
   }
 
-  useEffect(() => {
-    if (!open) return;
+  const visibleError = visibleServerErrorKey(serverErrorKey, errorGen, dismissedGen);
+
+  function dismissServerError() {
+    setDismissedGen(errorGen);
+    onServerErrorClear?.();
+  }
+
+  function apply(action: MatchRequestFormAction) {
+    if (action.type !== "RESET" && action.type !== "SET_FIELD_ERRORS") {
+      dismissServerError();
+    }
+    dispatch(action);
+  }
+
+  function requestClose() {
+    if (!canDismissMatchRequestSheet(submitting)) return;
+    onOpenChange(false);
+  }
+
+  useLayoutEffect(() => {
+    onServerErrorClear?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only stale error clear
+  }, []);
+
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onOpenChange(false);
+
+    function focusables(): HTMLElement[] {
+      if (!panelRef.current) return [];
+      return Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(MATCH_REQUEST_FOCUSABLE_SELECTOR),
+      ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
     }
+
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!canDismissMatchRequestSheet(submitting)) return;
+        onOpenChange(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const nodes = focusables();
+      if (nodes.length === 0) return;
+      const current = document.activeElement;
+      const currentIndex = nodes.findIndex((el) => el === current);
+      const trap = matchRequestTabTrap(
+        { key: event.key, shiftKey: event.shiftKey },
+        currentIndex,
+        nodes.length,
+      );
+      if (!trap) return;
+      event.preventDefault();
+      nodes[trap.nextIndex]?.focus();
+    }
+
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
       previous?.focus?.();
     };
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, submitting]);
 
   if (!open) return null;
 
   const isProviderApplicant = targetPost.post_type === "demand";
-  const hints = collectFieldHints(displayForm, targetPost);
+  const hints = collectFieldHints(form, targetPost);
   const fieldMsg = (field: keyof MatchRequestFormState["fieldErrors"]) =>
-    displayForm.fieldErrors[field] ?? hints[field];
-  const alert = serverErrorAlert(serverErrorKey);
+    form.fieldErrors[field] ?? hints[field];
+  const alert = serverErrorAlert(visibleError);
   const busy = submitting;
-
-  function close() {
-    onOpenChange(false);
-  }
+  const modeOptions = transportModesForMatchRequest(targetPost.category);
+  const showTransportSelect = isProviderApplicant && modeOptions.length > 0;
 
   function handleSubmit() {
-    const result = attemptMatchRequestSubmit(displayForm, targetPost, busy);
+    const result = attemptMatchRequestSubmit(form, targetPost, busy);
     if (result.kind === "blocked_submitting") return;
     if (result.kind === "invalid") {
       dispatch({ type: "SET_FIELD_ERRORS", errors: result.fieldErrors });
@@ -127,11 +194,10 @@ export function MatchRequestSheet({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <button
-        type="button"
-        aria-label={t("cancel")}
+      <div
+        aria-hidden="true"
         className="absolute inset-0 bg-zinc-950/40 backdrop-blur-[2px]"
-        onClick={close}
+        onClick={requestClose}
       />
       <div
         ref={panelRef}
@@ -149,8 +215,9 @@ export function MatchRequestSheet({
           <button
             type="button"
             aria-label={t("cancel")}
-            onClick={close}
-            className="rounded-full px-2 py-1 text-zinc-500 hover:bg-zinc-200/60"
+            disabled={busy}
+            onClick={requestClose}
+            className="rounded-full px-2 py-1 text-zinc-500 hover:bg-zinc-200/60 disabled:opacity-60"
           >
             ×
           </button>
@@ -198,23 +265,23 @@ export function MatchRequestSheet({
           </section>
 
           <div className="mt-4 space-y-4">
-            {isProviderApplicant ? (
+            {showTransportSelect ? (
               <label className="block text-sm font-medium">
                 {t("transportMode")}
                 <select
                   className={inputClass}
-                  value={displayForm.transportMode}
+                  value={form.transportMode}
                   disabled={busy}
                   aria-invalid={Boolean(fieldMsg("transportMode"))}
                   onChange={(event) =>
-                    dispatch({
+                    apply({
                       type: "SET_TRANSPORT_MODE",
                       value: event.target.value as TransportMode | "",
                     })
                   }
                 >
                   <option value="">—</option>
-                  {TRANSPORT_MODES.map((mode) => (
+                  {modeOptions.map((mode) => (
                     <option key={mode} value={mode}>
                       {tHall(`transport.${mode}`)}
                     </option>
@@ -231,12 +298,12 @@ export function MatchRequestSheet({
             {isProviderApplicant && targetPost.category === "travel" ? (
               <SeatField
                 label={t("availablePassengerSeats")}
-                value={displayForm.availablePassengerSeats}
+                value={form.availablePassengerSeats}
                 disabled={busy}
                 invalid={Boolean(fieldMsg("availablePassengerSeats"))}
                 hint={fieldMsg("availablePassengerSeats")}
                 onChange={(value) =>
-                  dispatch({
+                  apply({
                     type: "SET_SEAT_FIELD",
                     field: "availablePassengerSeats",
                     value,
@@ -249,12 +316,12 @@ export function MatchRequestSheet({
             {!isProviderApplicant && targetPost.category === "travel" ? (
               <SeatField
                 label={t("passengerCount")}
-                value={displayForm.passengerCount}
+                value={form.passengerCount}
                 disabled={busy}
                 invalid={Boolean(fieldMsg("passengerCount"))}
                 hint={fieldMsg("passengerCount")}
                 onChange={(value) =>
-                  dispatch({
+                  apply({
                     type: "SET_SEAT_FIELD",
                     field: "passengerCount",
                     value,
@@ -266,12 +333,12 @@ export function MatchRequestSheet({
 
             {targetPost.category === "travel" ? (
               <CargoBlock
-                form={displayForm}
+                form={form}
                 busy={busy}
                 required={false}
                 showToggle={true}
                 hint={fieldMsg("cargo")}
-                dispatch={dispatch}
+                dispatch={apply}
                 t={t}
                 tRoot={tRoot}
                 tPublish={tPublish}
@@ -280,11 +347,11 @@ export function MatchRequestSheet({
 
             {targetPost.category === "deliver" ? (
               <CargoV2Block
-                form={displayForm}
+                form={form}
                 busy={busy}
                 isProviderApplicant={isProviderApplicant}
                 fieldMsg={fieldMsg}
-                dispatch={dispatch}
+                dispatch={apply}
                 t={t}
                 tRoot={tRoot}
               />
@@ -292,10 +359,10 @@ export function MatchRequestSheet({
 
             {!isProviderApplicant && targetPost.category === "buy" ? (
               <BuyBlock
-                form={displayForm}
+                form={form}
                 busy={busy}
                 fieldMsg={fieldMsg}
-                dispatch={dispatch}
+                dispatch={apply}
                 t={t}
                 tRoot={tRoot}
                 tPublish={tPublish}
@@ -308,7 +375,7 @@ export function MatchRequestSheet({
                 className={inputClass}
                 rows={3}
                 maxLength={MATCH_REQUEST_MESSAGE_MAX}
-                value={displayForm.message}
+                value={form.message}
                 disabled={busy}
                 aria-invalid={Boolean(fieldMsg("message"))}
                 onKeyDown={(event) => {
@@ -317,11 +384,11 @@ export function MatchRequestSheet({
                   }
                 }}
                 onChange={(event) =>
-                  dispatch({ type: "SET_MESSAGE", value: event.target.value })
+                  apply({ type: "SET_MESSAGE", value: event.target.value })
                 }
               />
               <span className="mt-1 block text-xs text-zinc-500">
-                {displayForm.message.length}/{MATCH_REQUEST_MESSAGE_MAX}
+                {form.message.length}/{MATCH_REQUEST_MESSAGE_MAX}
               </span>
               {fieldMsg("message") ? (
                 <p role="alert" className="mt-1 text-xs text-amber-800">
@@ -341,8 +408,9 @@ export function MatchRequestSheet({
             </button>
             <button
               type="button"
-              className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm"
-              onClick={close}
+              disabled={busy}
+              className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm disabled:opacity-60"
+              onClick={requestClose}
             >
               {t("cancel")}
             </button>

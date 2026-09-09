@@ -122,16 +122,21 @@ safe-read boundary.
 phase. It is not live schema authority, and this project currently
 must not modify it.
 
-## 9. Cargo V2 (not implemented)
+## 9. Cargo V2 domain contract (not on the production path)
 
-- **Current state:** Intentionally absent. Legacy
-  `count_small/medium/large/xlarge` remain the production luggage model.
-  `transportPolicy` does not treat any cargo total as Deliver completeness.
-- **Future replacement:** `CargoRequirement`, `CargoCapacity`,
-  `CargoItem`, `CargoHandlingConditions`, `CargoCompatibilityResult`.
-- **Earliest safe creation:** A dedicated Cargo V2 phase after transport
-  V1 integrity is deployed. Not 6.7B.1A.1.
-- **Preconditions:** Product signs off dimensions, handling, escort 0/1,
-  and matching outcomes (incompatible / needs confirm / matchable).
-- **Risk if created early:** Freezes the four-tier luggage model as if it
-  were furniture/appliance cargo.
+- **Current state:** PHASE 6.7B.1A.2 added parse-only TypeScript contracts
+  under `src/lib/cargo/`. Nothing imports them from UI, APIs, or RPCs.
+  Legacy `count_small/medium/large/xlarge` remain the production luggage
+  model. Those columns are not renamed, migrated, or cast to
+  `CargoRequirementV1`.
+- **Future replacement:** 6.7B.1B may wire the parsers to an application
+  sheet. 6.7D accept-time must re-read both snapshots and re-run
+  compatibility. A read-only legacy adapter, if ever added, can at most
+  emit `needs_confirmation` because four-tier counts lack size, weight,
+  and handling. Do not infer a vehicle class from `xlarge`.
+- **Earliest safe production use:** After sheet wiring, trilingual error
+  copy, and server-side re-parse on accept. Not this phase.
+- **Preconditions:** Product keeps escort as Demand 0/1 vs Provider
+  accommodation enum; remaining-trip space is not nameplate volume.
+- **Risk if wired early:** Treats incomplete four-tier rows as a fit
+  decision, or shows Provider “seat count” on public cards.

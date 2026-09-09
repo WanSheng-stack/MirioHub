@@ -2,12 +2,14 @@
 -- MANUAL APPLY of the sibling migration first. Do not run as a migration.
 -- Do not SELECT posts rows, phones, plates, or payload hashes.
 -- Catalog reads only. Do not write data or change privileges.
+-- Exact function is resolved with to_regprocedure on the type signature.
+-- pg_get_function_identity_arguments is display-only (includes parameter names).
 
 -- A. Exact function count, overload count, PUBLIC direct ACL, effective EXECUTE
 -- EXPECT: exactly one row
 -- EXPECT exact_function_count = 1
 -- EXPECT all_overload_count = 1
--- EXPECT identity_arguments = uuid, uuid, text, text, jsonb, bigint, text
+-- EXPECT identity_arguments is display-only and may include parameter names
 -- EXPECT public_direct_execute = false
 -- EXPECT anon_effective_execute = false
 -- EXPECT authenticated_effective_execute = false
@@ -19,17 +21,18 @@ WITH named AS (
     p.oid,
     p.proname,
     p.proowner,
-    p.proacl,
-    pg_get_function_identity_arguments(p.oid) AS identity_args
+    p.proacl
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
     AND p.proname = 'insert_stage1_post_v86'
 ),
 exact AS (
-  SELECT *
-  FROM named
-  WHERE identity_args = 'uuid, uuid, text, text, jsonb, bigint, text'
+  SELECT n.oid, n.proname, n.proowner, n.proacl
+  FROM named n
+  WHERE n.oid = to_regprocedure(
+    'public.insert_stage1_post_v86(uuid,uuid,text,text,jsonb,bigint,text)'
+  )::oid
 ),
 counts AS (
   SELECT
@@ -63,7 +66,9 @@ SELECT
     ELSE NULL
   END AS function_name,
   CASE
-    WHEN c.exact_function_count = 1 THEN (SELECT e.identity_args FROM exact e)
+    WHEN c.exact_function_count = 1 THEN pg_get_function_identity_arguments(
+      (SELECT e.oid FROM exact e)
+    )
     ELSE NULL
   END AS identity_arguments,
   pa.public_direct_execute,
@@ -98,14 +103,15 @@ FROM counts c
 CROSS JOIN roles r
 CROSS JOIN public_acl pa;
 
--- B. Function body writes transport_mode and V1 allowlist only
-SELECT pg_get_functiondef(p.oid) AS def
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname = 'insert_stage1_post_v86'
-  AND pg_get_function_identity_arguments(p.oid)
-    = 'uuid, uuid, text, text, jsonb, bigint, text';
+-- B. Function body via the same exact OID as query A
+WITH exact AS (
+  SELECT to_regprocedure(
+    'public.insert_stage1_post_v86(uuid,uuid,text,text,jsonb,bigint,text)'
+  )::oid AS oid
+)
+SELECT pg_get_functiondef(oid) AS def
+FROM exact
+WHERE oid IS NOT NULL;
 -- EXPECT: INSERT includes transport_mode
 -- EXPECT: allowlist walking/scooter/bicycle/motorbike/subway/bus/train/flight/car/van
 -- EXPECT: no cargo_van, light_truck, box_truck, vehicle_with_trailer, boat modes

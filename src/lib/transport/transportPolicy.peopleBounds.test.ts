@@ -233,14 +233,54 @@ const verifySql = read(VERIFY_SQL);
   assert.equal(/GRANT\s+ALL/i.test(statements), false);
 }
 
-// TEST O — verify outputs exact_function_count
-{
-  assert.ok(verifySql.includes("exact_function_count"));
+const REGPROCEDURE =
+  "public.insert_stage1_post_v86(uuid,uuid,text,text,jsonb,bigint,text)";
+const TYPE_ONLY = "uuid, uuid, text, text, jsonb, bigint, text";
+const NAMED_IDENTITY =
+  "p_user_id uuid, p_client_request_id uuid, p_payload_hash text, p_status text, p_post_payload jsonb, p_server_fee_minor bigint, p_fallback_reason text";
+
+function statementsOf(sql: string): string {
+  return sql
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("--"))
+    .join("\n");
 }
 
-// TEST P — verify outputs all_overload_count
+// TEST O — verify outputs exact_function_count and locates named-arg functions
+{
+  assert.ok(verifySql.includes("exact_function_count"));
+  assert.notEqual(NAMED_IDENTITY, TYPE_ONLY);
+  const statements = statementsOf(verifySql);
+  assert.equal(
+    statements.includes(`identity_args = '${TYPE_ONLY}'`),
+    false,
+  );
+  assert.equal(
+    statements.includes(`pg_get_function_identity_arguments(p.oid)\n    = '${TYPE_ONLY}'`),
+    false,
+  );
+  assert.equal(
+    /pg_get_function_identity_arguments\([^)]+\)\s*=\s*'uuid, uuid, text, text, jsonb, bigint, text'/.test(
+      statements,
+    ),
+    false,
+  );
+  assert.ok(statements.includes(`to_regprocedure(\n    '${REGPROCEDURE}'`));
+}
+
+// TEST P — verify outputs all_overload_count; body reuses the same exact OID
 {
   assert.ok(verifySql.includes("all_overload_count"));
+  const statements = statementsOf(verifySql);
+  const locators = statements.match(
+    /to_regprocedure\(\s*'public\.insert_stage1_post_v86\(uuid,uuid,text,text,jsonb,bigint,text\)'/g,
+  );
+  assert.ok(locators && locators.length >= 2);
+  assert.ok(statements.includes("SELECT pg_get_functiondef(oid) AS def"));
+  assert.equal(
+    /pg_get_function_identity_arguments\(p\.oid\)/.test(statements),
+    false,
+  );
 }
 
 // TEST Q — PUBLIC uses aclexplode + grantee = 0

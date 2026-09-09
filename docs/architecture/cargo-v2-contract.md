@@ -1,4 +1,4 @@
-# Cargo V2 contract (PHASE 6.7B.1A.2B)
+# Cargo V2 contract (PHASE 6.7B.1A.2B.1)
 
 MirioHub V1 is a rideshare-style information match platform. It is **not** a
 professional logistics dispatcher, vehicle recommender, or 3D packing engine.
@@ -44,7 +44,7 @@ ceiling in `cargoPolicy.ts` as an input safety bound only.
 Weight: `{ kind: "known", kg }` or `{ kind: "unknown" }`. Unknown forces
 `needs_confirmation`. Known kg is this-trip remaining payload, not GVW.
 
-## 4. Handling is four booleans, fee is always later 面议
+## 4. Handling is four advisory booleans, fee is always later 面议
 
 Demand `handlingRequest`:
 
@@ -58,8 +58,18 @@ Provider `handlingOffer`:
 
 Both fields are required strict booleans (`true`/`false` only).
 
-This contract stores **no** handling fee, currency, min/max, unpaid flag,
-Demand offer, or Provider asking price.
+These four flags are **advisory preferences only**. A mismatch:
+
+- does **not** block creating a post
+- does **not** block submitting a match request
+- does **not** block accepting a request
+- is **not** a Fraud signal
+- is **not** a hard deny
+- is **not** a matching filter or ranking penalty
+
+The UI must require the parties to communicate and confirm when preferences
+differ. This contract stores **no** handling fee, currency, min/max, unpaid
+flag, Demand offer, or Provider asking price.
 
 Future UI copy (not added this phase):
 
@@ -73,28 +83,44 @@ moving capacity, and not an agreed price.
 
 ## 5. Future `agreement_snapshot` (not this phase)
 
-Publish/apply records only the four booleans. After chat, **before accept**,
-a later flow confirms: final loading help, final unloading help, final
-handling fee and currency, or confirmed unpaid. Those fields belong on
-`agreement_snapshot`. Do not pre-build an amount model here.
+Publish/apply records only the four booleans. After chat, **immediately
+before accept**, a later flow confirms: final loading help, final unloading
+help, final handling fee and currency, or confirmed unpaid. Those fields
+belong on `agreement_snapshot`. This phase does **not** write that snapshot
+and does not pre-build an amount model.
 
 ## 6. Declared comparison
 
 | Status | Meaning |
 | --- | --- |
-| `declared_conflict` | Declarations differ (space, weight, escort, or a requested help the Provider cannot give). Still talkable. Not Fraud hard deny. |
-| `needs_confirmation` | Unknown weight, escort `requires_confirmation`, or requested help is offered so fee must be negotiated. |
+| `declared_conflict` | Only true declared conflicts: space, known weight vs payload, or escort `not_available`. Still talkable. Not Fraud hard deny. Handling mismatch **never** produces this status by itself. |
+| `needs_confirmation` | Unknown weight, escort `requires_confirmation`, or any handling advisory (unavailable help or fee still to negotiate). |
 | `no_obvious_conflict` | No obvious conflict in the filled-in numbers. **Does not mean it fits.** |
 
-`requiresHumanConfirmation` is **always** `true`.
+`requiresHumanConfirmation` is **always** `true`. This module does not
+allow, reject, or write Fraud decisions.
+
+True conflict reasons (only these):
+
+- `declared_space_exceeds_available_space`
+- `declared_weight_exceeds_available_payload`
+- `escort_condition_differs`
+
+Advisory handling reasons (never conflict, never Fraud, never a filter):
+
+- `loading_help_unavailable`
+- `unloading_help_unavailable`
+- `handling_fee_negotiation_required`
 
 Handling:
 
 - Demand does not need a help type → Provider's corresponding boolean is ignored (no reason).
-- Demand needs loading and Provider `canHelpLoading=false` → `loading_help_unavailable`.
-- Demand needs unloading and Provider `canHelpUnloading=false` → `unloading_help_unavailable`.
-- Every requested help is offered → `handling_fee_negotiation_required` (`needs_confirmation`).
-- Unavailable outranks negotiation.
+- Demand needs loading and Provider `canHelpLoading=true` → `handling_fee_negotiation_required` (scope, whether to charge, and the fee need offline confirmation).
+- Demand needs unloading and Provider `canHelpUnloading=true` → same single de-duplicated `handling_fee_negotiation_required`.
+- Demand needs loading and Provider `canHelpLoading=false` → `loading_help_unavailable` (`needs_confirmation`, not conflict).
+- Demand needs unloading and Provider `canHelpUnloading=false` → `unloading_help_unavailable` (`needs_confirmation`, not conflict).
+- Partial cover (one can, one cannot) keeps both the unavailable reason and `handling_fee_negotiation_required` for the offered item.
+- Handling reasons may sit alongside a true space/weight/escort conflict so the parties still see the full prompt. Handling itself is never the blocking cause.
 
 Space: sort three sides and compare pairwise (rough cuboid rotation only;
 not packing proof). Weight: Demand known kg > Provider known kg → conflict;
@@ -102,8 +128,10 @@ either unknown → confirmation. Escort: Demand 1 + `not_available` →
 conflict; `requires_confirmation` → confirmation.
 
 Precedence: `declared_conflict` > `needs_confirmation` > `no_obvious_conflict`.
-Reasons are stable de-duplicated public keys. Comparison must not
-auto-accept, auto-reject, hard-deny, write fraud logs, or prove legality.
+Only a true conflict reason may set `declared_conflict`. Reasons are stable
+de-duplicated public keys. Comparison must not auto-accept, auto-reject,
+hard-deny, write fraud logs, filter matches, apply ranking penalties, or
+prove legality.
 
 ## 7. Parser boundary
 

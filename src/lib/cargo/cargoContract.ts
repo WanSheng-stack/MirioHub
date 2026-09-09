@@ -1,10 +1,11 @@
 /**
- * PHASE 6.7B.1A.2B — Cargo V2 aggregate-space contracts and strict parsers.
+ * PHASE 6.7B.1A.2B.1 — Cargo V2 aggregate-space contracts and strict parsers.
  *
  * Not a database schema. Not on the production runtime path.
  * TypeScript types are not an authorization boundary; runtime parse is.
  * Server must re-parse; do not trust browser JSON.
  * Parsed authenticity is a module-private WeakSet, not an exported Symbol.
+ * Handling booleans are advisory preferences only; they carry no fee model.
  */
 
 import {

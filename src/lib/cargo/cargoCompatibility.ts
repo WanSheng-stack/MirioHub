@@ -1,9 +1,17 @@
 /**
- * PHASE 6.7B.1A.2B — declared-space comparison (never a fit guarantee).
+ * PHASE 6.7B.1A.2B.1 — declared-space comparison (never a fit guarantee).
  *
  * Not on the production runtime path. Server must re-parse both snapshots
  * before any future accept. requiresHumanConfirmation is always true.
  * This is not a Fraud decision, hard deny, or vehicle verification.
+ *
+ * Handling flags are advisory preferences only. A mismatch does not
+ * block creating a post, does not block submitting a match request, and
+ * does not block accepting a request. It is not a Fraud signal, hard deny,
+ * matching filter, or ranking penalty. Final handling and any fee belong
+ * on a future agreement_snapshot immediately before acceptance. This
+ * module does not write that snapshot. The UI must require the parties to
+ * communicate and confirm when preferences differ.
  */
 
 import {
@@ -89,11 +97,7 @@ function collectReasons(
   if (needsUnloading && !canUnload) {
     reasons.add("unloading_help_unavailable");
   }
-  if (
-    (needsLoading || needsUnloading) &&
-    (!needsLoading || canLoad) &&
-    (!needsUnloading || canUnload)
-  ) {
+  if ((needsLoading && canLoad) || (needsUnloading && canUnload)) {
     reasons.add("handling_fee_negotiation_required");
   }
 

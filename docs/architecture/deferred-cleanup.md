@@ -124,28 +124,35 @@ must not modify it.
 
 ## 9. Cargo V2 domain contract (not on the production path)
 
-- **Current state:** PHASE 6.7B.1A.2B is a parse-only aggregate-space
+- **Current state:** PHASE 6.7B.1A.2B.1 is a parse-only aggregate-space
   contract under `src/lib/cargo/`. Demand declares overall required L×W×H
   plus two booleans (needs loading / unloading help). Provider declares
   this-trip remaining L×W×H plus two booleans (can help load / unload).
-  Handling fee is not in this contract; any requested help later shows 面议
-  and is confirmed before accept. Nothing imports these types from UI,
-  APIs, or RPCs. Legacy `count_small/medium/large/xlarge` remain the
-  production luggage model and are not cast to `CargoRequirementV1`.
+  Handling flags are **advisory preferences only**: a mismatch does not
+  block posting, requesting, or accepting; it is not Fraud, hard deny, a
+  matching filter, or a ranking penalty. Handling fee is not in this
+  contract; any requested help later shows 面议 and is confirmed before
+  accept. Nothing imports these types from UI, APIs, or RPCs. Legacy
+  `count_small/medium/large/xlarge` remain the production luggage model
+  and are not cast to `CargoRequirementV1`.
 - **Future replacement:** 6.7B.1B may wire the parsers to an application
-  sheet (trilingual copy for the four booleans and 面议). 6.7D accept-time
+  sheet (trilingual copy for the four booleans and 面议; UI must require
+  the parties to communicate when preferences differ). 6.7D accept-time
   must re-parse both snapshots, then write final help + fee onto
-  `agreement_snapshot`. A read-only legacy adapter, if ever added, can at
-  most emit `needs_confirmation`.
+  `agreement_snapshot`. This phase does not write that snapshot. A
+  read-only legacy adapter, if ever added, can at most emit
+  `needs_confirmation`.
 - **Earliest safe production use:** After sheet wiring, trilingual error
   copy, and server-side re-parse on accept. Not this phase.
 - **Preconditions:** Escort stays Demand 0/1 vs Provider accommodation;
   remaining-trip space is not nameplate volume; no vehicle-class
   recommendation; no handling amount/currency on the publish/apply payload;
-  photos stay in a later handover flow.
+  handling mismatch must stay advisory; photos stay in a later handover
+  flow.
 - **Risk if wired early:** Treats incomplete four-tier rows as a fit
-  decision, shows Provider “seat count” / verified-safe copy, or stores a
-  handling price before the parties agreed.
+  decision, treats handling mismatch as a block/filter/Fraud signal, shows
+  Provider “seat count” / verified-safe copy, or stores a handling price
+  before the parties agreed.
 
 ## 10. `public.profile_cards` (dropped live; still in frozen `init.sql`)
 

@@ -1,15 +1,18 @@
 "use client";
 
 /**
- * PHASE 6.7B — unmounted match-request sheet.
+ * PHASE 6.7B.1B — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
+ * Deliver applications collect Cargo V2 aggregate space (applicant side only).
+ * Handling flags are advisory; 面议 copy is shown when any help flag is on.
  * PHASE 6.7C server MUST re-run parseApplicationPayloadV1 and MUST re-read from
  * DB: target_post_id → post, category, owner, current status.
  * Browser-provided targetPostType / targetCategory / recipient / applicant role
  * must not be trusted.
  *
  * Do not mount this on PostCard or the homepage this round.
+ * Do not write match_requests, match_contracts, or agreement_snapshot.
  */
 
 import { useEffect, useId, useReducer, useRef, useState } from "react";
@@ -19,12 +22,15 @@ import { ITEM_UNITS } from "@/lib/post-payload";
 import type { TransportMode } from "@/lib/types";
 import type { ApplicationPayloadV1 } from "@/lib/matching/applicationPayload";
 import { MATCH_REQUEST_MESSAGE_MAX } from "@/lib/matching/applicationPayload";
+import { CARGO_ESCORT_ACCOMMODATIONS } from "@/lib/cargo/cargoPolicy";
+import type { CargoEscortAccommodation } from "@/lib/cargo/cargoPolicy";
 import {
   attemptMatchRequestSubmit,
   collectFieldHints,
   createInitialMatchRequestForm,
   reduceMatchRequestForm,
   serverErrorAlert,
+  showsHandlingFeeNegotiation,
   type MatchRequestFormState,
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
@@ -240,24 +246,6 @@ export function MatchRequestSheet({
               />
             ) : null}
 
-            {isProviderApplicant && targetPost.category === "deliver" ? (
-              <SeatField
-                label={t("availablePassengerSeatsOptional")}
-                value={displayForm.availablePassengerSeats}
-                disabled={busy}
-                invalid={Boolean(fieldMsg("availablePassengerSeats"))}
-                hint={fieldMsg("availablePassengerSeats")}
-                onChange={(value) =>
-                  dispatch({
-                    type: "SET_SEAT_FIELD",
-                    field: "availablePassengerSeats",
-                    value,
-                  })
-                }
-                tRoot={tRoot}
-              />
-            ) : null}
-
             {!isProviderApplicant && targetPost.category === "travel" ? (
               <SeatField
                 label={t("passengerCount")}
@@ -276,35 +264,29 @@ export function MatchRequestSheet({
               />
             ) : null}
 
-            {!isProviderApplicant && targetPost.category === "deliver" ? (
-              <SeatField
-                label={tPublish("escortSeats")}
-                value={displayForm.escortSeats}
-                disabled={busy}
-                invalid={Boolean(fieldMsg("escortSeats"))}
-                hint={fieldMsg("escortSeats")}
-                onChange={(value) =>
-                  dispatch({
-                    type: "SET_SEAT_FIELD",
-                    field: "escortSeats",
-                    value,
-                  })
-                }
-                tRoot={tRoot}
-              />
-            ) : null}
-
-            {targetPost.category === "travel" || targetPost.category === "deliver" ? (
+            {targetPost.category === "travel" ? (
               <CargoBlock
                 form={displayForm}
                 busy={busy}
-                required={!isProviderApplicant && targetPost.category === "deliver"}
-                showToggle={targetPost.category === "travel"}
+                required={false}
+                showToggle={true}
                 hint={fieldMsg("cargo")}
                 dispatch={dispatch}
                 t={t}
                 tRoot={tRoot}
                 tPublish={tPublish}
+              />
+            ) : null}
+
+            {targetPost.category === "deliver" ? (
+              <CargoV2Block
+                form={displayForm}
+                busy={busy}
+                isProviderApplicant={isProviderApplicant}
+                fieldMsg={fieldMsg}
+                dispatch={dispatch}
+                t={t}
+                tRoot={tRoot}
               />
             ) : null}
 
@@ -490,6 +472,271 @@ function CargoBlock({
           {tx(tRoot,hint)}
         </p>
       ) : null}
+    </section>
+  );
+}
+
+function CargoV2Block({
+  form,
+  busy,
+  isProviderApplicant,
+  fieldMsg,
+  dispatch,
+  t,
+  tRoot,
+}: {
+  form: MatchRequestFormState;
+  busy: boolean;
+  isProviderApplicant: boolean;
+  fieldMsg: (field: keyof MatchRequestFormState["fieldErrors"]) => string | undefined;
+  dispatch: (action: Parameters<typeof reduceMatchRequestForm>[1]) => void;
+  t: ReturnType<typeof useTranslations>;
+  tRoot: ReturnType<typeof useTranslations>;
+}) {
+  const role = isProviderApplicant ? "provider" : "demand";
+  const showFee = showsHandlingFeeNegotiation(form, role);
+  return (
+    <section className="space-y-4">
+      <h3 className="text-sm font-semibold text-zinc-700">
+        {isProviderApplicant ? t("availableSpace") : t("requiredSpace")}
+      </h3>
+      <p className="text-xs text-zinc-500">
+        {isProviderApplicant ? t("availableSpaceHint") : t("requiredSpaceHint")}
+      </p>
+      <div className="grid grid-cols-3 gap-2">
+        {(
+          [
+            ["spaceLength", "lengthCm"],
+            ["spaceWidth", "widthCm"],
+            ["spaceHeight", "heightCm"],
+          ] as const
+        ).map(([field, labelKey]) => (
+          <label key={field} className="block text-sm font-medium">
+            {t(labelKey)}
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              className={inputClass}
+              value={form[field]}
+              disabled={busy}
+              aria-invalid={Boolean(fieldMsg("cargoSpace"))}
+              onChange={(event) =>
+                dispatch({
+                  type: "SET_SPACE_FIELD",
+                  field,
+                  value: event.target.value,
+                })
+              }
+            />
+          </label>
+        ))}
+      </div>
+      {fieldMsg("cargoSpace") ? (
+        <p role="alert" className="text-xs text-amber-800">
+          {tx(tRoot, fieldMsg("cargoSpace")!)}
+        </p>
+      ) : null}
+
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">
+          {isProviderApplicant ? t("availablePayload") : t("approximateWeight")}
+        </legend>
+        {(["unknown", "known"] as const).map((kind) => (
+          <label key={kind} className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="cargo_weight_kind"
+              disabled={busy}
+              checked={form.weightKind === kind}
+              onChange={() => dispatch({ type: "SET_WEIGHT_KIND", value: kind })}
+            />
+            {t(kind === "unknown" ? "weightUnknown" : "weightKnown")}
+          </label>
+        ))}
+        {form.weightKind === "known" ? (
+          <label className="block text-sm font-medium">
+            {t("weightKg")}
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0.1}
+              step="0.1"
+              className={inputClass}
+              value={form.weightKg}
+              disabled={busy}
+              aria-invalid={Boolean(fieldMsg("cargoWeight"))}
+              onChange={(event) =>
+                dispatch({ type: "SET_WEIGHT_KG", value: event.target.value })
+              }
+            />
+          </label>
+        ) : null}
+        {fieldMsg("cargoWeight") ? (
+          <p role="alert" className="text-xs text-amber-800">
+            {tx(tRoot, fieldMsg("cargoWeight")!)}
+          </p>
+        ) : null}
+      </fieldset>
+
+      {isProviderApplicant ? (
+        <label className="block text-sm font-medium">
+          {t("escortAccommodationLabel")}
+          <select
+            className={inputClass}
+            value={form.escortAccommodation}
+            disabled={busy}
+            aria-invalid={Boolean(fieldMsg("cargoEscort"))}
+            onChange={(event) =>
+              dispatch({
+                type: "SET_ESCORT_ACCOMMODATION",
+                value: event.target.value as CargoEscortAccommodation | "",
+              })
+            }
+          >
+            <option value="">—</option>
+            {CARGO_ESCORT_ACCOMMODATIONS.map((value) => (
+              <option key={value} value={value}>
+                {t(`escortAccommodation.${value}`)}
+              </option>
+            ))}
+          </select>
+          {fieldMsg("cargoEscort") ? (
+            <p role="alert" className="mt-1 text-xs text-amber-800">
+              {tx(tRoot, fieldMsg("cargoEscort")!)}
+            </p>
+          ) : null}
+        </label>
+      ) : (
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">{t("escortPassengerCount")}</legend>
+          {(["0", "1"] as const).map((value) => (
+            <label key={value} className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="escort_passenger_count"
+                disabled={busy}
+                checked={form.escortPassengerCount === value}
+                onChange={() =>
+                  dispatch({ type: "SET_ESCORT_PASSENGER_COUNT", value })
+                }
+              />
+              {t(value === "0" ? "escortNone" : "escortOne")}
+            </label>
+          ))}
+          {fieldMsg("cargoEscort") ? (
+            <p role="alert" className="text-xs text-amber-800">
+              {tx(tRoot, fieldMsg("cargoEscort")!)}
+            </p>
+          ) : null}
+        </fieldset>
+      )}
+
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">{t("handlingTitle")}</legend>
+        {isProviderApplicant ? (
+          <>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                disabled={busy}
+                checked={form.canHelpLoading}
+                onChange={(event) =>
+                  dispatch({
+                    type: "SET_HANDLING_FLAG",
+                    field: "canHelpLoading",
+                    value: event.target.checked,
+                  })
+                }
+              />
+              {t("canHelpLoading")}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                disabled={busy}
+                checked={form.canHelpUnloading}
+                onChange={(event) =>
+                  dispatch({
+                    type: "SET_HANDLING_FLAG",
+                    field: "canHelpUnloading",
+                    value: event.target.checked,
+                  })
+                }
+              />
+              {t("canHelpUnloading")}
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                disabled={busy}
+                checked={form.needsLoadingHelp}
+                onChange={(event) =>
+                  dispatch({
+                    type: "SET_HANDLING_FLAG",
+                    field: "needsLoadingHelp",
+                    value: event.target.checked,
+                  })
+                }
+              />
+              {t("needsLoadingHelp")}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                disabled={busy}
+                checked={form.needsUnloadingHelp}
+                onChange={(event) =>
+                  dispatch({
+                    type: "SET_HANDLING_FLAG",
+                    field: "needsUnloadingHelp",
+                    value: event.target.checked,
+                  })
+                }
+              />
+              {t("needsUnloadingHelp")}
+            </label>
+          </>
+        )}
+        {showFee ? (
+          <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="font-medium">{t("handlingFeeNegotiable")}</p>
+            <p className="mt-1">
+              {isProviderApplicant
+                ? t("handlingFeeProviderHint")
+                : t("handlingFeeDemandHint")}
+            </p>
+          </div>
+        ) : null}
+        {fieldMsg("cargoHandling") ? (
+          <p role="alert" className="text-xs text-amber-800">
+            {tx(tRoot, fieldMsg("cargoHandling")!)}
+          </p>
+        ) : null}
+      </fieldset>
+
+      <label className="block text-sm font-medium">
+        {t("cargoNote")}
+        <textarea
+          className={inputClass}
+          rows={2}
+          maxLength={300}
+          value={form.cargoNote}
+          disabled={busy}
+          aria-invalid={Boolean(fieldMsg("cargoNote"))}
+          onChange={(event) =>
+            dispatch({ type: "SET_CARGO_NOTE", value: event.target.value })
+          }
+        />
+        {fieldMsg("cargoNote") ? (
+          <p role="alert" className="mt-1 text-xs text-amber-800">
+            {tx(tRoot, fieldMsg("cargoNote")!)}
+          </p>
+        ) : null}
+      </label>
     </section>
   );
 }

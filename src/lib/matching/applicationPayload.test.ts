@@ -5,6 +5,10 @@
 
 import assert from "node:assert/strict";
 import {
+  isParsedCargoCapacityV1,
+  isParsedCargoRequirementV1,
+} from "@/lib/cargo/cargoContract";
+import {
   applicantRoleForTarget,
   FORBIDDEN_PAYLOAD_KEYS,
   isForbiddenPayloadKey,
@@ -38,14 +42,48 @@ function providerTravelRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function minRequirement(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    requiredSpace: { length: 80, width: 50, height: 40 },
+    approximateWeightKg: { kind: "known", kg: 10 },
+    escortPassengerCount: 0,
+    handlingRequest: { needsLoadingHelp: false, needsUnloadingHelp: false },
+    ...overrides,
+  };
+}
+
+function minCapacity(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    basis: "current_trip_available_space",
+    availableSpace: { length: 120, width: 80, height: 80 },
+    availablePayloadKg: { kind: "known", kg: 200 },
+    escortAccommodation: "available",
+    handlingOffer: { canHelpLoading: false, canHelpUnloading: false },
+    ...overrides,
+  };
+}
+
 function providerDeliverRequest(overrides: Record<string, unknown> = {}) {
   return {
     version: 1,
     applicantRole: "demand",
     targetPostType: "provider",
     targetCategory: "deliver",
-    escortSeats: 1,
-    cargo: { small: 0, medium: 0, large: 0, xlarge: 0 },
+    cargoRequirement: minRequirement(),
+    ...overrides,
+  };
+}
+
+function demandDeliverOffer(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    applicantRole: "provider",
+    targetPostType: "demand",
+    targetCategory: "deliver",
+    transportMode: "van",
+    cargoCapacity: minCapacity(),
     ...overrides,
   };
 }
@@ -163,8 +201,18 @@ function providerDeliverRequest(overrides: Record<string, unknown> = {}) {
   );
   assert.equal(
     parseApplicationPayloadV1(
+      providerTravelRequest({
+        luggage: { small: -1, medium: 0, large: 0, xlarge: 0 },
+      }),
+    ).ok,
+    false,
+  );
+  assert.equal(
+    parseApplicationPayloadV1(
       providerDeliverRequest({
-        cargo: { small: -1, medium: 0, large: 0, xlarge: 0 },
+        cargoRequirement: minRequirement({
+          requiredSpace: { length: -1, width: 50, height: 40 },
+        }),
       }),
     ).ok,
     false,
@@ -182,13 +230,22 @@ function providerDeliverRequest(overrides: Record<string, unknown> = {}) {
   assert.equal(parseApplicationPayloadV1(providerTravelRequest({ passengerCount: 5 })).ok, false);
 }
 
-// TEST K deliver Demand application escortSeats/cargo legal/illegal bounds
+// TEST K deliver Demand application uses CargoRequirementV1, not four-tier counts
 {
+  const parsed = parseApplicationPayloadV1(providerDeliverRequest());
+  assert.equal(parsed.ok, true);
+  if (parsed.ok && parsed.value.targetCategory === "deliver") {
+    assert.equal(parsed.value.applicantRole, "demand");
+    assert.equal("cargoRequirement" in parsed.value, true);
+    assert.equal("cargo" in parsed.value, false);
+    assert.equal("escortSeats" in parsed.value, false);
+    assert.equal(isParsedCargoRequirementV1(parsed.value.cargoRequirement), true);
+    assert.equal(parsed.value.cargoRequirement.escortPassengerCount, 0);
+  }
   assert.equal(
     parseApplicationPayloadV1(
       providerDeliverRequest({
-        escortSeats: 0,
-        cargo: { small: 1, medium: 0, large: 0, xlarge: 0 },
+        cargoRequirement: minRequirement({ escortPassengerCount: 1 }),
       }),
     ).ok,
     true,
@@ -196,20 +253,85 @@ function providerDeliverRequest(overrides: Record<string, unknown> = {}) {
   assert.equal(
     parseApplicationPayloadV1(
       providerDeliverRequest({
-        escortSeats: 0,
-        cargo: { small: 0, medium: 0, large: 0, xlarge: 0 },
+        cargoRequirement: minRequirement({ escortPassengerCount: 2 }),
       }),
     ).ok,
     false,
   );
   assert.equal(
-    parseApplicationPayloadV1(providerDeliverRequest({ escortSeats: 5 })).ok,
+    parseApplicationPayloadV1(
+      providerDeliverRequest({
+        cargoRequirement: minRequirement({
+          handlingRequest: { needsLoadingHelp: 1, needsUnloadingHelp: false },
+        }),
+      }),
+    ).ok,
     false,
   );
   assert.equal(
-    parseApplicationPayloadV1(providerDeliverRequest({ escortSeats: 1.2 })).ok,
+    parseApplicationPayloadV1({
+      version: 1,
+      applicantRole: "demand",
+      targetPostType: "provider",
+      targetCategory: "deliver",
+      escortSeats: 1,
+      cargo: { small: 1, medium: 0, large: 0, xlarge: 0 },
+    }).ok,
     false,
   );
+}
+
+{
+  const parsed = parseApplicationPayloadV1(demandDeliverOffer());
+  assert.equal(parsed.ok, true);
+  if (parsed.ok && parsed.value.targetCategory === "deliver") {
+    assert.equal(parsed.value.applicantRole, "provider");
+    assert.equal(parsed.value.transportMode, "van");
+    assert.equal("cargoCapacity" in parsed.value, true);
+    assert.equal("availableCargo" in parsed.value, false);
+    assert.equal("availablePassengerSeats" in parsed.value, false);
+    assert.equal(isParsedCargoCapacityV1(parsed.value.cargoCapacity), true);
+    assert.equal(parsed.value.cargoCapacity.basis, "current_trip_available_space");
+  }
+  assert.equal(
+    parseApplicationPayloadV1({
+      version: 1,
+      applicantRole: "provider",
+      targetPostType: "demand",
+      targetCategory: "deliver",
+      transportMode: "van",
+      availableCargo: { small: 1, medium: 0, large: 0, xlarge: 0 },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    parseApplicationPayloadV1(
+      demandDeliverOffer({
+        cargoCapacity: minCapacity({
+          handlingOffer: { canHelpLoading: true, canHelpUnloading: true },
+        }),
+      }),
+    ).ok,
+    true,
+  );
+  assert.equal(
+    parseApplicationPayloadV1(
+      demandDeliverOffer({
+        cargoCapacity: minCapacity({
+          handlingOffer: { canHelpLoading: "true", canHelpUnloading: false },
+        }),
+      }),
+    ).ok,
+    false,
+  );
+  const nestedFee = parseApplicationPayloadV1(
+    demandDeliverOffer({
+      cargoCapacity: minCapacity({
+        compensation: { type: "negotiable" },
+      }),
+    }),
+  );
+  assert.equal(nestedFee.ok, false);
 }
 
 // TEST L Provider offer transportMode required and only existing enum
@@ -321,5 +443,16 @@ function providerDeliverRequest(overrides: Record<string, unknown> = {}) {
 assert.ok(FORBIDDEN_PAYLOAD_KEYS.includes("counterpart_post_id"));
 assert.ok(FORBIDDEN_PAYLOAD_KEYS.includes("demand_post_id"));
 assert.ok(FORBIDDEN_PAYLOAD_KEYS.includes("provider_post_id"));
+assert.ok(FORBIDDEN_PAYLOAD_KEYS.includes("compensation"));
+assert.ok(FORBIDDEN_PAYLOAD_KEYS.includes("amountMinor"));
+
+{
+  const noPost = parseApplicationPayloadV1(demandDeliverOffer());
+  assert.equal(noPost.ok, true);
+  if (noPost.ok) {
+    assert.equal("applicant_post_id" in noPost.value, false);
+    assert.equal("counterpart_post_id" in noPost.value, false);
+  }
+}
 
 console.log("applicationPayload.test.ts: ok");

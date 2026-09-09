@@ -491,23 +491,27 @@ function assertNotConflictFromHandling(
 
 // TEST R — handling mismatch is not wired to Fraud / hard deny / filter / rank
 {
-  const cargoHits: string[] = [];
+  const allowedCargoImporters = new Set([
+    "src/lib/matching/applicationPayload.ts",
+    "src/lib/matching/applicationPayload.test.ts",
+    "src/lib/matching/matchRequestForm.ts",
+    "src/components/matching/MatchRequestSheet.tsx",
+    "src/components/matching/MatchRequestSheet.test.ts",
+  ]);
   const productionHits: string[] = [];
   for (const file of walkTs(join(repoRoot, "src"))) {
     const rel = relative(repoRoot, file).replaceAll("\\", "/");
     const src = readFileSync(file, "utf8");
-    if (rel.startsWith("src/lib/cargo/")) {
-      if (rel.endsWith(".test.ts")) continue;
-      cargoHits.push(rel);
-      continue;
+    if (rel.startsWith("src/lib/cargo/")) continue;
+    if (/from\s+["']@\/lib\/cargo\//.test(src) && !allowedCargoImporters.has(rel)) {
+      productionHits.push(`import:${rel}`);
     }
-    if (/from\s+["']@\/lib\/cargo\//.test(src)) productionHits.push(rel);
     if (
       /loading_help_unavailable|unloading_help_unavailable|handling_fee_negotiation_required/.test(
         src,
       )
     ) {
-      productionHits.push(rel);
+      productionHits.push(`reason:${rel}`);
     }
   }
   assert.deepEqual(productionHits, []);

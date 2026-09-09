@@ -1,17 +1,32 @@
 /**
- * PHASE 6.7B — versioned match-request application payload (V1).
+ * PHASE 6.7B.1B — versioned match-request application payload (V1).
  *
  * Client validator is UX + shared contract only. It MUST NOT be treated as
  * authorization or as a source of truth for the target post.
+ * Applicant does not need to own a post. No counterpart_post_id.
+ *
+ * Deliver applications use Cargo V2 aggregate space:
+ * - Provider → Demand deliver: cargoCapacity (this-trip remaining space)
+ * - Demand → Provider deliver: cargoRequirement (overall required space)
+ * Travel still uses four-tier luggage counts. Handling flags are advisory.
+ * This module does not write match_requests, match_contracts, or
+ * agreement_snapshot.
  *
  * PHASE 6.7C server MUST:
  * - Re-run this same strict validator on the request body
+ * - Re-parse cargoCapacity / cargoRequirement with the Cargo V2 parsers
  * - Re-fetch from DB by target_post_id: post row, category, owner, current status
  * - Derive applicantRole / targetPostType from the authenticated user + DB post
  * - Never trust browser-provided targetPostType, targetCategory, recipient, or
  *   applicant role
  */
 
+import {
+  parseCargoCapacityV1,
+  parseCargoRequirementV1,
+  type ParsedCargoCapacityV1,
+  type ParsedCargoRequirementV1,
+} from "@/lib/cargo/cargoContract";
 import {
   ITEM_UNITS,
   POST_CATEGORIES,
@@ -65,8 +80,7 @@ export type ProviderOfferTravelV1 = ProviderOfferBase & {
 
 export type ProviderOfferDeliverV1 = ProviderOfferBase & {
   targetCategory: "deliver";
-  availableCargo: CargoCountsV1;
-  availablePassengerSeats?: number;
+  cargoCapacity: ParsedCargoCapacityV1;
 };
 
 export type ProviderOfferLocalV1 = ProviderOfferBase & {
@@ -86,8 +100,7 @@ export type DemandApplyTravelV1 = DemandApplyBase & {
 
 export type DemandApplyDeliverV1 = DemandApplyBase & {
   targetCategory: "deliver";
-  escortSeats: number;
-  cargo: CargoCountsV1;
+  cargoRequirement: ParsedCargoRequirementV1;
 };
 
 export type DemandApplyBuyV1 = DemandApplyBase & {
@@ -160,6 +173,10 @@ export const FORBIDDEN_PAYLOAD_KEYS = [
   "bump_fee",
   "bumpFee",
   "estimated_item_cost",
+  "compensation",
+  "amountMinor",
+  "currency",
+  "voluntary_unpaid",
   "counterpart_post_id",
   "demand_post_id",
   "provider_post_id",
@@ -194,8 +211,7 @@ const ALLOWED_BY_VARIANT: Record<string, ReadonlySet<string>> = {
   "provider:demand:deliver": new Set([
     ...ENVELOPE_KEYS,
     "transportMode",
-    "availableCargo",
-    "availablePassengerSeats",
+    "cargoCapacity",
   ]),
   "provider:demand:buy": new Set([...ENVELOPE_KEYS, "transportMode"]),
   "provider:demand:onsite": new Set([...ENVELOPE_KEYS, "transportMode"]),
@@ -207,8 +223,7 @@ const ALLOWED_BY_VARIANT: Record<string, ReadonlySet<string>> = {
   ]),
   "demand:provider:deliver": new Set([
     ...ENVELOPE_KEYS,
-    "escortSeats",
-    "cargo",
+    "cargoRequirement",
   ]),
   "demand:provider:buy": new Set([
     ...ENVELOPE_KEYS,
@@ -308,10 +323,6 @@ function isPurchasePriceType(value: unknown): value is PurchasePriceType {
     typeof value === "string" &&
     (PURCHASE_PRICE_TYPES as readonly string[]).includes(value)
   );
-}
-
-function cargoTotal(counts: CargoCountsV1): number {
-  return counts.small + counts.medium + counts.large + counts.xlarge;
 }
 
 function parseCargoCounts(value: unknown): CargoCountsV1 | null {
@@ -436,17 +447,8 @@ export function parseApplicationPayloadV1(
     }
 
     if (rec.targetCategory === "deliver") {
-      const availableCargo = parseCargoCounts(rec.availableCargo);
-      if (!availableCargo) return fail("error.match_request_cargo_required");
-      let availablePassengerSeats: number | undefined;
-      if (rec.availablePassengerSeats !== undefined) {
-        const seats = parseSeatCount(
-          rec.availablePassengerSeats,
-          MATCH_REQUEST_DELIVER_ESCORT_MIN,
-        );
-        if (seats === null) return fail("error.match_request_passenger_count_bounds");
-        availablePassengerSeats = seats;
-      }
+      const cargoCapacity = parseCargoCapacityV1(rec.cargoCapacity);
+      if (!cargoCapacity.ok) return fail(cargoCapacity.errorKey);
       return {
         ok: true,
         value: omitUndefined({
@@ -455,8 +457,7 @@ export function parseApplicationPayloadV1(
           targetPostType: "demand",
           targetCategory: "deliver",
           transportMode: rec.transportMode,
-          availableCargo,
-          availablePassengerSeats,
+          cargoCapacity: cargoCapacity.value,
           message,
         }),
       };
@@ -504,18 +505,8 @@ export function parseApplicationPayloadV1(
   }
 
   if (rec.targetCategory === "deliver") {
-    const escortSeats = parseSeatCount(
-      rec.escortSeats,
-      MATCH_REQUEST_DELIVER_ESCORT_MIN,
-    );
-    if (escortSeats === null) {
-      return fail("error.match_request_passenger_count_bounds");
-    }
-    const cargo = parseCargoCounts(rec.cargo);
-    if (!cargo) return fail("error.match_request_cargo_required");
-    if (escortSeats + cargoTotal(cargo) <= 0) {
-      return fail("error.match_request_need_demand_quantity");
-    }
+    const cargoRequirement = parseCargoRequirementV1(rec.cargoRequirement);
+    if (!cargoRequirement.ok) return fail(cargoRequirement.errorKey);
     return {
       ok: true,
       value: omitUndefined({
@@ -523,8 +514,7 @@ export function parseApplicationPayloadV1(
         applicantRole: "demand",
         targetPostType: "provider",
         targetCategory: "deliver",
-        escortSeats,
-        cargo,
+        cargoRequirement: cargoRequirement.value,
         message,
       }),
     };

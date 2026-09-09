@@ -1,12 +1,19 @@
 /**
- * PHASE 6.7B — pure match-request form state (no DOM).
+ * PHASE 6.7B.1B — pure match-request form state (no DOM).
  * MatchRequestSheet uses these functions so submit / draft / validation
  * can be unit-tested without a browser harness.
+ * Deliver uses Cargo V2 aggregate space; travel still uses four-tier counts.
+ * Handling flags are advisory. This module does not write match_requests
+ * or agreement_snapshot.
  */
 
 import {
+  parseCargoCapacityV1,
+  parseCargoRequirementV1,
+} from "@/lib/cargo/cargoContract";
+import type { CargoEscortAccommodation } from "@/lib/cargo/cargoPolicy";
+import {
   applicantRoleForTarget,
-  MATCH_REQUEST_DELIVER_ESCORT_MIN,
   MATCH_REQUEST_TRAVEL_SEATS_MIN,
   parseApplicationPayloadV1,
   parseFiniteNonNegInt,
@@ -39,8 +46,12 @@ export type MatchRequestField =
   | "transportMode"
   | "availablePassengerSeats"
   | "passengerCount"
-  | "escortSeats"
   | "cargo"
+  | "cargoSpace"
+  | "cargoWeight"
+  | "cargoEscort"
+  | "cargoHandling"
+  | "cargoNote"
   | "itemQuantity"
   | "itemUnit"
   | "itemCondition"
@@ -53,9 +64,20 @@ export type MatchRequestFormState = {
   transportMode: TransportMode | "";
   availablePassengerSeats: string;
   passengerCount: string;
-  escortSeats: string;
   cargo: CargoCountsV1;
   carryLuggage: boolean;
+  spaceLength: string;
+  spaceWidth: string;
+  spaceHeight: string;
+  weightKind: "known" | "unknown";
+  weightKg: string;
+  escortPassengerCount: "0" | "1";
+  escortAccommodation: CargoEscortAccommodation | "";
+  needsLoadingHelp: boolean;
+  needsUnloadingHelp: boolean;
+  canHelpLoading: boolean;
+  canHelpUnloading: boolean;
+  cargoNote: string;
   itemQuantity: string;
   itemUnit: ItemUnit;
   itemCondition: ItemCondition;
@@ -69,9 +91,16 @@ export type MatchRequestFormState = {
 export type MatchRequestFormAction =
   | { type: "RESET"; target: MatchRequestTargetPost }
   | { type: "SET_TRANSPORT_MODE"; value: TransportMode | "" }
-  | { type: "SET_SEAT_FIELD"; field: "availablePassengerSeats" | "passengerCount" | "escortSeats"; value: string }
+  | { type: "SET_SEAT_FIELD"; field: "availablePassengerSeats" | "passengerCount"; value: string }
   | { type: "SET_CARGO"; size: keyof CargoCountsV1; delta: 1 | -1 }
   | { type: "SET_CARRY_LUGGAGE"; value: boolean }
+  | { type: "SET_SPACE_FIELD"; field: "spaceLength" | "spaceWidth" | "spaceHeight"; value: string }
+  | { type: "SET_WEIGHT_KIND"; value: "known" | "unknown" }
+  | { type: "SET_WEIGHT_KG"; value: string }
+  | { type: "SET_ESCORT_PASSENGER_COUNT"; value: "0" | "1" }
+  | { type: "SET_ESCORT_ACCOMMODATION"; value: CargoEscortAccommodation | "" }
+  | { type: "SET_HANDLING_FLAG"; field: "needsLoadingHelp" | "needsUnloadingHelp" | "canHelpLoading" | "canHelpUnloading"; value: boolean }
+  | { type: "SET_CARGO_NOTE"; value: string }
   | { type: "SET_ITEM_QUANTITY"; value: string }
   | { type: "SET_ITEM_UNIT"; value: ItemUnit }
   | { type: "SET_ITEM_CONDITION"; value: ItemCondition }
@@ -88,9 +117,20 @@ export function createInitialMatchRequestForm(
     transportMode: "",
     availablePassengerSeats: String(MATCH_REQUEST_TRAVEL_SEATS_MIN),
     passengerCount: String(MATCH_REQUEST_TRAVEL_SEATS_MIN),
-    escortSeats: String(MATCH_REQUEST_DELIVER_ESCORT_MIN),
     cargo: { small: 0, medium: 0, large: 0, xlarge: 0 },
     carryLuggage: false,
+    spaceLength: "",
+    spaceWidth: "",
+    spaceHeight: "",
+    weightKind: "unknown",
+    weightKg: "",
+    escortPassengerCount: "0",
+    escortAccommodation: "",
+    needsLoadingHelp: false,
+    needsUnloadingHelp: false,
+    canHelpLoading: false,
+    canHelpUnloading: false,
+    cargoNote: "",
     itemQuantity: "1",
     itemUnit: "pcs",
     itemCondition: "new",
@@ -145,6 +185,48 @@ export function reduceMatchRequestForm(
         carryLuggage: action.value,
         cargo: action.value ? state.cargo : { small: 0, medium: 0, large: 0, xlarge: 0 },
         fieldErrors: clearError(state.fieldErrors, "cargo"),
+      };
+    case "SET_SPACE_FIELD":
+      return {
+        ...state,
+        [action.field]: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoSpace"),
+      };
+    case "SET_WEIGHT_KIND":
+      return {
+        ...state,
+        weightKind: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoWeight"),
+      };
+    case "SET_WEIGHT_KG":
+      return {
+        ...state,
+        weightKg: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoWeight"),
+      };
+    case "SET_ESCORT_PASSENGER_COUNT":
+      return {
+        ...state,
+        escortPassengerCount: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoEscort"),
+      };
+    case "SET_ESCORT_ACCOMMODATION":
+      return {
+        ...state,
+        escortAccommodation: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoEscort"),
+      };
+    case "SET_HANDLING_FLAG":
+      return {
+        ...state,
+        [action.field]: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoHandling"),
+      };
+    case "SET_CARGO_NOTE":
+      return {
+        ...state,
+        cargoNote: action.value,
+        fieldErrors: clearError(state.fieldErrors, "cargoNote"),
       };
     case "SET_ITEM_QUANTITY":
       return {
@@ -224,6 +306,81 @@ function optionalCargo(form: MatchRequestFormState): CargoCountsV1 | undefined {
   return { ...form.cargo };
 }
 
+function cargoFieldFromPath(field?: string): MatchRequestField {
+  if (!field) return "cargoSpace";
+  if (field.includes("weight") || field.includes("Weight") || field.includes("kg")) {
+    return "cargoWeight";
+  }
+  if (field.includes("escort") || field.includes("Escort")) return "cargoEscort";
+  if (field.includes("handling") || field.includes("Handling") || field.includes("Help")) {
+    return "cargoHandling";
+  }
+  if (field.endsWith(".note") || field.includes("note")) return "cargoNote";
+  return "cargoSpace";
+}
+
+function assembleWeight(form: MatchRequestFormState): unknown {
+  if (form.weightKind === "unknown") return { kind: "unknown" };
+  return { kind: "known", kg: parseFormNumberToken(form.weightKg) };
+}
+
+function assembleSpace(form: MatchRequestFormState) {
+  return {
+    length: parseFormIntegerToken(form.spaceLength),
+    width: parseFormIntegerToken(form.spaceWidth),
+    height: parseFormIntegerToken(form.spaceHeight),
+  };
+}
+
+function optionalCargoNote(form: MatchRequestFormState): string | undefined {
+  return form.cargoNote.trim() ? form.cargoNote : undefined;
+}
+
+/**
+ * Empty escort accommodation must fail parse, so the draft sent to the
+ * Cargo parser keeps the raw empty string rather than a silent default.
+ */
+function assembleCargoCapacityCandidate(form: MatchRequestFormState): unknown {
+  return {
+    version: 1,
+    basis: "current_trip_available_space",
+    availableSpace: assembleSpace(form),
+    availablePayloadKg: assembleWeight(form),
+    escortAccommodation: form.escortAccommodation,
+    handlingOffer: {
+      canHelpLoading: form.canHelpLoading,
+      canHelpUnloading: form.canHelpUnloading,
+    },
+    ...(optionalCargoNote(form) !== undefined ? { note: form.cargoNote } : {}),
+  };
+}
+
+function assembleCargoRequirementCandidate(form: MatchRequestFormState): unknown {
+  const escort =
+    form.escortPassengerCount === "0" || form.escortPassengerCount === "1"
+      ? Number(form.escortPassengerCount)
+      : form.escortPassengerCount;
+  return {
+    version: 1,
+    requiredSpace: assembleSpace(form),
+    approximateWeightKg: assembleWeight(form),
+    escortPassengerCount: escort,
+    handlingRequest: {
+      needsLoadingHelp: form.needsLoadingHelp,
+      needsUnloadingHelp: form.needsUnloadingHelp,
+    },
+    ...(optionalCargoNote(form) !== undefined ? { note: form.cargoNote } : {}),
+  };
+}
+
+export function showsHandlingFeeNegotiation(
+  form: MatchRequestFormState,
+  role: "provider" | "demand",
+): boolean {
+  if (role === "provider") return form.canHelpLoading || form.canHelpUnloading;
+  return form.needsLoadingHelp || form.needsUnloadingHelp;
+}
+
 export function collectFieldHints(
   form: MatchRequestFormState,
   target: MatchRequestTargetPost,
@@ -247,14 +404,9 @@ export function collectFieldHints(
       if (seats === null) errors.availablePassengerSeats = "error.match_request_passenger_count_bounds";
     }
     if (target.category === "deliver") {
-      if (form.availablePassengerSeats.trim() !== "") {
-        const seats = parseSeatCount(
-          parseFormIntegerToken(form.availablePassengerSeats),
-          MATCH_REQUEST_DELIVER_ESCORT_MIN,
-        );
-        if (seats === null) {
-          errors.availablePassengerSeats = "error.match_request_passenger_count_bounds";
-        }
+      const parsed = parseCargoCapacityV1(assembleCargoCapacityCandidate(form));
+      if (!parsed.ok) {
+        errors[cargoFieldFromPath(parsed.field)] = parsed.errorKey;
       }
     }
     return errors;
@@ -269,15 +421,9 @@ export function collectFieldHints(
   }
 
   if (target.category === "deliver") {
-    const escort = parseSeatCount(
-      parseFormIntegerToken(form.escortSeats),
-      MATCH_REQUEST_DELIVER_ESCORT_MIN,
-    );
-    if (escort === null) errors.escortSeats = "error.match_request_passenger_count_bounds";
-    const cargoTotal =
-      form.cargo.small + form.cargo.medium + form.cargo.large + form.cargo.xlarge;
-    if ((escort ?? 0) + cargoTotal <= 0) {
-      errors.cargo = "error.match_request_need_demand_quantity";
+    const parsed = parseCargoRequirementV1(assembleCargoRequirementCandidate(form));
+    if (!parsed.ok) {
+      errors[cargoFieldFromPath(parsed.field)] = parsed.errorKey;
     }
   }
 
@@ -336,23 +482,15 @@ function assembleTypedPayload(
       };
     }
     if (target.category === "deliver") {
-      let availablePassengerSeats: number | undefined;
-      if (form.availablePassengerSeats.trim() !== "") {
-        const seats = parseSeatCount(
-          parseFormIntegerToken(form.availablePassengerSeats),
-          MATCH_REQUEST_DELIVER_ESCORT_MIN,
-        );
-        if (seats === null) return null;
-        availablePassengerSeats = seats;
-      }
+      const cargoCapacity = parseCargoCapacityV1(assembleCargoCapacityCandidate(form));
+      if (!cargoCapacity.ok) return null;
       return {
         version: 1,
         applicantRole: "provider",
         targetPostType: "demand",
         targetCategory: "deliver",
         transportMode,
-        availableCargo: { ...form.cargo },
-        availablePassengerSeats,
+        cargoCapacity: cargoCapacity.value,
         message,
       };
     }
@@ -387,18 +525,16 @@ function assembleTypedPayload(
   }
 
   if (target.category === "deliver") {
-    const escortSeats = parseSeatCount(
-      parseFormIntegerToken(form.escortSeats),
-      MATCH_REQUEST_DELIVER_ESCORT_MIN,
+    const cargoRequirement = parseCargoRequirementV1(
+      assembleCargoRequirementCandidate(form),
     );
-    if (escortSeats === null) return null;
+    if (!cargoRequirement.ok) return null;
     return {
       version: 1,
       applicantRole: "demand",
       targetPostType: "provider",
       targetCategory: "deliver",
-      escortSeats,
-      cargo: { ...form.cargo },
+      cargoRequirement: cargoRequirement.value,
       message,
     };
   }

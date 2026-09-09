@@ -20,6 +20,7 @@ import {
   formAfterOpenChange,
   reduceMatchRequestForm,
   serverErrorAlert,
+  showsHandlingFeeNegotiation,
   type MatchRequestTargetPost,
 } from "@/lib/matching/matchRequestForm";
 
@@ -55,6 +56,80 @@ const demandTravel: MatchRequestTargetPost = {
   fee_amount: 12,
 };
 
+const demandDeliver: MatchRequestTargetPost = {
+  id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  post_type: "demand",
+  category: "deliver",
+  origin_address: "Belgrade",
+  destination_address: "Novi Sad",
+  departure_date: "2026-09-10",
+  departure_time_window: "14:00-14:30",
+  fee_amount: 20,
+};
+
+const providerDeliver: MatchRequestTargetPost = {
+  id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  post_type: "provider",
+  category: "deliver",
+  origin_address: "Belgrade",
+  destination_address: "Novi Sad",
+  departure_date: "2026-09-11",
+  departure_time_window: "09:00-09:15",
+  fee_amount: 18,
+};
+
+function fillCargoSpace(form: ReturnType<typeof createInitialMatchRequestForm>) {
+  let next = form;
+  next = reduceMatchRequestForm(next, {
+    type: "SET_SPACE_FIELD",
+    field: "spaceLength",
+    value: "120",
+  });
+  next = reduceMatchRequestForm(next, {
+    type: "SET_SPACE_FIELD",
+    field: "spaceWidth",
+    value: "80",
+  });
+  next = reduceMatchRequestForm(next, {
+    type: "SET_SPACE_FIELD",
+    field: "spaceHeight",
+    value: "80",
+  });
+  return next;
+}
+
+function validProviderDeliverForm() {
+  let form = createInitialMatchRequestForm(demandDeliver);
+  form = reduceMatchRequestForm(form, { type: "SET_TRANSPORT_MODE", value: "van" });
+  form = fillCargoSpace(form);
+  form = reduceMatchRequestForm(form, {
+    type: "SET_ESCORT_ACCOMMODATION",
+    value: "available",
+  });
+  form = reduceMatchRequestForm(form, {
+    type: "SET_HANDLING_FLAG",
+    field: "canHelpLoading",
+    value: true,
+  });
+  return form;
+}
+
+function validDemandDeliverForm() {
+  let form = createInitialMatchRequestForm(providerDeliver);
+  form = fillCargoSpace(form);
+  form = reduceMatchRequestForm(form, {
+    type: "SET_WEIGHT_KIND",
+    value: "known",
+  });
+  form = reduceMatchRequestForm(form, { type: "SET_WEIGHT_KG", value: "12.5" });
+  form = reduceMatchRequestForm(form, {
+    type: "SET_HANDLING_FLAG",
+    field: "needsUnloadingHelp",
+    value: true,
+  });
+  return form;
+}
+
 function validProviderOfferForm() {
   let form = createInitialMatchRequestForm(demandTravel);
   form = reduceMatchRequestForm(form, { type: "SET_TRANSPORT_MODE", value: "car" });
@@ -85,6 +160,47 @@ function validProviderOfferForm() {
     assert.equal("fieldErrors" in payload, false);
     assert.equal("fieldErrors" in (payload as object), false);
   }
+}
+
+{
+  const form = validProviderDeliverForm();
+  const result = attemptMatchRequestSubmit(form, demandDeliver, false);
+  assert.equal(result.kind, "submitted", JSON.stringify(result));
+  if (result.kind === "submitted") {
+    assert.equal(result.payload.applicantRole, "provider");
+    assert.equal(result.payload.targetCategory, "deliver");
+    assert.equal("cargoCapacity" in result.payload, true);
+    assert.equal("availableCargo" in result.payload, false);
+    assert.equal("applicant_post_id" in result.payload, false);
+    if (result.payload.targetCategory === "deliver" && result.payload.applicantRole === "provider") {
+      assert.equal(result.payload.cargoCapacity.handlingOffer.canHelpLoading, true);
+      assert.equal(result.payload.cargoCapacity.handlingOffer.canHelpUnloading, false);
+    }
+  }
+  assert.equal(showsHandlingFeeNegotiation(form, "provider"), true);
+}
+
+{
+  const form = validDemandDeliverForm();
+  const result = attemptMatchRequestSubmit(form, providerDeliver, false);
+  assert.equal(result.kind, "submitted", JSON.stringify(result));
+  if (result.kind === "submitted") {
+    assert.equal(result.payload.applicantRole, "demand");
+    assert.equal(result.payload.targetCategory, "deliver");
+    assert.equal("cargoRequirement" in result.payload, true);
+    assert.equal("escortSeats" in result.payload, false);
+    if (result.payload.targetCategory === "deliver" && result.payload.applicantRole === "demand") {
+      assert.equal(result.payload.cargoRequirement.handlingRequest.needsUnloadingHelp, true);
+      assert.equal(result.payload.cargoRequirement.approximateWeightKg.kind, "known");
+    }
+  }
+}
+
+{
+  const empty = createInitialMatchRequestForm(demandDeliver);
+  const result = attemptMatchRequestSubmit(empty, demandDeliver, false);
+  assert.equal(result.kind, "invalid");
+  assert.ok(collectFieldHints(empty, demandDeliver).cargoSpace);
 }
 
 // TEST Q invalid form does not call onSubmit
@@ -155,8 +271,21 @@ function validProviderOfferForm() {
   assert.ok(zh.includes("请求帮助"));
   assert.ok(en.includes("Request help"));
   assert.ok(sr.includes("Zatraži pomoć"));
-  assert.ok(zh.includes("提供帮助"));
-  assert.ok(zh.includes("发送申请"));
+  assert.ok(zh.includes("需要帮助方协助装货"));
+  assert.ok(en.includes("Need the helper to assist with loading"));
+  assert.ok(sr.includes("Treba mi pomoć pri utovaru"));
+  assert.ok(zh.includes("装卸协助费：面议"));
+  assert.ok(en.includes("Handling fee: to be agreed"));
+  assert.ok(sr.includes("Naknada za utovar/istovar: po dogovoru"));
+  assert.ok(sheetSrc.includes("CargoV2Block"));
+  assert.ok(sheetSrc.includes("needsLoadingHelp"));
+  assert.ok(sheetSrc.includes("canHelpLoading"));
+  assert.ok(sheetSrc.includes("handlingFeeNegotiable"));
+  assert.equal(sheetSrc.includes("availablePassengerSeatsOptional"), false);
+  assert.equal(sheetSrc.includes("SET_CARGO"), true);
+  assert.ok(payloadSrc.includes("cargoCapacity"));
+  assert.ok(payloadSrc.includes("cargoRequirement"));
+  assert.equal(payloadSrc.includes("availableCargo"), true);
 }
 
 // TEST V old confirm_match still frozen, old API still 409

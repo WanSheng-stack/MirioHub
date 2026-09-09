@@ -594,8 +594,6 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
     "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql",
     "supabase/migrations/20260907000001_security_boundary_hardening_v86.sql",
     "supabase/migrations/20260905000001_unify_stage1_post_persistence_v86.sql",
-    "src/lib/matching/applicationPayload.ts",
-    "src/components/matching/MatchRequestSheet.tsx",
     "src/lib/post-fee.ts",
   ]);
   assert.equal(changed, "", changed);
@@ -688,8 +686,6 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
 // TEST AS — freeze / matching files unchanged this round vs baseline
 {
   const matching = gitDiffNames(BASELINE, [
-    "src/lib/matching/applicationPayload.ts",
-    "src/components/matching/MatchRequestSheet.tsx",
     "src/lib/matching/legacyMatchingFreeze.ts",
   ]);
   assert.equal(matching, "", matching);

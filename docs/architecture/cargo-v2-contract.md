@@ -1,4 +1,4 @@
-# Cargo V2 contract (PHASE 6.7B.1A.2B.1)
+# Cargo V2 contract (PHASE 6.7B.1B)
 
 MirioHub V1 is a rideshare-style information match platform. It is **not** a
 professional logistics dispatcher, vehicle recommender, or 3D packing engine.
@@ -152,7 +152,17 @@ handling/transport fee amounts.
 
 Legacy `count_small/medium/large/xlarge` stay live luggage columns.
 
-## 9. This phase has no DB / UI / API
+## 9. Application payload wiring (unmounted)
 
-No migration, no application payload, no `MatchRequestSheet`, no hall
-button, no RPC. Real users still do not see a Cargo V2 form.
+PHASE 6.7B.1B wires Cargo V2 into `ApplicationPayloadV1` and the unmounted
+`MatchRequestSheet`:
+
+- Provider applying to a Demand deliver post sends `cargoCapacity`.
+- Demand applying to a Provider deliver post sends `cargoRequirement`.
+- The applicant does not need to own a post.
+- Travel still uses four-tier luggage counts.
+- The sheet is **not** mounted on PostCard or the homepage.
+- No match-request API, no `match_requests` / `match_contracts` writes, and
+  no `agreement_snapshot` write.
+
+Real users still do not see a Cargo V2 form until a later mount phase.

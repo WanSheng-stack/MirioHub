@@ -261,24 +261,47 @@ SELECT
   CASE WHEN def IS NULL THEN NULL ELSE def ~* '\ydestination_gps\y' END AS has_destination_gps
 FROM def;
 
--- C. spatial_ref_sys: PostGIS table, RLS on, FORCE off, SELECT-only for app roles
--- EXPECT: one row, extname=postgis, relrowsecurity=true, relforcerowsecurity=false
+-- C. spatial_ref_sys — OBSERVED LIVE STATE / SUPABASE SUPPORT REQUIRED
+-- Catalog only. Do not SELECT spatial_ref_sys data rows.
+-- Not a v92 EXPECT. Owner is supabase_admin; SQL Editor postgres cannot
+-- ENABLE RLS. external_postgis_remediation_required is true when the table
+-- exists, current_user is not owner, and RLS is off. Do not treat that
+-- live state as a v92 pass.
 SELECT
-  e.extname AS extension_name,
-  n.nspname AS table_schema,
-  c.relname AS table_name,
+  (c.oid IS NOT NULL) AS table_exists,
+  owner.rolname AS owner_name,
+  ext.extname AS extension_name,
   c.relrowsecurity AS rls_enabled,
-  c.relforcerowsecurity AS force_rls
+  current_user::text AS current_user_name,
+  (current_user::text = owner.rolname) AS current_user_is_owner,
+  pg_has_role(current_user, owner.oid, 'USAGE') AS current_role_can_use_owner_role,
+  (
+    c.oid IS NOT NULL
+    AND current_user::text IS DISTINCT FROM owner.rolname
+    AND c.relrowsecurity IS NOT TRUE
+  ) AS external_postgis_remediation_required
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
-JOIN pg_depend d ON d.objid = c.oid AND d.deptype = 'e'
-JOIN pg_extension e ON e.oid = d.refobjid
-WHERE c.oid = to_regclass('public.spatial_ref_sys')
-  AND e.extname = 'postgis';
+JOIN pg_roles owner ON owner.oid = c.relowner
+LEFT JOIN LATERAL (
+  SELECT e.extname
+  FROM pg_depend d
+  JOIN pg_extension e ON e.oid = d.refobjid
+  WHERE d.objid = c.oid
+    AND d.deptype = 'e'
+    AND e.extname = 'postgis'
+  ORDER BY e.oid
+  LIMIT 1
+) ext ON true
+WHERE c.oid = to_regclass('public.spatial_ref_sys');
+-- OBSERVED LIVE STATE / SUPABASE SUPPORT REQUIRED
+-- On 2026-09-09 production: owner_name=supabase_admin, rls_enabled=false,
+-- current_user_is_owner=false, current_role_can_use_owner_role=false,
+-- external_postgis_remediation_required=true
 
--- C2. Effective table privileges
--- Missing table or missing role → 0 rows (not a silent false matrix)
+-- C2. Observed live table privileges — not a v92 EXPECT
 SELECT
+  'OBSERVED LIVE STATE / SUPABASE SUPPORT REQUIRED'::text AS observation_label,
   r.rolname AS grantee,
   has_table_privilege(r.oid, c.oid, 'SELECT') AS can_select,
   has_table_privilege(r.oid, c.oid, 'INSERT') AS can_insert,
@@ -292,75 +315,6 @@ WHERE c.oid = to_regclass('public.spatial_ref_sys')
   AND n.nspname = 'public'
   AND r.rolname IN ('anon', 'authenticated', 'service_role')
 ORDER BY r.rolname;
--- EXPECT 3 rows: can_select true; insert/update/delete/truncate false
-
--- C3. PUBLIC direct table ACL (do not pass PUBLIC as a username)
-SELECT
-  CASE
-    WHEN to_regclass('public.spatial_ref_sys') IS NULL THEN NULL::boolean
-    ELSE COALESCE((
-      SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'SELECT')
-      FROM pg_class c
-      CROSS JOIN LATERAL aclexplode(
-        COALESCE(c.relacl, acldefault('r'::"char", c.relowner))
-      ) AS a
-      WHERE c.oid = to_regclass('public.spatial_ref_sys')
-    ), false)
-  END AS public_direct_select,
-  CASE
-    WHEN to_regclass('public.spatial_ref_sys') IS NULL THEN NULL::boolean
-    ELSE COALESCE((
-      SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'INSERT')
-      FROM pg_class c
-      CROSS JOIN LATERAL aclexplode(
-        COALESCE(c.relacl, acldefault('r'::"char", c.relowner))
-      ) AS a
-      WHERE c.oid = to_regclass('public.spatial_ref_sys')
-    ), false)
-  END AS public_direct_insert,
-  CASE
-    WHEN to_regclass('public.spatial_ref_sys') IS NULL THEN NULL::boolean
-    ELSE COALESCE((
-      SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'UPDATE')
-      FROM pg_class c
-      CROSS JOIN LATERAL aclexplode(
-        COALESCE(c.relacl, acldefault('r'::"char", c.relowner))
-      ) AS a
-      WHERE c.oid = to_regclass('public.spatial_ref_sys')
-    ), false)
-  END AS public_direct_update,
-  CASE
-    WHEN to_regclass('public.spatial_ref_sys') IS NULL THEN NULL::boolean
-    ELSE COALESCE((
-      SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'DELETE')
-      FROM pg_class c
-      CROSS JOIN LATERAL aclexplode(
-        COALESCE(c.relacl, acldefault('r'::"char", c.relowner))
-      ) AS a
-      WHERE c.oid = to_regclass('public.spatial_ref_sys')
-    ), false)
-  END AS public_direct_delete,
-  CASE
-    WHEN to_regclass('public.spatial_ref_sys') IS NULL THEN NULL::boolean
-    ELSE COALESCE((
-      SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'TRUNCATE')
-      FROM pg_class c
-      CROSS JOIN LATERAL aclexplode(
-        COALESCE(c.relacl, acldefault('r'::"char", c.relowner))
-      ) AS a
-      WHERE c.oid = to_regclass('public.spatial_ref_sys')
-    ), false)
-  END AS public_direct_truncate;
--- EXPECT all five false
-
--- C4. Policies on spatial_ref_sys — this phase SELECT only; no write policies
-SELECT
-  p.polname,
-  p.polcmd
-FROM pg_policy p
-WHERE p.polrelid = to_regclass('public.spatial_ref_sys')
-ORDER BY p.polname;
--- EXPECT: only spatial_ref_sys_read_reference_v92 with polcmd = 'r'
 
 -- D. public_posts_safe still exists as security_invoker=false with SELECT grants
 SELECT

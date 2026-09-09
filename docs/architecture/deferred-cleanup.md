@@ -158,7 +158,16 @@ must not modify it.
   `security_definer_view` and re-leaks contact fields to anon SELECT.
 
 `public.public_posts_safe` remains the hall public-read privacy boundary.
-PHASE 6.6A.1 does **not** set `security_invoker=true` on it. The expected
-remaining Security Advisor item after v92 is that view’s Security Definer
-flag. Replace it in a later dedicated phase; do not clear Advisor count
-by breaking anonymous hall reads.
+PHASE 6.6A.1 does **not** set `security_invoker=true` on it.
+
+After a successful v92 apply, Security Advisor is expected to still report
+**two** items:
+
+1. `public.public_posts_safe` — Security Definer View (later dedicated phase)
+2. `public.spatial_ref_sys` — RLS Disabled in Public (owned by
+   `supabase_admin`; SQL Editor `postgres` cannot ALTER it; escalated to
+   Supabase Support; intentionally outside v92)
+
+Do not claim that v92 leaves only one Advisor finding. Do not clear
+Advisor count by breaking anonymous hall reads or by SET ROLE / ALTER
+OWNER against PostGIS.

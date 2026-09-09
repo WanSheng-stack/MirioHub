@@ -1,5 +1,5 @@
 /**
- * PHASE 6.6A.1 / 6.6A.1A — Security Advisor immediate boundary (TEST A–R + 1A A–J).
+ * PHASE 6.6A.1 / 6.6A.1A / 6.6A.1B — Security Advisor immediate boundary.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/security/advisorImmediateBoundaryV92.test.ts
  */
 
@@ -25,7 +25,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 const PHASE_BASELINE = "de2b229d26626178a947ec23e257d477cef2c87f";
-const V92_ORIGINAL = "3d3f600fa6cbe42fa2019aad8658bcbf59bc556d";
+const V92_1A = "9f64834d36e71d5d6f2bb7080c480285b3d54d85";
 const MIGRATION_REL =
   "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql";
 const VERIFY_REL =
@@ -119,27 +119,6 @@ function transactionControls(sql: string): string[] {
   );
 }
 
-function stripCommentsAndTx(sql: string): string {
-  return sql
-    .split("\n")
-    .filter((line) => {
-      const t = line.trim();
-      if (!t) return false;
-      if (t.startsWith("--")) return false;
-      if (/^BEGIN\s*;$/i.test(t)) return false;
-      if (/^COMMIT\s*;$/i.test(t)) return false;
-      return true;
-    })
-    .join("\n");
-}
-
-function verifyWithoutB2(sql: string): string {
-  const b2 = sql.indexOf("-- B2.");
-  const b3 = sql.indexOf("-- B3.");
-  assert.ok(b2 >= 0 && b3 > b2, "verify B2/B3 markers");
-  return sql.slice(0, b2) + sql.slice(b3);
-}
-
 function gitShow(rev: string, path: string): string {
   return execFileSync("git", ["show", `${rev}:${path}`], {
     cwd: repoRoot,
@@ -167,6 +146,134 @@ function assertNoDbLeak(payload: unknown) {
 const rpcBody = extractRpcBody(migration);
 
 async function main() {
+// PHASE 6.6A.1B TEST A — main migration has no spatial_ref_sys DDL/DCL/policy
+{
+  const sqlOnly = nonCommentSqlLines(migration).join("\n");
+  assert.equal(/spatial_ref_sys/i.test(sqlOnly), false);
+  assert.equal(/ENABLE ROW LEVEL SECURITY/i.test(sqlOnly), false);
+  assert.equal(/\bCREATE POLICY\b/i.test(sqlOnly), false);
+  assert.equal(/\bDROP POLICY\b/i.test(sqlOnly), false);
+  assert.equal(/\bALTER TABLE\b/i.test(sqlOnly), false);
+}
+
+// PHASE 6.6A.1B TEST B — no SET ROLE supabase_admin
+{
+  assert.equal(/SET\s+ROLE\s+supabase_admin/i.test(migration), false);
+  assert.equal(/SET\s+ROLE\b/i.test(nonCommentSqlLines(migration).join("\n")), false);
+}
+
+// PHASE 6.6A.1B TEST C — no ALTER OWNER
+{
+  const sqlOnly = nonCommentSqlLines(migration).join("\n");
+  assert.equal(/\bALTER\s+OWNER\b/i.test(sqlOnly), false);
+  assert.equal(/OWNER\s+TO\b/i.test(sqlOnly), false);
+}
+
+// PHASE 6.6A.1B TEST D — no PostGIS DROP/ALTER EXTENSION
+{
+  assert.equal(/\bDROP\s+EXTENSION\b/i.test(migration), false);
+  assert.equal(/\bALTER\s+EXTENSION\b/i.test(migration), false);
+  assert.equal(/\bDROP\s+TABLE\b/i.test(nonCommentSqlLines(migration).join("\n")), false);
+}
+
+// PHASE 6.6A.1B TEST E — profile RPC semantics unchanged vs 9f64834
+{
+  const prior = gitShow(V92_1A, MIGRATION_REL);
+  assert.equal(extractRpcBody(migration), extractRpcBody(prior));
+  assert.ok(
+    /RETURNS TABLE\s*\(\s*id uuid,\s*full_name text\s*\)/i.test(migration),
+  );
+  assert.ok(rpcBody.includes("cardinality(p_ids) BETWEEN 1 AND 120"));
+  assert.ok(rpcBody.includes("po.status IN ('active', 'completed')"));
+  assert.ok(migration.includes("SECURITY DEFINER"));
+  assert.ok(migration.includes("STABLE"));
+  assert.ok(migration.includes("SET search_path = pg_catalog, public"));
+}
+
+// PHASE 6.6A.1B TEST F — profile_cards DROP still has no CASCADE
+{
+  const dropLine = nonCommentSqlLines(migration).find((line) =>
+    line.startsWith("DROP VIEW"),
+  );
+  assert.equal(dropLine, "DROP VIEW IF EXISTS public.profile_cards;");
+  assert.equal(/\bCASCADE\b/.test(nonCommentSqlLines(migration).join("\n")), false);
+}
+
+// PHASE 6.6A.1B TEST G — explicit BEGIN/COMMIT still wrap the profile fix
+{
+  const sqlOnly = nonCommentSqlLines(migration);
+  assert.equal(sqlOnly[0]?.toUpperCase(), "BEGIN;");
+  assert.equal(sqlOnly.at(-1)?.toUpperCase(), "COMMIT;");
+  const beginAt = sqlOnly.findIndex((line) => /^BEGIN\s*;$/i.test(line));
+  const createAt = sqlOnly.findIndex((line) =>
+    line.startsWith("CREATE OR REPLACE FUNCTION public.get_public_profile_cards_v92"),
+  );
+  const dropAt = sqlOnly.findIndex((line) =>
+    line.startsWith("DROP VIEW IF EXISTS public.profile_cards"),
+  );
+  const commitAt = sqlOnly.findIndex((line) => /^COMMIT\s*;$/i.test(line));
+  assert.ok(beginAt === 0 && createAt > beginAt && dropAt > createAt && commitAt > dropAt);
+}
+
+// PHASE 6.6A.1B TEST H — verify spatial_ref_sys is catalog-only
+{
+  const verifySqlNoComments = verifySql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  assert.equal(/FROM\s+public\.spatial_ref_sys\b/i.test(verifySqlNoComments), false);
+  assert.equal(/\bENABLE ROW LEVEL SECURITY\b/i.test(verifySqlNoComments), false);
+  assert.equal(/\bGRANT\b/i.test(verifySqlNoComments), false);
+  assert.equal(/\bREVOKE\b/i.test(verifySqlNoComments), false);
+  assert.ok(verifySql.includes("to_regclass('public.spatial_ref_sys')"));
+  assert.ok(verifySql.includes("pg_class"));
+}
+
+// PHASE 6.6A.1B TEST I — verify does not mark the unrepaired live state as PASS
+{
+  assert.ok(verifySql.includes("external_postgis_remediation_required"));
+  assert.ok(verifySql.includes("OBSERVED LIVE STATE / SUPABASE SUPPORT REQUIRED"));
+  assert.equal(/EXPECT:[\s\S]{0,80}relrowsecurity\s*=\s*true/i.test(verifySql), false);
+  assert.equal(/EXPECT[\s\S]{0,40}RLS=true/i.test(verifySql), false);
+  assert.equal(verifySql.includes("EXPECT 3 rows: can_select true"), false);
+  assert.equal(verifySql.includes("EXPECT all five false"), false);
+  assert.equal(
+    verifySql.includes("EXPECT: only spatial_ref_sys_read_reference_v92"),
+    false,
+  );
+  assert.ok(verifySql.includes("Do not treat") || verifySql.includes("not a v92"));
+}
+
+// PHASE 6.6A.1B TEST J — Advisor remaining items are two
+{
+  assert.ok(ledger.includes("public.public_posts_safe"));
+  assert.ok(ledger.includes("public.spatial_ref_sys"));
+  assert.ok(ledger.includes("RLS Disabled in Public") || ledger.includes("rls_disabled"));
+  assert.ok(ledger.includes("two"));
+  assert.ok(ledger.includes("Supabase Support"));
+  assert.ok(ledger.includes("Do not claim that v92 leaves only one Advisor finding"));
+}
+
+// PHASE 6.6A.1B TEST K — public_posts_safe unchanged
+{
+  assert.equal(gitDiff("src/lib/posts/publicPostSelect.ts"), "");
+  assert.equal(gitDiff(V86_REL), "");
+  assert.equal(migration.includes("CREATE VIEW public.public_posts_safe"), false);
+  assert.equal(migration.includes("ALTER VIEW public.public_posts_safe"), false);
+}
+
+// PHASE 6.6A.1B TEST L — v91 and earlier migrations unchanged
+{
+  assert.equal(gitDiff(V91_REL), "");
+  assert.equal(gitDiff(V91_VERIFY_REL), "");
+  assert.equal(gitDiff(V86_REL), "");
+}
+
+// PHASE 6.6A.1B TEST M — init.sql unchanged
+{
+  assert.equal(gitDiff("supabase/init.sql"), "");
+}
+
 // PHASE 6.6A.1A TEST A — first actual SQL transaction control is BEGIN
 {
   const controls = transactionControls(migration);
@@ -258,12 +365,15 @@ async function main() {
   assert.ok(b2.includes("return_signature_matches = true"));
 }
 
-// PHASE 6.6A.1A TEST J — remaining v92 SQL semantics unchanged vs 3d3f600
+// PHASE 6.6A.1A TEST J — RETURNS TABLE verify B2 still uses argument arrays
 {
-  const baselineMig = gitShow(V92_ORIGINAL, MIGRATION_REL);
-  const baselineVerify = gitShow(V92_ORIGINAL, VERIFY_REL);
-  assert.equal(stripCommentsAndTx(migration), stripCommentsAndTx(baselineMig));
-  assert.equal(verifyWithoutB2(verifySql), verifyWithoutB2(baselineVerify));
+  const b2 = verifySql.slice(
+    verifySql.indexOf("-- B2."),
+    verifySql.indexOf("-- B3."),
+  );
+  assert.ok(b2.includes("proallargtypes"));
+  assert.ok(b2.includes("WITH ORDINALITY"));
+  assert.equal(b2.includes("attrelid = p.prorettype"), false);
 }
 
 // TEST A — RPC returns only id / full_name
@@ -446,74 +556,7 @@ async function main() {
   assert.equal(/DROP\s+(VIEW|TABLE|FUNCTION|POLICY)[\s\S]{0,80}CASCADE/i.test(migration), false);
 }
 
-// TEST K — spatial_ref_sys RLS enabled, not FORCE
-{
-  assert.ok(
-    migration.includes("ALTER TABLE public.spatial_ref_sys\nENABLE ROW LEVEL SECURITY;") ||
-      migration.includes(
-        "ALTER TABLE public.spatial_ref_sys ENABLE ROW LEVEL SECURITY;",
-      ),
-  );
-  assert.equal(/\bFORCE ROW LEVEL SECURITY\b/i.test(migration), false);
-  assert.ok(verifySql.includes("relrowsecurity"));
-  assert.ok(verifySql.includes("relforcerowsecurity"));
-}
-
-// TEST L — anon / authenticated / service_role SELECT only, no direct writes
-{
-  assert.ok(
-    migration.includes("REVOKE ALL ON TABLE public.spatial_ref_sys FROM PUBLIC;"),
-  );
-  assert.ok(
-    migration.includes("REVOKE ALL ON TABLE public.spatial_ref_sys FROM anon;"),
-  );
-  assert.ok(
-    migration.includes(
-      "REVOKE ALL ON TABLE public.spatial_ref_sys FROM authenticated;",
-    ),
-  );
-  assert.ok(
-    migration.includes(
-      "REVOKE ALL ON TABLE public.spatial_ref_sys FROM service_role;",
-    ),
-  );
-  assert.ok(
-    migration.includes(
-      "GRANT SELECT ON TABLE public.spatial_ref_sys TO anon, authenticated, service_role;",
-    ),
-  );
-  assert.equal(/GRANT\s+(INSERT|UPDATE|DELETE|ALL)\b/i.test(
-    migration.slice(migration.indexOf("spatial_ref_sys")),
-  ), false);
-}
-
-// TEST M — only SELECT policy, no write policy
-{
-  assert.ok(
-    migration.includes("DROP POLICY IF EXISTS spatial_ref_sys_read_reference_v92"),
-  );
-  assert.ok(
-    /CREATE POLICY\s+spatial_ref_sys_read_reference_v92[\s\S]*FOR SELECT[\s\S]*TO anon, authenticated, service_role[\s\S]*USING \(true\)/.test(
-      migration,
-    ),
-  );
-  assert.equal(/CREATE POLICY[\s\S]*spatial_ref_sys[\s\S]*FOR INSERT/i.test(migration), false);
-  assert.equal(/CREATE POLICY[\s\S]*spatial_ref_sys[\s\S]*FOR UPDATE/i.test(migration), false);
-  assert.equal(/CREATE POLICY[\s\S]*spatial_ref_sys[\s\S]*FOR DELETE/i.test(migration), false);
-  assert.ok(verifySql.includes("polcmd"));
-}
-
-// TEST N — PostGIS extension / table not dropped, moved, or data-altered
-{
-  assert.equal(/\bDROP EXTENSION\b/i.test(migration), false);
-  assert.equal(/\bALTER EXTENSION\b/i.test(migration), false);
-  assert.equal(/\bDROP TABLE\b/i.test(migration), false);
-  assert.equal(/ALTER TABLE[\s\S]{0,40}SET SCHEMA/i.test(migration), false);
-  assert.equal(/\bDELETE FROM\b/i.test(migration), false);
-  assert.equal(/\bUPDATE\s+public\.spatial_ref_sys\b/i.test(migration), false);
-  assert.equal(/\bINSERT INTO\s+public\.spatial_ref_sys\b/i.test(migration), false);
-  assert.ok(verifySql.includes("extname = 'postgis'") || verifySql.includes("e.extname = 'postgis'"));
-}
+// TEST K–N (6.6A.1 spatial_ref_sys EXPECT) replaced by 6.6A.1B TEST A–D / H–I
 
 // TEST O — public_posts_safe completely unchanged vs baseline
 {

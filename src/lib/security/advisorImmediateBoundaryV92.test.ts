@@ -1,5 +1,5 @@
 /**
- * PHASE 6.6A.1 — Security Advisor immediate boundary (TEST A–R).
+ * PHASE 6.6A.1 / 6.6A.1A — Security Advisor immediate boundary (TEST A–R + 1A A–J).
  * Run: npx tsx --tsconfig tsconfig.json src/lib/security/advisorImmediateBoundaryV92.test.ts
  */
 
@@ -25,6 +25,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 const PHASE_BASELINE = "de2b229d26626178a947ec23e257d477cef2c87f";
+const V92_ORIGINAL = "3d3f600fa6cbe42fa2019aad8658bcbf59bc556d";
 const MIGRATION_REL =
   "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql";
 const VERIFY_REL =
@@ -105,6 +106,47 @@ function extractRpcBody(sql: string): string {
   return rest.slice(as + 5, end);
 }
 
+function nonCommentSqlLines(sql: string): string[] {
+  return sql
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("--"));
+}
+
+function transactionControls(sql: string): string[] {
+  return nonCommentSqlLines(sql).filter((line) =>
+    /^(BEGIN|COMMIT|ROLLBACK)\s*;$/i.test(line),
+  );
+}
+
+function stripCommentsAndTx(sql: string): string {
+  return sql
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      if (!t) return false;
+      if (t.startsWith("--")) return false;
+      if (/^BEGIN\s*;$/i.test(t)) return false;
+      if (/^COMMIT\s*;$/i.test(t)) return false;
+      return true;
+    })
+    .join("\n");
+}
+
+function verifyWithoutB2(sql: string): string {
+  const b2 = sql.indexOf("-- B2.");
+  const b3 = sql.indexOf("-- B3.");
+  assert.ok(b2 >= 0 && b3 > b2, "verify B2/B3 markers");
+  return sql.slice(0, b2) + sql.slice(b3);
+}
+
+function gitShow(rev: string, path: string): string {
+  return execFileSync("git", ["show", `${rev}:${path}`], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+}
+
 function assertNoDbLeak(payload: unknown) {
   const text = JSON.stringify(payload);
   for (const token of [
@@ -125,6 +167,105 @@ function assertNoDbLeak(payload: unknown) {
 const rpcBody = extractRpcBody(migration);
 
 async function main() {
+// PHASE 6.6A.1A TEST A — first actual SQL transaction control is BEGIN
+{
+  const controls = transactionControls(migration);
+  assert.equal(controls[0]?.toUpperCase(), "BEGIN;");
+  const firstSql = nonCommentSqlLines(migration)[0];
+  assert.equal(firstSql?.toUpperCase(), "BEGIN;");
+}
+
+// PHASE 6.6A.1A TEST B — last transaction control is COMMIT
+{
+  const controls = transactionControls(migration);
+  assert.equal(controls.at(-1)?.toUpperCase(), "COMMIT;");
+  const sqlLines = nonCommentSqlLines(migration);
+  assert.equal(sqlLines.at(-1)?.toUpperCase(), "COMMIT;");
+}
+
+// PHASE 6.6A.1A TEST C — BEGIN once, COMMIT once
+{
+  const controls = transactionControls(migration);
+  assert.deepEqual(
+    controls.map((line) => line.toUpperCase()),
+    ["BEGIN;", "COMMIT;"],
+  );
+}
+
+// PHASE 6.6A.1A TEST D — DROP VIEW profile_cards is before COMMIT
+{
+  const dropAt = migration.indexOf("DROP VIEW IF EXISTS public.profile_cards;");
+  const commitAt = migration.search(/^COMMIT\s*;/m);
+  assert.ok(dropAt >= 0, "missing DROP VIEW");
+  assert.ok(commitAt >= 0, "missing COMMIT");
+  assert.ok(dropAt < commitAt, "DROP VIEW must precede COMMIT");
+}
+
+// PHASE 6.6A.1A TEST E — no DROP ... CASCADE
+{
+  assert.equal(/DROP\s+\S+[\s\S]{0,80}\bCASCADE\b/i.test(migration), false);
+  assert.equal(/\bCASCADE\b/.test(
+    nonCommentSqlLines(migration).join("\n"),
+  ), false);
+}
+
+// PHASE 6.6A.1A TEST F — verify B2 uses proallargtypes/proargmodes/proargnames
+{
+  const b2 = verifySql.slice(
+    verifySql.indexOf("-- B2."),
+    verifySql.indexOf("-- B3."),
+  );
+  assert.ok(b2.includes("proallargtypes"));
+  assert.ok(b2.includes("proargmodes"));
+  assert.ok(b2.includes("proargnames"));
+  assert.ok(/WITH ORDINALITY/i.test(b2));
+}
+
+// PHASE 6.6A.1A TEST G — B2 no longer joins pg_attribute.attrelid = p.prorettype
+{
+  const b2 = verifySql.slice(
+    verifySql.indexOf("-- B2."),
+    verifySql.indexOf("-- B3."),
+  );
+  assert.equal(b2.includes("attrelid = p.prorettype"), false);
+  assert.equal(/attrelid\s*=\s*p\.prorettype/.test(b2), false);
+}
+
+// PHASE 6.6A.1A TEST H — input p_ids is not a return column
+{
+  const b2 = verifySql.slice(
+    verifySql.indexOf("-- B2."),
+    verifySql.indexOf("-- B3."),
+  );
+  assert.ok(b2.includes("u.argmode IN ('o', 'b', 't')"));
+  assert.equal(/column_name\s*=\s*'p_ids'/.test(b2), false);
+  assert.ok(b2.includes("IN params (p_ids) are excluded") || b2.includes("p_ids"));
+}
+
+// PHASE 6.6A.1A TEST I — expected return columns are id uuid, full_name text
+{
+  const b2 = verifySql.slice(
+    verifySql.indexOf("-- B2."),
+    verifySql.indexOf("-- B3."),
+  );
+  assert.ok(b2.includes("1, id, uuid"));
+  assert.ok(b2.includes("2, full_name, text"));
+  assert.ok(b2.includes("column_name = 'id'"));
+  assert.ok(b2.includes("type_name = 'uuid'"));
+  assert.ok(b2.includes("column_name = 'full_name'"));
+  assert.ok(b2.includes("type_name = 'text'"));
+  assert.ok(b2.includes("return_column_count = 2"));
+  assert.ok(b2.includes("return_signature_matches = true"));
+}
+
+// PHASE 6.6A.1A TEST J — remaining v92 SQL semantics unchanged vs 3d3f600
+{
+  const baselineMig = gitShow(V92_ORIGINAL, MIGRATION_REL);
+  const baselineVerify = gitShow(V92_ORIGINAL, VERIFY_REL);
+  assert.equal(stripCommentsAndTx(migration), stripCommentsAndTx(baselineMig));
+  assert.equal(verifyWithoutB2(verifySql), verifyWithoutB2(baselineVerify));
+}
+
 // TEST A — RPC returns only id / full_name
 {
   assert.ok(

@@ -135,21 +135,101 @@ CROSS JOIN public_acl pa;
 -- EXPECT proconfig contains search_path=pg_catalog, public
 -- EXPECT language_name = sql
 
--- B2. Return columns via the same exact OID as query B
--- EXPECT: id, full_name in attnum order; no other columns
+-- B2. RETURNS TABLE columns from exact function OID argument arrays
+-- Use pg_proc.proallargtypes / proargmodes / proargnames with WITH ORDINALITY.
+-- IN params (p_ids) are excluded; only OUT / INOUT / TABLE modes:
+--   'o' = OUT, 'b' = INOUT, 't' = TABLE
+-- Missing function, mismatched array lengths, or null metadata → 0 rows
+-- (not a forged two-column result). Do not execute the function.
+-- EXPECT exactly two rows:
+--   1, id, uuid
+--   2, full_name, text
 WITH exact AS (
   SELECT to_regprocedure(
     'public.get_public_profile_cards_v92(uuid[])'
   )::oid AS oid
+),
+fn AS (
+  SELECT p.oid, p.proallargtypes, p.proargmodes, p.proargnames
+  FROM exact e
+  JOIN pg_proc p ON p.oid = e.oid
+  WHERE e.oid IS NOT NULL
+),
+len_ok AS (
+  SELECT f.oid, f.proallargtypes, f.proargmodes, f.proargnames
+  FROM fn f
+  WHERE f.proallargtypes IS NOT NULL
+    AND f.proargmodes IS NOT NULL
+    AND f.proargnames IS NOT NULL
+    AND cardinality(f.proallargtypes) = cardinality(f.proargmodes)
+    AND cardinality(f.proargmodes) = cardinality(f.proargnames)
+),
+cols AS (
+  SELECT
+    row_number() OVER (ORDER BY u.ord)::integer AS ordinal_position,
+    u.argname AS column_name,
+    t.typname AS type_name
+  FROM len_ok f
+  CROSS JOIN LATERAL unnest(f.proallargtypes, f.proargmodes, f.proargnames)
+    WITH ORDINALITY AS u(argtype, argmode, argname, ord)
+  JOIN pg_type t ON t.oid = u.argtype
+  WHERE u.argmode IN ('o', 'b', 't')
 )
-SELECT a.attname, a.attnum
-FROM exact e
-JOIN pg_proc p ON p.oid = e.oid
-JOIN pg_attribute a ON a.attrelid = p.prorettype
-WHERE e.oid IS NOT NULL
-  AND a.attnum > 0
-  AND NOT a.attisdropped
-ORDER BY a.attnum;
+SELECT ordinal_position, column_name, type_name
+FROM cols
+ORDER BY ordinal_position;
+
+-- B2b. Structured summary of B2 (same fail-closed metadata; no identity-arg compare)
+-- EXPECT: return_column_count = 2, return_signature_matches = true
+-- Missing / mismatched metadata → count 0 and matches false, not a fake pass.
+WITH exact AS (
+  SELECT to_regprocedure(
+    'public.get_public_profile_cards_v92(uuid[])'
+  )::oid AS oid
+),
+fn AS (
+  SELECT p.oid, p.proallargtypes, p.proargmodes, p.proargnames
+  FROM exact e
+  JOIN pg_proc p ON p.oid = e.oid
+  WHERE e.oid IS NOT NULL
+),
+len_ok AS (
+  SELECT f.oid, f.proallargtypes, f.proargmodes, f.proargnames
+  FROM fn f
+  WHERE f.proallargtypes IS NOT NULL
+    AND f.proargmodes IS NOT NULL
+    AND f.proargnames IS NOT NULL
+    AND cardinality(f.proallargtypes) = cardinality(f.proargmodes)
+    AND cardinality(f.proargmodes) = cardinality(f.proargnames)
+),
+cols AS (
+  SELECT
+    row_number() OVER (ORDER BY u.ord)::integer AS ordinal_position,
+    u.argname AS column_name,
+    t.typname AS type_name
+  FROM len_ok f
+  CROSS JOIN LATERAL unnest(f.proallargtypes, f.proargmodes, f.proargnames)
+    WITH ORDINALITY AS u(argtype, argmode, argname, ord)
+  JOIN pg_type t ON t.oid = u.argtype
+  WHERE u.argmode IN ('o', 'b', 't')
+)
+SELECT
+  (SELECT count(*)::integer FROM cols) AS return_column_count,
+  (
+    (SELECT count(*) FROM cols) = 2
+    AND EXISTS (
+      SELECT 1 FROM cols
+      WHERE ordinal_position = 1
+        AND column_name = 'id'
+        AND type_name = 'uuid'
+    )
+    AND EXISTS (
+      SELECT 1 FROM cols
+      WHERE ordinal_position = 2
+        AND column_name = 'full_name'
+        AND type_name = 'text'
+    )
+  ) AS return_signature_matches;
 
 -- B3. Forbidden tokens in the function body (catalog SQL only; no data rows)
 -- EXPECT: all false when the exact function exists; NULL if missing

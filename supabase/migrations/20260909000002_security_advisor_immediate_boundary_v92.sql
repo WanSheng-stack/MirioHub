@@ -1,13 +1,18 @@
--- PHASE 6.6A.1 — Security Advisor immediate boundary (V92)
+-- PHASE 6.6A.1 / 6.6A.1A — Security Advisor immediate boundary (V92)
 -- New migration only. Does not alter deployed 20260909000001 (v91) or earlier.
 -- Does NOT rewrite public.public_posts_safe.
 -- Does NOT DROP / ALTER / MOVE PostGIS. Does NOT rewrite spatial_ref_sys rows.
+-- Intended for manual SQL Editor apply: copy this entire file and run it.
+-- Explicit BEGIN/COMMIT provides atomicity. Do not rely on the Supabase CLI
+-- or migration runner to open a transaction.
+-- If a statement fails, execute ROLLBACK. SQL Editor leaves the current
+-- transaction aborted until ROLLBACK or disconnect; do not continue with
+-- other writes in that session.
 -- MANUAL APPLY REQUIRED after the app that calls get_public_profile_cards_v92
 -- is deployed. Do not auto-apply. Do not keep the leaky profile_cards view
 -- as a long-term fallback.
---
--- This file is intended to run as one transaction (Supabase migration default).
--- Do not add nested COMMIT.
+
+BEGIN;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 1. Controlled public display-name RPC (id + full_name only)
@@ -68,3 +73,5 @@ CREATE POLICY spatial_ref_sys_read_reference_v92
 -- ═══════════════════════════════════════════════════════════════════════════
 
 DROP VIEW IF EXISTS public.profile_cards;
+
+COMMIT;

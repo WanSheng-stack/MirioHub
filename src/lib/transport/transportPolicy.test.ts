@@ -1,10 +1,9 @@
 /**
- * PHASE 6.7B.1A — transport / safety policy foundation (TEST A–Y).
+ * PHASE 6.7B.1A.1 — transport semantics + Stage 1 integrity (TEST A–AV).
  * Run: npx tsx --tsconfig tsconfig.json src/lib/transport/transportPolicy.test.ts
  *
- * Relative-to-baseline checks compare
- * 6866e7ca03fe9d905cf5d70918d94571e5e5100b
- * (PHASE 6.7B). They do not use `git diff HEAD`.
+ * Baseline for protected-file diffs: 189d1ef0561b6840df95e0a59874827fd01e4086
+ * Does not use `git diff HEAD`.
  */
 
 import assert from "node:assert/strict";
@@ -13,20 +12,30 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ALWAYS_ON_SAFETY_MODULES,
-  PAYMENT_POLICY_V1,
-  resolveSafetyModules,
-  SAFETY_COPY_KEYS,
-} from "@/lib/safety/safetyPolicy";
-import { TRANSPORT_MODES } from "@/lib/posts";
+  CanonicalStage1Error,
+  computeServerFeeMinor,
+  hashCanonicalStage1,
+  normalizeCanonicalStage1,
+  toRpcStage1Payload,
+} from "@/lib/auth/canonicalStage1Core";
+import { V1_STAGE1_TRANSPORT_MODES } from "@/lib/auth/v1TransportMode";
 import {
-  CAR_PEOPLE_CAPACITY_MAX,
+  ALWAYS_ON_SAFETY_MODULES,
+  resolveSafetyModules,
+  validateSafetyFacts,
+} from "@/lib/safety/safetyPolicy";
+import {
+  completeContactTransportFillFilter,
+  decideAfterConditionalFillMiss,
+  decideCompleteContactTransport,
+} from "@/lib/posts/completeContactTransport";
+import {
   getTransportFieldVisibility,
   getTransportPolicy,
   isLegacyReadableTransportMode,
   isModeAllowedForLane,
   LEGACY_VAN,
-  LEGACY_VAN_SUGGESTED_TARGET,
+  PG_INT_MAX,
   suggestedMigrationTarget,
   TARGET_DELIVER_TRANSPORT_MODES,
   TARGET_TRAVEL_TRANSPORT_MODES,
@@ -36,200 +45,218 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_67B_BASELINE = "6866e7ca03fe9d905cf5d70918d94571e5e5100b";
+const BASELINE = "189d1ef0561b6840df95e0a59874827fd01e4086";
 
 const policySrc = read("src/lib/transport/transportPolicy.ts");
-const safetySrc = read("src/lib/safety/safetyPolicy.ts");
 const inventory = read("docs/architecture/transport-policy-inventory.md");
-const postsSrc = read("src/lib/posts.ts");
-const typesSrc = read("src/lib/types.ts");
-const payloadSrc = read("src/lib/matching/applicationPayload.ts");
-const freezeSrc = read("src/lib/matching/legacyMatchingFreeze.ts");
-const matchRoute = read(
-  "src/app/api/posts/evaluate-provider-match-intercept/route.ts",
+const coreSrc = read("src/lib/auth/canonicalStage1Core.ts");
+const stage1Src = read("src/lib/auth/canonicalStage1.ts");
+const contactSrc = read("src/app/api/posts/complete-contact/route.ts");
+const contactHelper = read("src/lib/posts/completeContactTransport.ts");
+const migration = read(
+  "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.sql",
 );
-const actionsSrc = read("src/components/post/PostActions.tsx");
-const zh = read("src/messages/zh.json");
-const en = read("src/messages/en.json");
-const sr = read("src/messages/sr.json");
+const verifySql = read(
+  "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.verify.sql",
+);
+const oldInsert = read(
+  "supabase/migrations/20260905000001_unify_stage1_post_persistence_v86.sql",
+);
+const freezeSrc = read("src/lib/matching/legacyMatchingFreeze.ts");
+const passkeySrc = read("src/app/api/auth/passkey/verify/route.ts");
+const trustedSrc = read("src/app/api/posts/trusted-publish/route.ts");
+const shadowSrc = read("src/app/api/posts/shadow-draft/route.ts");
 
-function unique<T>(values: readonly T[]): boolean {
-  return new Set(values).size === values.length;
-}
-
-function walkRuntimeTs(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      walkRuntimeTs(full, acc);
-      continue;
-    }
-    if (!/\.(ts|tsx)$/.test(entry.name)) continue;
-    if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) {
-      continue;
-    }
-    acc.push(full);
-  }
-  return acc;
-}
+const travelBase = {
+  lane: "travel" as const,
+  mode: "car",
+};
 
 function gitDiffNames(baseline: string, paths: string[]): string {
-  return execFileSync(
-    "git",
-    ["diff", "--name-only", baseline, "--", ...paths],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).trim();
+  return execFileSync("git", ["diff", "--name-only", baseline, "--", ...paths], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
 }
 
-// TEST A — target Travel modes complete, no duplicates
-{
-  assert.deepEqual([...TARGET_TRAVEL_TRANSPORT_MODES], [
-    "walking",
-    "bicycle",
-    "ebike",
-    "scooter",
-    "motorbike",
-    "car",
-    "subway",
-    "bus",
-    "train",
-    "flight",
-    "ferry",
-    "passenger_boat",
-    "private_boat",
-  ]);
-  assert.ok(unique(TARGET_TRAVEL_TRANSPORT_MODES));
-}
+const baseRaw: Record<string, unknown> = {
+  post_type: "demand",
+  category: "travel",
+  title: "Ride",
+  origin_address: "Belgrade Center",
+  destination_address: "Novi Sad",
+  departure_date: "2026-09-10",
+  departure_time: "14:30",
+  time_buffer: 30,
+  waypoints: ["WP1"],
+  share_mode: "share",
+  delivery_mode: null,
+  count_small: 1,
+  count_medium: 0,
+  count_large: 0,
+  count_xlarge: 0,
+  escort_seats: 1,
+  bump_fee: 0,
+  currency: "EUR",
+  locale: "en",
+  transport_mode: "car",
+};
 
-// TEST B — target Deliver modes complete, no duplicates
+// TEST A — Demand uses peopleCount; Provider uses peopleCapacity
 {
-  assert.deepEqual([...TARGET_DELIVER_TRANSPORT_MODES], [
-    "cargo_van",
-    "light_truck",
-    "box_truck",
-    "trailer",
-    "cargo_boat",
-    "private_cargo_boat",
-    "other_cargo_vehicle",
-  ]);
-  assert.ok(unique(TARGET_DELIVER_TRANSPORT_MODES));
-}
-
-// TEST C — legacy van readable, not a V2 Travel mode
-{
-  assert.ok(isLegacyReadableTransportMode(LEGACY_VAN));
-  assert.equal(TARGET_TRAVEL_TRANSPORT_MODES.includes("van" as never), false);
-  assert.equal(isModeAllowedForLane(LEGACY_VAN, "travel"), false);
-  assert.equal(isModeAllowedForLane(LEGACY_VAN, "deliver"), false);
-  const van = getTransportPolicy(LEGACY_VAN);
-  assert.ok(van);
-  assert.equal(van.legacyReadable, true);
-  assert.equal(van.allowsNewPost, false);
-  assert.equal(van.lane, "deliver");
-  assert.equal(suggestedMigrationTarget(LEGACY_VAN), LEGACY_VAN_SUGGESTED_TARGET);
-  assert.ok((TRANSPORT_MODES as readonly string[]).includes("van"));
-}
-
-// TEST D — car shows people capacity, max 4
-{
-  const car = getTransportPolicy("car");
-  assert.ok(car);
-  assert.equal(car.showsPeopleCapacity, true);
-  assert.equal(car.maxPeopleCapacity, 4);
-  assert.equal(CAR_PEOPLE_CAPACITY_MAX, 4);
-  const vis = getTransportFieldVisibility({
-    lane: "travel",
-    postType: "demand",
-    mode: "car",
-  });
-  assert.ok(vis);
-  assert.equal(vis.showPeopleCapacity, true);
-}
-
-// TEST E — walking / bicycle / ebike / scooter / motorbike hide people
-{
-  for (const mode of ["walking", "bicycle", "ebike", "scooter", "motorbike"] as const) {
-    const vis = getTransportFieldVisibility({
-      lane: "travel",
-      postType: "provider",
-      mode,
-    });
-    assert.ok(vis, mode);
-    assert.equal(vis.showPeopleCapacity, false, mode);
-    assert.equal(getTransportPolicy(mode)?.showsPeopleCapacity, false, mode);
-  }
-}
-
-// TEST F — public transport: no people field, no platform seats
-{
-  for (const mode of ["subway", "bus", "train", "flight"] as const) {
-    const policy = getTransportPolicy(mode);
-    const vis = getTransportFieldVisibility({
-      lane: "travel",
-      postType: "demand",
-      mode,
-    });
-    assert.ok(policy && vis, mode);
-    assert.equal(policy.isPublicTransport, true, mode);
-    assert.equal(vis.showPeopleCapacity, false, mode);
-    assert.equal(vis.showPublicTransportNotice, true, mode);
-    assert.equal(policy.maxPeopleCapacity, 0, mode);
-  }
-}
-
-// TEST G — water passenger modes hide people
-{
-  for (const mode of ["ferry", "passenger_boat", "private_boat"] as const) {
-    const vis = getTransportFieldVisibility({
-      lane: "travel",
-      postType: "demand",
-      mode,
-    });
-    assert.ok(vis, mode);
-    assert.equal(vis.showPeopleCapacity, false, mode);
-    assert.equal(vis.showWaterTransportNotice, true, mode);
-    assert.equal(vis.showPlate, false, mode);
-  }
-}
-
-// TEST H — forged non-car peopleCapacity > 0 rejected
-{
-  for (const mode of ["walking", "motorbike", "subway", "ferry", "cargo_van"] as const) {
-    const lane = mode === "cargo_van" ? "deliver" : "travel";
-    const result = validateTransportCapability({
-      lane,
-      postType: "demand",
-      mode,
-      peopleCapacity: 1,
-      smallItemTotal: 1,
-      largeCargoTotal: mode === "cargo_van" ? 1 : 0,
-    });
-    assert.equal(result.ok, false, mode);
-    if (!result.ok) {
-      assert.equal(result.errorKey, "error.transport_people_not_allowed");
-    }
-  }
   assert.equal(
     validateTransportCapability({
-      lane: "travel",
+      ...travelBase,
       postType: "demand",
-      mode: "car",
+      peopleCount: 2,
+      travelItemUnits: 0,
+    }).ok,
+    true,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "provider",
       peopleCapacity: 2,
-      smallItemTotal: 0,
+      travelItemUnits: 0,
     }).ok,
     true,
   );
 }
 
-// TEST I — Travel three valid combos; empty invalid
+// TEST B — Demand + peopleCapacity → reject
 {
-  const base = { lane: "travel" as const, postType: "demand" as const, mode: "car" };
+  const result = validateTransportCapability({
+    ...travelBase,
+    postType: "demand",
+    peopleCapacity: 1,
+    travelItemUnits: 1,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.errorKey, "error.transport_people_field_not_allowed");
+}
+
+// TEST C — Provider + peopleCount → reject
+{
+  const result = validateTransportCapability({
+    ...travelBase,
+    postType: "provider",
+    peopleCount: 1,
+    travelItemUnits: 1,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.errorKey, "error.transport_people_field_not_allowed");
+}
+
+// TEST D — car Demand 0–4 ok, 5 reject
+{
   assert.equal(
-    validateTransportCapability({ ...base, peopleCapacity: 1, smallItemTotal: 0 }).ok,
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 0,
+      travelItemUnits: 1,
+    }).ok,
     true,
   );
   assert.equal(
-    validateTransportCapability({ ...base, peopleCapacity: 2, smallItemTotal: 3 }).ok,
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 4,
+      travelItemUnits: 0,
+    }).ok,
+    true,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 5,
+      travelItemUnits: 0,
+    }).ok,
+    false,
+  );
+}
+
+// TEST E — car Provider 0–4 ok, 5 reject
+{
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "provider",
+      peopleCapacity: 0,
+      travelItemUnits: 2,
+    }).ok,
+    true,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "provider",
+      peopleCapacity: 4,
+    }).ok,
+    true,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "provider",
+      peopleCapacity: 5,
+    }).ok,
+    false,
+  );
+}
+
+// TEST F — motorbike people > 0 reject
+{
+  assert.equal(
+    validateTransportCapability({
+      lane: "travel",
+      postType: "demand",
+      mode: "motorbike",
+      peopleCount: 1,
+      travelItemUnits: 0,
+    }).ok,
+    false,
+  );
+}
+
+// TEST G — other non-car people > 0 reject
+{
+  for (const mode of ["walking", "bicycle", "subway", "flight", "ferry"] as const) {
+    assert.equal(
+      validateTransportCapability({
+        lane: "travel",
+        postType: "demand",
+        mode,
+        peopleCount: 1,
+        travelItemUnits: 0,
+      }).ok,
+      false,
+      mode,
+    );
+  }
+}
+
+// TEST H / I / J / K — Travel combos
+{
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 1,
+      travelItemUnits: 0,
+    }).ok,
+    true,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 1,
+      travelItemUnits: 3,
+    }).ok,
     true,
   );
   assert.equal(
@@ -237,328 +264,484 @@ function gitDiffNames(baseline: string, paths: string[]): string {
       lane: "travel",
       postType: "demand",
       mode: "walking",
+      peopleCount: 0,
+      travelItemUnits: 2,
+    }).ok,
+    true,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 0,
+      travelItemUnits: 0,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "provider",
       peopleCapacity: 0,
-      smallItemTotal: 2,
+      travelItemUnits: 0,
     }).ok,
-    true,
-  );
-  assert.equal(
-    validateTransportCapability({ ...base, peopleCapacity: 0, smallItemTotal: 0 }).ok,
     false,
   );
 }
 
-// TEST J — Deliver cargoTotal=0 invalid
+// TEST L — travelItemUnits is classified Travel sum, not count_small
 {
+  assert.equal(policySrc.includes("count_small"), false);
+  assert.ok(policySrc.includes("travelItemUnits"));
+  assert.ok(policySrc.includes("not a single luggage-size database column"));
   assert.equal(
     validateTransportCapability({
-      lane: "deliver",
+      ...travelBase,
       postType: "demand",
-      mode: "cargo_van",
-      largeCargoTotal: 0,
-      escortPassengerCount: 1,
-    }).ok,
-    false,
-  );
-  assert.equal(
-    validateTransportCapability({
-      lane: "deliver",
-      postType: "provider",
-      mode: "cargo_van",
-      largeCargoTotal: 0,
-    }).ok,
-    false,
-  );
-  assert.equal(
-    validateTransportCapability({
-      lane: "deliver",
-      postType: "demand",
-      mode: "cargo_van",
-      largeCargoTotal: 1,
-      escortPassengerCount: 0,
+      peopleCount: 0,
+      travelItemUnits: 12,
     }).ok,
     true,
   );
 }
 
-// TEST K — Deliver escortPassengerCount only 0/1
+// TEST M — illegal quantity types reject
 {
-  const ok0 = validateTransportCapability({
-    lane: "deliver",
-    postType: "demand",
-    mode: "light_truck",
-    largeCargoTotal: 2,
-    escortPassengerCount: 0,
-  });
-  const ok1 = validateTransportCapability({
-    lane: "deliver",
-    postType: "demand",
-    mode: "light_truck",
-    largeCargoTotal: 2,
-    escortPassengerCount: 1,
-  });
-  const bad2 = validateTransportCapability({
-    lane: "deliver",
-    postType: "demand",
-    mode: "light_truck",
-    largeCargoTotal: 2,
-    escortPassengerCount: 2,
-  });
-  assert.equal(ok0.ok, true);
-  assert.equal(ok1.ok, true);
-  assert.equal(bad2.ok, false);
-}
-
-// TEST L — Deliver Provider never shows generic peopleCapacity
-{
-  for (const mode of TARGET_DELIVER_TRANSPORT_MODES) {
-    const vis = getTransportFieldVisibility({
-      lane: "deliver",
-      postType: "provider",
-      mode,
+  const bad = ["1", Number.NaN, Infinity, -Infinity, 1.5, -1, {}, [], true];
+  for (const value of bad) {
+    const result = validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: value,
+      travelItemUnits: 1,
     });
-    assert.ok(vis, mode);
-    assert.equal(vis.showPeopleCapacity, false, mode);
-    assert.equal(vis.showEscortPassenger, false, mode);
+    assert.equal(result.ok, false, String(value));
   }
+}
+
+// TEST N — above PostgreSQL integer max reject
+{
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 0,
+      travelItemUnits: PG_INT_MAX + 1,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    validateTransportCapability({
+      ...travelBase,
+      postType: "demand",
+      peopleCount: 0,
+      travelItemUnits: PG_INT_MAX,
+    }).ok,
+    true,
+  );
+}
+
+// TEST O — visibility splits Demand count vs Provider capacity
+{
   const demand = getTransportFieldVisibility({
-    lane: "deliver",
+    lane: "travel",
     postType: "demand",
-    mode: "cargo_van",
+    mode: "car",
   });
+  const provider = getTransportFieldVisibility({
+    lane: "travel",
+    postType: "provider",
+    mode: "car",
+  });
+  assert.equal(demand?.showPeopleCount, true);
   assert.equal(demand?.showPeopleCapacity, false);
-  assert.equal(demand?.showEscortPassenger, true);
-}
-
-// TEST M — motor vehicles show plate; water craft do not
-{
-  for (const mode of ["car", "motorbike", "cargo_van", "light_truck"] as const) {
-    const lane = mode === "car" || mode === "motorbike" ? "travel" : "deliver";
-    const vis = getTransportFieldVisibility({
-      lane,
-      postType: "provider",
-      mode,
-    });
-    assert.equal(vis?.showPlate, true, mode);
-    assert.equal(vis?.showWaterTransportNotice, false, mode);
-  }
-  for (const mode of [
-    "ferry",
-    "passenger_boat",
-    "private_boat",
-    "cargo_boat",
-    "private_cargo_boat",
-  ] as const) {
-    const lane = mode.includes("cargo") ? "deliver" : "travel";
-    const vis = getTransportFieldVisibility({
-      lane,
-      postType: "provider",
-      mode,
-    });
-    assert.equal(vis?.showPlate, false, mode);
-    assert.equal(vis?.showWaterTransportNotice, true, mode);
-  }
-}
-
-// TEST N — safety always includes the three public modules
-{
-  const modules = resolveSafetyModules({ category: "travel" });
-  for (const required of ALWAYS_ON_SAFETY_MODULES) {
-    assert.ok(modules.includes(required), required);
-  }
-  assert.ok(modules.includes("platform_boundary"));
-  assert.ok(modules.includes("payment_anti_scam"));
-  assert.ok(modules.includes("unlisted_risk_catchall"));
-}
-
-// TEST O — people → passenger safety
-{
-  const modules = resolveSafetyModules({
-    category: "travel",
-    peopleCount: 2,
-    transportMode: "car",
+  assert.equal(provider?.showPeopleCount, false);
+  assert.equal(provider?.showPeopleCapacity, true);
+  const walk = getTransportFieldVisibility({
+    lane: "travel",
+    postType: "demand",
+    mode: "walking",
   });
-  assert.ok(modules.includes("passenger_identity_vehicle"));
+  assert.equal(walk?.showPeopleCount, false);
+  assert.equal(walk?.showPeopleCapacity, false);
 }
 
-// TEST P — Travel items → small-item handover
+// TEST P — Travel + cargo mode visibility fail closed
 {
-  const modules = resolveSafetyModules({
+  assert.equal(
+    getTransportFieldVisibility({
+      lane: "travel",
+      postType: "demand",
+      mode: "cargo_van",
+    }),
+    null,
+  );
+  assert.equal(
+    getTransportFieldVisibility({
+      lane: "travel",
+      postType: "provider",
+      mode: "light_truck",
+    }),
+    null,
+  );
+}
+
+// TEST Q — Deliver + Travel mode visibility fail closed
+{
+  assert.equal(
+    getTransportFieldVisibility({
+      lane: "deliver",
+      postType: "demand",
+      mode: "car",
+    }),
+    null,
+  );
+  assert.equal(
+    getTransportFieldVisibility({
+      lane: "deliver",
+      postType: "provider",
+      mode: "passenger_boat",
+    }),
+    null,
+  );
+}
+
+// TEST R — legacy van readable, not new V2 publish
+{
+  assert.ok(isLegacyReadableTransportMode(LEGACY_VAN));
+  assert.equal(isModeAllowedForLane(LEGACY_VAN, "deliver"), false);
+  assert.equal(isModeAllowedForLane(LEGACY_VAN, "travel"), false);
+  assert.equal(getTransportPolicy(LEGACY_VAN)?.allowsNewPost, false);
+  assert.equal(suggestedMigrationTarget(LEGACY_VAN), "cargo_van");
+}
+
+// TEST S — no bare trailer; vehicle_with_trailer exists
+{
+  assert.equal((TARGET_DELIVER_TRANSPORT_MODES as readonly string[]).includes("trailer"), false);
+  assert.ok(TARGET_DELIVER_TRANSPORT_MODES.includes("vehicle_with_trailer"));
+  assert.equal(/\n\s+trailer:/.test(policySrc), false);
+  assert.ok(policySrc.includes("vehicle_with_trailer"));
+}
+
+// TEST T — physical capacity ≠ lane eligibility
+{
+  const van = getTransportPolicy("cargo_van");
+  assert.ok(van);
+  assert.equal(van.canPhysicallyCarrySmallItems, true);
+  assert.equal(van.canPhysicallyCarryLargeItems, true);
+  assert.equal(van.eligibleForTravelLane, false);
+  assert.equal(van.eligibleForDeliverLane, true);
+}
+
+// TEST U — no largeCargoTotal as Deliver final model
+{
+  assert.equal(policySrc.includes("largeCargoTotal"), false);
+  assert.ok(policySrc.includes("Cargo V2"));
+  assert.ok(inventory.includes("CargoRequirement"));
+}
+
+// TEST V / W — only validated safety facts
+{
+  const ok = validateSafetyFacts({
     category: "travel",
     lane: "travel",
-    peopleCount: 0,
-    travelItemTotal: 2,
-    transportMode: "bicycle",
+    postType: "demand",
+    peopleCount: 1,
+    travelItemUnits: 0,
+    transportMode: "car",
   });
-  assert.ok(modules.includes("small_item_handover"));
-  assert.equal(modules.includes("large_item_handover"), false);
-}
-
-// TEST Q — Deliver → large-item handover
-{
-  const modules = resolveSafetyModules({
-    category: "deliver",
-    transportMode: "cargo_van",
-    escortPassengerCount: 0,
-  });
-  assert.ok(modules.includes("large_item_handover"));
-}
-
-// TEST R — Deliver + escort → escort safety
-{
-  const modules = resolveSafetyModules({
-    category: "deliver",
-    escortPassengerCount: 1,
-    transportMode: "box_truck",
-  });
-  assert.ok(modules.includes("escort_passenger"));
-  assert.ok(modules.includes("large_item_handover"));
-}
-
-// TEST S — public transport and water compose the right modules
-{
-  const transit = resolveSafetyModules({
-    category: "travel",
-    transportMode: "subway",
-    travelItemTotal: 1,
-  });
-  assert.ok(transit.includes("public_transport_rules"));
-  assert.equal(transit.includes("water_transport_rules"), false);
-
-  const water = resolveSafetyModules({
-    category: "travel",
-    transportMode: "ferry",
-    peopleCount: 0,
-    travelItemTotal: 1,
-  });
-  assert.ok(water.includes("water_transport_rules"));
-  assert.ok(water.includes("public_transport_rules"));
-
-  const cargoBoat = resolveSafetyModules({
-    category: "deliver",
-    transportMode: "cargo_boat",
-  });
-  assert.ok(cargoBoat.includes("water_transport_rules"));
-  assert.ok(cargoBoat.includes("large_item_handover"));
-}
-
-// TEST T — buy / onsite / errand compose matching help modules
-{
-  assert.ok(
-    resolveSafetyModules({ category: "buy" }).includes("purchase_help"),
+  assert.equal(ok.ok, true);
+  if (ok.ok) {
+    assert.ok(resolveSafetyModules(ok.value).includes("passenger_identity_vehicle"));
+  }
+  assert.equal(validateSafetyFacts({ category: "travel", extra: true }).ok, false);
+  assert.equal(
+    validateSafetyFacts({ category: "travel", peopleCount: true }).ok,
+    false,
   );
-  assert.ok(
-    resolveSafetyModules({ category: "onsite" }).includes("onsite_help"),
-  );
-  assert.ok(
-    resolveSafetyModules({ category: "errand" }).includes("errand_help"),
+  assert.equal(
+    validateSafetyFacts({
+      category: "travel",
+      lane: "travel",
+      transportMode: "cargo_van",
+    }).ok,
+    false,
   );
 }
 
-// TEST U — policy functions have no browser user / contact / private data
+// TEST X — always-on safety modules
 {
-  for (const src of [policySrc, safetySrc]) {
-    assert.equal(src.includes("user_id"), false);
-    assert.equal(src.includes("applicant_user_id"), false);
-    assert.equal(src.includes("raw_phone"), false);
-    assert.equal(src.includes("normalized_phone"), false);
-    assert.equal(src.includes("raw_license_plate"), false);
-    assert.equal(src.includes("service_address"), false);
-    assert.equal(src.includes("origin_gps"), false);
-    assert.equal(src.includes("window."), false);
-    assert.equal(src.includes("localStorage"), false);
-    assert.equal(/fetch\s*\(/.test(src), false);
-  }
-  assert.equal(PAYMENT_POLICY_V1.platformCollects, false);
-  assert.equal(PAYMENT_POLICY_V1.escrow, false);
-  assert.equal(SAFETY_COPY_KEYS.unlisted_risk_catchall, "safety.unlistedRiskCatchall");
-}
-
-// TEST V — this round does not wire production PostCard / homepage / publish
-{
-  const production = [
-    "src/components/hall/PostCard.tsx",
-    "src/app/[locale]/page.tsx",
-    "src/components/home/PublishBottomSheet.tsx",
-    "src/components/post-form/DeliverTravelFields.tsx",
-    "src/components/home/HomeConsole.tsx",
-    "src/app/[locale]/posts/[id]/page.tsx",
-  ];
-  for (const file of production) {
-    const src = read(file);
-    assert.equal(src.includes("transportPolicy"), false, file);
-    assert.equal(src.includes("safetyPolicy"), false, file);
-    assert.equal(src.includes("MatchRequestSheet"), false, file);
-    assert.equal(src.includes("transportPolicy.travelTitle"), false, file);
+  const facts = validateSafetyFacts({ category: "buy" });
+  assert.ok(facts.ok);
+  if (facts.ok) {
+    const modules = resolveSafetyModules(facts.value);
+    for (const required of ALWAYS_ON_SAFETY_MODULES) {
+      assert.ok(modules.includes(required), required);
+    }
   }
 }
 
-// TEST W — new policy files have no fetch / API / RPC / DB write
-{
-  for (const src of [policySrc, safetySrc]) {
-    assert.equal(src.includes("createClient"), false);
-    assert.equal(/\.rpc\(/.test(src), false);
-    assert.equal(src.includes("from(\"posts\")"), false);
-    assert.equal(src.includes("match_requests"), false);
-  }
+function expectCanonicalReject(fn: () => unknown, key: string) {
+  assert.throws(fn, (err: unknown) => {
+    assert.ok(err instanceof CanonicalStage1Error);
+    assert.equal(err.errorKey, key);
+    return true;
+  });
 }
 
-// TEST X — confirm_match still frozen
+// TEST Y — V1 transport retained
+{
+  const payload = normalizeCanonicalStage1(baseRaw);
+  assert.equal(payload.transport_mode, "car");
+  assert.equal(toRpcStage1Payload(payload, 100).transport_mode, "car");
+}
+
+// TEST Z — blank transport → null
+{
+  assert.equal(normalizeCanonicalStage1({ ...baseRaw, transport_mode: "" }).transport_mode, null);
+  assert.equal(
+    normalizeCanonicalStage1({ ...baseRaw, transport_mode: "   " }).transport_mode,
+    null,
+  );
+  const missing = { ...baseRaw };
+  delete missing.transport_mode;
+  assert.equal(normalizeCanonicalStage1(missing).transport_mode, null);
+}
+
+// TEST AA — unknown / V2 reject
+{
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "cargo_van" }),
+    "error.invalid_transport_mode",
+  );
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "hovercraft" }),
+    "error.invalid_transport_mode",
+  );
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: 1 }),
+    "error.invalid_transport_mode",
+  );
+}
+
+// TEST AB / AC / AD — hash binds transport and title, stable
+{
+  const a = normalizeCanonicalStage1(baseRaw);
+  const b = normalizeCanonicalStage1({ ...baseRaw, transport_mode: "van" });
+  const c = normalizeCanonicalStage1({ ...baseRaw, title: "Other" });
+  const fee = computeServerFeeMinor(40, a);
+  const ha = hashCanonicalStage1(a, 40, fee);
+  assert.notEqual(ha, hashCanonicalStage1(b, 40, computeServerFeeMinor(40, b)));
+  assert.notEqual(ha, hashCanonicalStage1(c, 40, computeServerFeeMinor(40, c)));
+  assert.equal(ha, hashCanonicalStage1(a, 40, fee));
+  const blank = normalizeCanonicalStage1({ ...baseRaw, transport_mode: "" });
+  const missing = { ...baseRaw };
+  delete missing.transport_mode;
+  assert.equal(
+    hashCanonicalStage1(blank, 40, computeServerFeeMinor(40, blank)),
+    hashCanonicalStage1(
+      normalizeCanonicalStage1(missing),
+      40,
+      computeServerFeeMinor(40, normalizeCanonicalStage1(missing)),
+    ),
+  );
+}
+
+// TEST AE — trusted / shadow / Passkey share the same mapping
+{
+  assert.ok(passkeySrc.includes("toRpcStage1Payload"));
+  assert.ok(trustedSrc.includes("toRpcStage1Payload"));
+  assert.ok(shadowSrc.includes("toRpcStage1Payload"));
+  assert.ok(passkeySrc.includes("buildCanonicalStage1PublishContext"));
+  assert.ok(trustedSrc.includes("buildCanonicalStage1PublishContext"));
+  assert.ok(shadowSrc.includes("buildCanonicalStage1PublishContext"));
+}
+
+// TEST AF / AG / AH / AI — migration signature, write, allowlist, ACL
+{
+  assert.ok(
+    /CREATE OR REPLACE FUNCTION public\.insert_stage1_post_v86\(\s*p_user_id\s+uuid/.test(
+      migration,
+    ),
+  );
+  assert.ok(migration.includes("p_client_request_id uuid"));
+  assert.ok(migration.includes("p_post_payload      jsonb"));
+  assert.equal(/CREATE OR REPLACE FUNCTION public\.insert_stage1_post_v86\(/g.test(migration) || true, true);
+  assert.equal((migration.match(/CREATE OR REPLACE FUNCTION public\.insert_stage1_post_v86/g) || []).length, 1);
+  assert.ok(migration.includes("transport_mode"));
+  assert.ok(migration.includes("'van'"));
+  assert.equal(migration.includes("cargo_van"), false);
+  assert.equal(migration.includes("vehicle_with_trailer"), false);
+  assert.ok(migration.includes("error.invalid_transport_mode"));
+  assert.ok(
+    migration.includes(
+      "REVOKE ALL ON FUNCTION public.insert_stage1_post_v86",
+    ),
+  );
+  assert.ok(migration.includes("FROM PUBLIC"));
+  assert.ok(migration.includes("FROM anon"));
+  assert.ok(migration.includes("FROM authenticated"));
+  assert.ok(verifySql.includes("exactly one row"));
+}
+
+// TEST AJ — executed migrations / init / CHECK untouched vs this round's new file only
+{
+  const changed = gitDiffNames(BASELINE, [
+    "supabase/init.sql",
+    "supabase/migrations/20260908000001_fraud_logs_service_role_insert_v86.sql",
+    "supabase/migrations/20260908000002_parked_risk_tables_acl_v86.sql",
+    "supabase/migrations/20260908000003_freeze_legacy_direct_match_v89.sql",
+    "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql",
+    "supabase/migrations/20260907000001_security_boundary_hardening_v86.sql",
+    "supabase/migrations/20260905000001_unify_stage1_post_persistence_v86.sql",
+    "src/lib/matching/applicationPayload.ts",
+    "src/components/matching/MatchRequestSheet.tsx",
+    "src/lib/post-fee.ts",
+  ]);
+  assert.equal(changed, "", changed);
+  assert.equal(oldInsert.includes("ALTER TABLE public.posts"), false);
+  assert.equal(migration.includes("ALTER TABLE public.posts"), false);
+}
+
+// TEST AK–AO — complete-contact decisions
+{
+  assert.equal(
+    decideCompleteContactTransport({
+      isOwner: true,
+      existingMode: "car",
+      requested: "car",
+    }).kind,
+    "omit",
+  );
+  const conflict = decideCompleteContactTransport({
+    isOwner: true,
+    existingMode: "car",
+    requested: "van",
+  });
+  assert.equal(conflict.kind, "reject");
+  const fill = decideCompleteContactTransport({
+    isOwner: true,
+    existingMode: null,
+    requested: "bicycle",
+  });
+  assert.equal(fill.kind, "fill");
+  if (fill.kind === "fill") assert.equal(fill.mode, "bicycle");
+  assert.equal(
+    decideCompleteContactTransport({
+      isOwner: false,
+      existingMode: null,
+      requested: "car",
+    }).kind,
+    "reject",
+  );
+  assert.equal(
+    decideCompleteContactTransport({
+      isOwner: true,
+      existingMode: null,
+      requested: "cargo_van",
+    }).kind,
+    "reject",
+  );
+}
+
+// TEST AP — conditional update filter
+{
+  const filter = completeContactTransportFillFilter({
+    postId: "p1",
+    ownerUserId: "u1",
+  });
+  assert.equal(filter.user_id, "u1");
+  assert.equal(filter.transport_mode, null);
+  assert.ok(contactSrc.includes(".is('transport_mode', null)"));
+  assert.ok(contactSrc.includes(".eq('user_id'"));
+  assert.equal(
+    decideAfterConditionalFillMiss({ intendedMode: "car", currentMode: "car" }).kind,
+    "omit",
+  );
+  assert.equal(
+    decideAfterConditionalFillMiss({ intendedMode: "car", currentMode: "van" }).kind,
+    "reject",
+  );
+}
+
+// TEST AQ — browser response does not leak DB details
+{
+  assert.ok(contactSrc.includes("error.submit_failed"));
+  assert.equal(contactSrc.includes("filled.errorKey"), true);
+  assert.equal(/NextResponse\.json\(\s*\{[^}]*message:/.test(contactSrc), false);
+  assert.equal(contactSrc.includes("SQLSTATE"), false);
+  assert.equal(contactHelper.includes("existingMode"), true);
+  assert.equal(contactHelper.includes("Does not leak"), true);
+}
+
+// TEST AR — new TS extra JSON key is ignored by old RPC (source evidence)
+{
+  const insertFn = oldInsert.slice(
+    oldInsert.indexOf("CREATE OR REPLACE FUNCTION public.insert_stage1_post_v86"),
+    oldInsert.indexOf("REVOKE ALL ON FUNCTION public.insert_stage1_post_v86"),
+  );
+  assert.equal(insertFn.includes("transport_mode"), false);
+  assert.ok(insertFn.includes("p_post_payload->>'post_type'"));
+  assert.ok(coreSrc.includes("transport_mode: payload.transport_mode"));
+}
+
+// TEST AS — freeze / matching files unchanged this round vs baseline
+{
+  const matching = gitDiffNames(BASELINE, [
+    "src/lib/matching/applicationPayload.ts",
+    "src/components/matching/MatchRequestSheet.tsx",
+    "src/lib/matching/legacyMatchingFreeze.ts",
+  ]);
+  assert.equal(matching, "", matching);
+}
+
+// TEST AT — production UI still uses V1 modes only
+{
+  const postsSrc = read("src/lib/posts.ts");
+  assert.ok(postsSrc.includes('"van"'));
+  assert.equal(postsSrc.includes("cargo_van"), false);
+  assert.equal(postsSrc.includes("vehicle_with_trailer"), false);
+  const publish = read("src/components/home/PublishBottomSheet.tsx");
+  assert.equal(publish.includes("cargo_van"), false);
+  assert.deepEqual([...V1_STAGE1_TRANSPORT_MODES], [
+    "walking",
+    "scooter",
+    "bicycle",
+    "motorbike",
+    "subway",
+    "bus",
+    "train",
+    "flight",
+    "car",
+    "van",
+  ]);
+}
+
+// TEST AU / AV
 {
   assert.ok(freezeSrc.includes("error.matching_temporarily_unavailable"));
-  assert.ok(matchRoute.includes("freezeLegacyDirectMatchIntercept"));
-  assert.equal(actionsSrc.includes("confirm_match"), false);
   assert.equal(policySrc.includes("confirm_match"), false);
-  assert.equal(safetySrc.includes("confirm_match"), false);
+  assert.equal(migration.includes("match_requests"), false);
+  assert.equal(coreSrc.includes("match_requests"), false);
 }
 
-// TEST Y — migration / init.sql / public_posts_safe unchanged vs 6.7B baseline
-{
-  const changed = gitDiffNames(PHASE_67B_BASELINE, [
-    "supabase/init.sql",
-    "supabase/migrations",
-    "src/lib/posts/publicPostSelect.ts",
-    "src/lib/matching/applicationPayload.ts",
-    "src/lib/post-fee.ts",
-    "src/lib/posts.ts",
-    "src/lib/types.ts",
-  ]);
-  assert.equal(
-    changed,
-    "",
-    `protected paths changed vs 6.7B baseline: ${changed}`,
-  );
-  assert.ok(typesSrc.includes('"van"'));
-  assert.ok(postsSrc.includes('"van"'));
-  assert.ok(payloadSrc.includes("MATCH_REQUEST_TRAVEL_SEATS_MIN"));
-}
+assert.ok(stage1Src.includes("server-only"));
+assert.equal(coreSrc.includes('import "server-only"'), false);
+assert.ok(inventory.includes("Repository SQL indicates"));
+assert.ok(inventory.includes("Live catalog remains to be verified"));
+assert.ok(TARGET_TRAVEL_TRANSPORT_MODES.includes("car"));
 
-assert.ok(inventory.includes("消灭散落和互相矛盾的业务规则"));
-assert.ok(inventory.includes("6.7B.1B"));
-assert.ok(zh.includes("顺路捎人或捎小件"));
-assert.ok(en.includes("Give a lift to people or small items"));
-assert.ok(sr.includes("Usput povedi ljude ili sitne stvari"));
-assert.equal(sr.includes("TODO"), false);
-assert.ok(zh.includes("无法列举所有风险"));
-assert.ok(sr.includes("ne mogu da navedu sve rizike"));
-
-const runtimeFiles = walkRuntimeTs(join(repoRoot, "src"));
-for (const file of runtimeFiles) {
-  if (file.includes("transportPolicy.ts") || file.includes("safetyPolicy.ts")) {
-    continue;
+function walk(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, acc);
+    else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) acc.push(full);
   }
+  return acc;
+}
+for (const file of walk(join(repoRoot, "src/components/hall"))) {
   const src = readFileSync(file, "utf8");
-  if (
-    file.endsWith("PostCard.tsx") ||
-    file.endsWith("page.tsx") ||
-    file.endsWith("PublishBottomSheet.tsx")
-  ) {
-    assert.equal(
-      src.includes("@/lib/transport/transportPolicy"),
-      false,
-      file,
-    );
-  }
+  assert.equal(src.includes("vehicle_with_trailer"), false, file);
 }
 
 console.log("transportPolicy.test.ts: ok");

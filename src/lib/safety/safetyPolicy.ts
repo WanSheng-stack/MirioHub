@@ -1,23 +1,19 @@
 /**
- * PHASE 6.7B.1A — composable safety-module policy.
+ * PHASE 6.7B.1A.1 — composable safety-module policy.
  *
- * An order can combine people, small items, large cargo, escort, water, and
- * public transport. Do not collapse this into a single exclusive scenario enum.
+ * Client calls are UX only. Server must rebuild facts from the database and
+ * already-validated contracts. Do not trust browser-supplied mode, category,
+ * role, lane, or counts.
  *
- * This round: types, resolver, copy-key contract, payment V1 contract.
- * No production UI mount. No payment/order-state/database changes.
- *
- * platform_boundary, payment_anti_scam, and unlisted_risk_catchall are always
- * present. The catchall is a shared key — do not paste the long body into
- * every scenario. Do not ask the user to certify that no unknown risk exists.
- *
- * Future server (6.7C+) must re-read post facts from DB. Do not trust
- * browser-supplied category, lane, people counts, or escort flags.
+ * resolveSafetyModules accepts only ValidatedSafetyFacts from validateSafetyFacts.
  */
 
 import type { PostCategory } from "@/lib/post-payload";
+import type { PostType } from "@/lib/types";
 import {
   getTransportPolicy,
+  isModeAllowedForLane,
+  parsePolicyQuantity,
   type TransportServiceLane,
 } from "@/lib/transport/transportPolicy";
 
@@ -41,7 +37,6 @@ export const ALWAYS_ON_SAFETY_MODULES = [
   "unlisted_risk_catchall",
 ] as const satisfies readonly SafetyModule[];
 
-/** Shared copy keys. Bodies live in messages; do not duplicate long text. */
 export const SAFETY_COPY_KEYS = {
   platform_boundary: "safety.module.platform_boundary",
   passenger_identity_vehicle: "safety.module.passenger_identity_vehicle",
@@ -58,14 +53,42 @@ export const SAFETY_COPY_KEYS = {
   escortSeatConfirm: "transportPolicy.escortSeatConfirm",
 } as const;
 
-export type SafetyFacts = {
-  category: PostCategory;
-  lane?: TransportServiceLane | null;
-  peopleCount?: number | null;
-  travelItemTotal?: number | null;
-  escortPassengerCount?: number | null;
-  transportMode?: string | null;
+const VALIDATED_SAFETY_FACTS = Symbol("ValidatedSafetyFacts");
+
+const ALLOWED_SAFETY_KEYS = new Set([
+  "category",
+  "lane",
+  "postType",
+  "peopleCount",
+  "peopleCapacity",
+  "travelItemUnits",
+  "escortPassengerCount",
+  "transportMode",
+]);
+
+const CATEGORIES = new Set<PostCategory>([
+  "deliver",
+  "buy",
+  "onsite",
+  "errand",
+  "travel",
+]);
+
+export type ValidatedSafetyFacts = {
+  readonly [VALIDATED_SAFETY_FACTS]: true;
+  readonly category: PostCategory;
+  readonly lane: TransportServiceLane | null;
+  readonly postType: PostType | null;
+  readonly peopleCount: number;
+  readonly peopleCapacity: number;
+  readonly travelItemUnits: number;
+  readonly escortPassengerCount: number;
+  readonly transportMode: string | null;
 };
+
+export type SafetyFactsResult =
+  | { ok: true; value: ValidatedSafetyFacts }
+  | { ok: false; errorKey: string };
 
 export type PaymentTimingId =
   | "after_arrival_and_identity_check"
@@ -74,10 +97,6 @@ export type PaymentTimingId =
   | "after_completion_and_check"
   | "buy_split_principal_and_service";
 
-/**
- * V1 payment contract only. Not wired to checkout, order status, or DB.
- * Platform does not collect, escrow, or independently verify cash/transfer.
- */
 export const PAYMENT_POLICY_V1 = {
   platformCollects: false,
   escrow: false,
@@ -92,56 +111,136 @@ export const PAYMENT_POLICY_V1 = {
     deliverLarge: "after_unload_and_appearance_check",
     onsiteErrand: "after_completion_and_check",
     buy: {
-      id: "buy_split_principal_and_service",
+      id: "buy_split_principal_and_service" as const,
       splitPrincipalAndService: true,
       serviceFeeAfterHandover: true,
       goodsPrincipalByAdvanceMutualConfirm: true,
     },
   },
-} as const satisfies {
-  platformCollects: false;
-  escrow: false;
-  verifiesCashOrTransfer: false;
-  allowStrangerPaymentLinks: false;
-  allowBankSecretsRequest: false;
-  recommendPrepaidServiceFee: false;
-  feeChangeRequiresMutualReconfirm: true;
-  timing: {
-    travelPeople: PaymentTimingId;
-    travelSmallItem: PaymentTimingId;
-    deliverLarge: PaymentTimingId;
-    onsiteErrand: PaymentTimingId;
-    buy: {
-      id: PaymentTimingId;
-      splitPrincipalAndService: boolean;
-      serviceFeeAfterHandover: boolean;
-      goodsPrincipalByAdvanceMutualConfirm: boolean;
-    };
+} as const;
+
+function fail(errorKey: string): SafetyFactsResult {
+  return { ok: false, errorKey };
+}
+
+function optionalQuantity(
+  rec: Record<string, unknown>,
+  key: string,
+): { ok: true; value: number } | { ok: false; errorKey: string } {
+  if (!(key in rec) || rec[key] === undefined || rec[key] === null) {
+    return { ok: true, value: 0 };
+  }
+  return parsePolicyQuantity(rec[key]);
+}
+
+export function validateSafetyFacts(input: unknown): SafetyFactsResult {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return fail("error.safety_facts_invalid");
+  }
+  const rec = input as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (!ALLOWED_SAFETY_KEYS.has(key)) {
+      return fail("error.safety_facts_unknown_key");
+    }
+  }
+
+  if (typeof rec.category !== "string" || !CATEGORIES.has(rec.category as PostCategory)) {
+    return fail("error.safety_facts_invalid_category");
+  }
+  const category = rec.category as PostCategory;
+
+  let lane: TransportServiceLane | null = null;
+  if (rec.lane !== undefined && rec.lane !== null) {
+    if (rec.lane !== "travel" && rec.lane !== "deliver") {
+      return fail("error.safety_facts_invalid_lane");
+    }
+    lane = rec.lane;
+  } else if (category === "travel" || category === "deliver") {
+    lane = category;
+  }
+
+  if (
+    (category === "travel" && lane === "deliver") ||
+    (category === "deliver" && lane === "travel") ||
+    ((category === "buy" || category === "onsite" || category === "errand") &&
+      lane !== null)
+  ) {
+    return fail("error.safety_facts_lane_category_conflict");
+  }
+
+  let postType: PostType | null = null;
+  if (rec.postType !== undefined && rec.postType !== null) {
+    if (rec.postType !== "demand" && rec.postType !== "provider") {
+      return fail("error.safety_facts_invalid_role");
+    }
+    postType = rec.postType;
+  }
+
+  const peopleCount = optionalQuantity(rec, "peopleCount");
+  if (!peopleCount.ok) return peopleCount;
+  const peopleCapacity = optionalQuantity(rec, "peopleCapacity");
+  if (!peopleCapacity.ok) return peopleCapacity;
+  const travelItemUnits = optionalQuantity(rec, "travelItemUnits");
+  if (!travelItemUnits.ok) return travelItemUnits;
+  const escortPassengerCount = optionalQuantity(rec, "escortPassengerCount");
+  if (!escortPassengerCount.ok) return escortPassengerCount;
+
+  if (postType === "demand" && "peopleCapacity" in rec && rec.peopleCapacity != null) {
+    return fail("error.transport_people_field_not_allowed");
+  }
+  if (postType === "provider" && "peopleCount" in rec && rec.peopleCount != null) {
+    return fail("error.transport_people_field_not_allowed");
+  }
+
+  let transportMode: string | null = null;
+  if (rec.transportMode !== undefined && rec.transportMode !== null) {
+    if (typeof rec.transportMode !== "string" || rec.transportMode.trim() === "") {
+      return fail("error.safety_facts_invalid_mode");
+    }
+    transportMode = rec.transportMode;
+    const policy = getTransportPolicy(transportMode);
+    if (!policy) {
+      return fail("error.safety_facts_invalid_mode");
+    }
+    if (lane && !isModeAllowedForLane(transportMode, lane)) {
+      return fail("error.safety_facts_lane_mode_conflict");
+    }
+  }
+
+  const value: ValidatedSafetyFacts = {
+    [VALIDATED_SAFETY_FACTS]: true,
+    category,
+    lane,
+    postType,
+    peopleCount: peopleCount.value,
+    peopleCapacity: peopleCapacity.value,
+    travelItemUnits: travelItemUnits.value,
+    escortPassengerCount: escortPassengerCount.value,
+    transportMode,
   };
-};
+  return { ok: true, value };
+}
 
 function uniqueModules(modules: SafetyModule[]): SafetyModule[] {
   return [...new Set(modules)];
 }
 
-export function resolveSafetyModules(facts: SafetyFacts): SafetyModule[] {
+export function resolveSafetyModules(facts: ValidatedSafetyFacts): SafetyModule[] {
   const modules: SafetyModule[] = [...ALWAYS_ON_SAFETY_MODULES];
-  const lane =
-    facts.lane ??
-    (facts.category === "travel" || facts.category === "deliver"
-      ? facts.category
-      : null);
-  const people = facts.peopleCount ?? 0;
-  const travelItems = facts.travelItemTotal ?? 0;
-  const escort = facts.escortPassengerCount ?? 0;
+  const people =
+    facts.postType === "provider" ? facts.peopleCapacity : facts.peopleCount;
   const modePolicy = facts.transportMode
     ? getTransportPolicy(facts.transportMode)
     : null;
 
   if (people > 0) modules.push("passenger_identity_vehicle");
-  if (lane === "travel" && travelItems > 0) modules.push("small_item_handover");
-  if (lane === "deliver") modules.push("large_item_handover");
-  if (lane === "deliver" && escort === 1) modules.push("escort_passenger");
+  if (facts.lane === "travel" && facts.travelItemUnits > 0) {
+    modules.push("small_item_handover");
+  }
+  if (facts.lane === "deliver") modules.push("large_item_handover");
+  if (facts.lane === "deliver" && facts.escortPassengerCount === 1) {
+    modules.push("escort_passenger");
+  }
   if (modePolicy?.isPublicTransport) modules.push("public_transport_rules");
   if (modePolicy?.isWaterTransport) modules.push("water_transport_rules");
   if (facts.category === "buy") modules.push("purchase_help");

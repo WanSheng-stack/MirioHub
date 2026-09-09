@@ -27,6 +27,8 @@ export interface RawPostInput {
   bump_fee_minor?: unknown;
   waypoints?: unknown;
   currency?: unknown;
+  title?: unknown;
+  transport_mode?: unknown;
   [key: string]: unknown;
 }
 

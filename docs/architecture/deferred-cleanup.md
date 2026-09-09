@@ -121,3 +121,17 @@ safe-read boundary.
 `supabase/init.sql` is **not** listed for deletion or rewrite this
 phase. It is not live schema authority, and this project currently
 must not modify it.
+
+## 9. Cargo V2 (not implemented)
+
+- **Current state:** Intentionally absent. Legacy
+  `count_small/medium/large/xlarge` remain the production luggage model.
+  `transportPolicy` does not treat any cargo total as Deliver completeness.
+- **Future replacement:** `CargoRequirement`, `CargoCapacity`,
+  `CargoItem`, `CargoHandlingConditions`, `CargoCompatibilityResult`.
+- **Earliest safe creation:** A dedicated Cargo V2 phase after transport
+  V1 integrity is deployed. Not 6.7B.1A.1.
+- **Preconditions:** Product signs off dimensions, handling, escort 0/1,
+  and matching outcomes (incompatible / needs confirm / matchable).
+- **Risk if created early:** Freezes the four-tier luggage model as if it
+  were furniture/appliance cargo.

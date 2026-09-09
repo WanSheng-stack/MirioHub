@@ -12,13 +12,13 @@ import {
   SERVER_MAX_BUMP_FEE_MINOR,
   toRpcStage1Payload,
   validateBumpFeeMinor,
-} from "@/lib/auth/canonicalStage1";
+} from "@/lib/auth/canonicalStage1Core";
 import { isIdempotentActiveRetry } from "@/lib/auth/idempotentActiveRetry";
 import {
   processDemandPostIntercept,
   processSupplyPostIntercept,
 } from "@/lib/post-intercept";
-import { mapChallengeReserveReason } from "@/lib/auth/markChallengeFailed";
+import { mapChallengeReserveReason } from "@/lib/auth/challengeReserveReason";
 
 const baseRaw: Record<string, unknown> = {
   post_type: "demand",

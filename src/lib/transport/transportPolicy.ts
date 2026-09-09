@@ -1,23 +1,29 @@
 /**
- * PHASE 6.7B.1A — target V2 transport capability policy.
+ * PHASE 6.7B.1A.1 — target V2 transport capability policy.
  *
- * This module is the intended single source for lane / mode / field-visibility
- * rules. It is NOT wired to publish UI, hall, fees, or APIs this round.
+ * Client use is UX only. Server must re-read the post from DB and re-run
+ * these validators. Do not trust browser-supplied lane, mode, role, or counts.
  *
- * Do NOT replace `@/lib/posts` TRANSPORT_MODES or `@/lib/types` TransportMode.
- * Those arrays are live publish + historical Post values. Changing them here
- * would leak new modes into production, break legacy `van`, and desync
- * canonical payload / DB CHECK.
+ * This module owns transport mode / lane / role / people-field rules.
+ * It does NOT own Cargo V2. Do not treat any quantity here as proof that a
+ * Deliver shipment is complete. Deliver final non-empty checks belong to a
+ * future Cargo V2 validator (CargoRequirement / CargoCapacity / …).
  *
- * Client use (future) is UX only. 6.7C+ server must re-read the target post
- * from DB (id, category, owner, status, transport_mode) and re-run these
- * validators. Do not trust browser-supplied lane, mode, or people counts.
+ * travelItemUnits is the already-classified sum of Travel-allowed ordinary
+ * small items / luggage. It is not a single luggage-size database column.
+ * Legacy four-tier luggage counts remain the production model.
+ * Do not fold Deliver furniture/appliances into travelItemUnits.
+ *
+ * Do NOT replace `@/lib/posts` TRANSPORT_MODES. V2 names (cargo_van,
+ * vehicle_with_trailer, boats, …) must not appear in production UI or CHECK.
  */
 
 import { TRANSPORT_MODES } from "@/lib/posts";
 import type { PostType } from "@/lib/types";
 
 export type TransportServiceLane = "travel" | "deliver";
+
+export const PG_INT_MAX = 2_147_483_647;
 
 export const TARGET_TRAVEL_TRANSPORT_MODES = [
   "walking",
@@ -39,7 +45,7 @@ export const TARGET_DELIVER_TRANSPORT_MODES = [
   "cargo_van",
   "light_truck",
   "box_truck",
-  "trailer",
+  "vehicle_with_trailer",
   "cargo_boat",
   "private_cargo_boat",
   "other_cargo_vehicle",
@@ -53,19 +59,20 @@ export type TargetTransportMode =
   | TargetTravelTransportMode
   | TargetDeliverTransportMode;
 
-/** Historical value still stored on posts. Not a V2 Travel mode. */
 export const LEGACY_VAN = "van" as const;
 export const LEGACY_VAN_SUGGESTED_TARGET = "cargo_van" as const;
 
-/** Existing V1 / publish seat cap. Do not change capacity policy this round. */
+export const CAR_PEOPLE_COUNT_MAX = 4;
 export const CAR_PEOPLE_CAPACITY_MAX = 4;
 export const DELIVER_ESCORT_PASSENGER_MAX = 1;
 
 export type TransportCapabilityPolicy = {
-  lane: TransportServiceLane;
-  canCarrySmallItems: boolean;
-  canCarryLargeItems: boolean;
-  showsPeopleCapacity: boolean;
+  eligibleForTravelLane: boolean;
+  eligibleForDeliverLane: boolean;
+  canPhysicallyCarrySmallItems: boolean;
+  canPhysicallyCarryLargeItems: boolean;
+  offersPlatformPeopleFields: boolean;
+  maxPeopleCount: number;
   maxPeopleCapacity: number;
   requiresVehicleIdentity: boolean;
   requiresPlate: boolean;
@@ -76,9 +83,9 @@ export type TransportCapabilityPolicy = {
 };
 
 export type TransportFieldVisibility = {
+  showPeopleCount: boolean;
   showPeopleCapacity: boolean;
   showSmallItemCapacity: boolean;
-  showLargeCargoCapacity: boolean;
   showVehicleIdentity: boolean;
   showPlate: boolean;
   showEscortPassenger: boolean;
@@ -91,10 +98,10 @@ export type TransportCapabilityInput = {
   lane: TransportServiceLane;
   postType: PostType;
   mode: string;
-  peopleCapacity?: number | null;
-  escortPassengerCount?: number | null;
-  smallItemTotal?: number | null;
-  largeCargoTotal?: number | null;
+  peopleCount?: unknown;
+  peopleCapacity?: unknown;
+  travelItemUnits?: unknown;
+  escortPassengerCount?: unknown;
 };
 
 export type TransportValidationResult =
@@ -103,26 +110,21 @@ export type TransportValidationResult =
 
 type PolicySeed = Omit<TransportCapabilityPolicy, "legacyReadable">;
 
-function policy(
-  seed: PolicySeed,
-  mode: string,
-): TransportCapabilityPolicy {
+function policy(seed: PolicySeed, mode: string): TransportCapabilityPolicy {
   return {
     ...seed,
     legacyReadable: (TRANSPORT_MODES as readonly string[]).includes(mode),
   };
 }
 
-const NO_PEOPLE = {
-  showsPeopleCapacity: false,
+const TRAVEL_BASE: PolicySeed = {
+  eligibleForTravelLane: true,
+  eligibleForDeliverLane: false,
+  canPhysicallyCarrySmallItems: true,
+  canPhysicallyCarryLargeItems: false,
+  offersPlatformPeopleFields: false,
+  maxPeopleCount: 0,
   maxPeopleCapacity: 0,
-} as const;
-
-const TRAVEL_SMALL: PolicySeed = {
-  lane: "travel",
-  canCarrySmallItems: true,
-  canCarryLargeItems: false,
-  ...NO_PEOPLE,
   requiresVehicleIdentity: false,
   requiresPlate: false,
   isPublicTransport: false,
@@ -130,14 +132,35 @@ const TRAVEL_SMALL: PolicySeed = {
   allowsNewPost: true,
 };
 
+const CARGO_ROAD: PolicySeed = {
+  eligibleForTravelLane: false,
+  eligibleForDeliverLane: true,
+  canPhysicallyCarrySmallItems: true,
+  canPhysicallyCarryLargeItems: true,
+  offersPlatformPeopleFields: false,
+  maxPeopleCount: 0,
+  maxPeopleCapacity: 0,
+  requiresVehicleIdentity: true,
+  requiresPlate: true,
+  isPublicTransport: false,
+  isWaterTransport: false,
+  allowsNewPost: true,
+};
+
+const CARGO_WATER: PolicySeed = {
+  ...CARGO_ROAD,
+  requiresPlate: false,
+  isWaterTransport: true,
+};
+
 const TARGET_POLICIES: Record<TargetTransportMode, TransportCapabilityPolicy> = {
-  walking: policy(TRAVEL_SMALL, "walking"),
-  bicycle: policy(TRAVEL_SMALL, "bicycle"),
-  ebike: policy(TRAVEL_SMALL, "ebike"),
-  scooter: policy(TRAVEL_SMALL, "scooter"),
+  walking: policy(TRAVEL_BASE, "walking"),
+  bicycle: policy(TRAVEL_BASE, "bicycle"),
+  ebike: policy(TRAVEL_BASE, "ebike"),
+  scooter: policy(TRAVEL_BASE, "scooter"),
   motorbike: policy(
     {
-      ...TRAVEL_SMALL,
+      ...TRAVEL_BASE,
       requiresVehicleIdentity: true,
       requiresPlate: true,
     },
@@ -145,175 +168,48 @@ const TARGET_POLICIES: Record<TargetTransportMode, TransportCapabilityPolicy> = 
   ),
   car: policy(
     {
-      lane: "travel",
-      canCarrySmallItems: true,
-      canCarryLargeItems: false,
-      showsPeopleCapacity: true,
+      ...TRAVEL_BASE,
+      offersPlatformPeopleFields: true,
+      maxPeopleCount: CAR_PEOPLE_COUNT_MAX,
       maxPeopleCapacity: CAR_PEOPLE_CAPACITY_MAX,
       requiresVehicleIdentity: true,
       requiresPlate: true,
-      isPublicTransport: false,
-      isWaterTransport: false,
-      allowsNewPost: true,
     },
     "car",
   ),
-  subway: policy(
-    {
-      ...TRAVEL_SMALL,
-      isPublicTransport: true,
-    },
-    "subway",
-  ),
-  bus: policy(
-    {
-      ...TRAVEL_SMALL,
-      isPublicTransport: true,
-    },
-    "bus",
-  ),
-  train: policy(
-    {
-      ...TRAVEL_SMALL,
-      isPublicTransport: true,
-    },
-    "train",
-  ),
-  flight: policy(
-    {
-      ...TRAVEL_SMALL,
-      isPublicTransport: true,
-    },
-    "flight",
-  ),
+  subway: policy({ ...TRAVEL_BASE, isPublicTransport: true }, "subway"),
+  bus: policy({ ...TRAVEL_BASE, isPublicTransport: true }, "bus"),
+  train: policy({ ...TRAVEL_BASE, isPublicTransport: true }, "train"),
+  flight: policy({ ...TRAVEL_BASE, isPublicTransport: true }, "flight"),
   ferry: policy(
-    {
-      ...TRAVEL_SMALL,
-      isPublicTransport: true,
-      isWaterTransport: true,
-    },
+    { ...TRAVEL_BASE, isPublicTransport: true, isWaterTransport: true },
     "ferry",
   ),
-  passenger_boat: policy(
-    {
-      ...TRAVEL_SMALL,
-      isWaterTransport: true,
-    },
-    "passenger_boat",
-  ),
+  passenger_boat: policy({ ...TRAVEL_BASE, isWaterTransport: true }, "passenger_boat"),
   private_boat: policy(
     {
-      ...TRAVEL_SMALL,
+      ...TRAVEL_BASE,
       requiresVehicleIdentity: true,
       isWaterTransport: true,
     },
     "private_boat",
   ),
-  cargo_van: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: true,
-      isPublicTransport: false,
-      isWaterTransport: false,
-      allowsNewPost: true,
-    },
-    "cargo_van",
-  ),
-  light_truck: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: true,
-      isPublicTransport: false,
-      isWaterTransport: false,
-      allowsNewPost: true,
-    },
-    "light_truck",
-  ),
-  box_truck: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: true,
-      isPublicTransport: false,
-      isWaterTransport: false,
-      allowsNewPost: true,
-    },
-    "box_truck",
-  ),
-  trailer: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: true,
-      isPublicTransport: false,
-      isWaterTransport: false,
-      allowsNewPost: true,
-    },
-    "trailer",
-  ),
-  other_cargo_vehicle: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: true,
-      isPublicTransport: false,
-      isWaterTransport: false,
-      allowsNewPost: true,
-    },
-    "other_cargo_vehicle",
-  ),
-  cargo_boat: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: false,
-      isPublicTransport: false,
-      isWaterTransport: true,
-      allowsNewPost: true,
-    },
-    "cargo_boat",
-  ),
-  private_cargo_boat: policy(
-    {
-      lane: "deliver",
-      canCarrySmallItems: false,
-      canCarryLargeItems: true,
-      ...NO_PEOPLE,
-      requiresVehicleIdentity: true,
-      requiresPlate: false,
-      isPublicTransport: false,
-      isWaterTransport: true,
-      allowsNewPost: true,
-    },
-    "private_cargo_boat",
-  ),
+  cargo_van: policy(CARGO_ROAD, "cargo_van"),
+  light_truck: policy(CARGO_ROAD, "light_truck"),
+  box_truck: policy(CARGO_ROAD, "box_truck"),
+  vehicle_with_trailer: policy(CARGO_ROAD, "vehicle_with_trailer"),
+  other_cargo_vehicle: policy(CARGO_ROAD, "other_cargo_vehicle"),
+  cargo_boat: policy(CARGO_WATER, "cargo_boat"),
+  private_cargo_boat: policy(CARGO_WATER, "private_cargo_boat"),
 };
 
 const LEGACY_VAN_POLICY: TransportCapabilityPolicy = {
-  lane: "deliver",
-  canCarrySmallItems: false,
-  canCarryLargeItems: true,
-  showsPeopleCapacity: false,
+  eligibleForTravelLane: false,
+  eligibleForDeliverLane: true,
+  canPhysicallyCarrySmallItems: true,
+  canPhysicallyCarryLargeItems: true,
+  offersPlatformPeopleFields: false,
+  maxPeopleCount: 0,
   maxPeopleCapacity: 0,
   requiresVehicleIdentity: true,
   requiresPlate: true,
@@ -323,7 +219,6 @@ const LEGACY_VAN_POLICY: TransportCapabilityPolicy = {
   legacyReadable: true,
 };
 
-/** UI copy contract only. Do not replace live hall/publish messages this round. */
 export const TRANSPORT_LANE_COPY_CONTRACT = {
   travel: {
     titleKey: "transportPolicy.travelTitle",
@@ -376,31 +271,31 @@ export function isModeAllowedForLane(
 ): boolean {
   const current = getTransportPolicy(mode);
   if (!current || !current.allowsNewPost) return false;
-  return current.lane === lane;
+  return lane === "travel"
+    ? current.eligibleForTravelLane
+    : current.eligibleForDeliverLane;
 }
 
 export function getTransportFieldVisibility(input: {
   lane: TransportServiceLane;
   postType: PostType;
   mode: string;
-  hasPeople?: boolean;
-  hasItems?: boolean;
 }): TransportFieldVisibility | null {
+  if (!isModeAllowedForLane(input.mode, input.lane)) return null;
   const current = getTransportPolicy(input.mode);
   if (!current) return null;
 
-  const isCar = input.mode === "car";
-  const deliverProvider =
-    input.lane === "deliver" && input.postType === "provider";
+  const travelCar =
+    input.lane === "travel" &&
+    input.mode === "car" &&
+    current.offersPlatformPeopleFields;
   const deliverDemand = input.lane === "deliver" && input.postType === "demand";
 
   return {
-    showPeopleCapacity:
-      input.lane === "travel" && isCar && current.showsPeopleCapacity && !deliverProvider,
+    showPeopleCount: travelCar && input.postType === "demand",
+    showPeopleCapacity: travelCar && input.postType === "provider",
     showSmallItemCapacity:
-      input.lane === "travel" && current.canCarrySmallItems,
-    showLargeCargoCapacity:
-      input.lane === "deliver" && current.canCarryLargeItems,
+      input.lane === "travel" && current.canPhysicallyCarrySmallItems,
     showVehicleIdentity:
       input.postType === "provider" && current.requiresVehicleIdentity,
     showPlate:
@@ -414,8 +309,50 @@ export function getTransportFieldVisibility(input: {
   };
 }
 
-function isFiniteInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && Number.isFinite(value);
+function hasDefinedField(
+  input: object,
+  key: keyof TransportCapabilityInput,
+): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(input, key) &&
+    (input as Record<string, unknown>)[key] !== undefined
+  );
+}
+
+export function parsePolicyQuantity(
+  value: unknown,
+): { ok: true; value: number } | { ok: false; errorKey: string } {
+  if (typeof value !== "number") {
+    return { ok: false, errorKey: "error.transport_quantity_invalid" };
+  }
+  if (
+    !Number.isFinite(value) ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > PG_INT_MAX
+  ) {
+    return { ok: false, errorKey: "error.transport_quantity_invalid" };
+  }
+  return { ok: true, value };
+}
+
+function readQuantity(
+  input: TransportCapabilityInput,
+  key: "peopleCount" | "peopleCapacity" | "travelItemUnits" | "escortPassengerCount",
+): { ok: true; value: number | null } | { ok: false; errorKey: string } {
+  if (!hasDefinedField(input, key)) return { ok: true, value: null };
+  const parsed = parsePolicyQuantity((input as Record<string, unknown>)[key]);
+  if (!parsed.ok) return parsed;
+  return { ok: true, value: parsed.value };
+}
+
+function peopleValueForCombo(
+  postType: PostType,
+  peopleCount: number | null,
+  peopleCapacity: number | null,
+): number {
+  if (postType === "demand") return peopleCount ?? 0;
+  return peopleCapacity ?? 0;
 }
 
 export function validateTransportCapability(
@@ -429,44 +366,81 @@ export function validateTransportCapability(
     return { ok: false, errorKey: "error.transport_mode_not_allowed_for_lane" };
   }
 
-  const people = input.peopleCapacity ?? 0;
-  if (input.peopleCapacity != null && !isFiniteInteger(input.peopleCapacity)) {
-    return { ok: false, errorKey: "error.transport_people_not_integer" };
+  const hasPeopleCount = hasDefinedField(input, "peopleCount");
+  const hasPeopleCapacity = hasDefinedField(input, "peopleCapacity");
+  if (input.postType === "demand" && hasPeopleCapacity) {
+    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
   }
-  if (input.mode !== "car") {
-    if (people > 0) {
-      return { ok: false, errorKey: "error.transport_people_not_allowed" };
-    }
-  } else if (people < 0 || people > CAR_PEOPLE_CAPACITY_MAX) {
-    return { ok: false, errorKey: "error.transport_people_bounds" };
+  if (input.postType === "provider" && hasPeopleCount) {
+    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
+  }
+  if (input.lane === "deliver" && (hasPeopleCount || hasPeopleCapacity)) {
+    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
   }
 
-  if (input.lane === "deliver" && input.postType === "provider" && people > 0) {
-    return { ok: false, errorKey: "error.transport_people_not_allowed" };
+  const countRead = readQuantity(input, "peopleCount");
+  if (!countRead.ok) return countRead;
+  const capacityRead = readQuantity(input, "peopleCapacity");
+  if (!capacityRead.ok) return capacityRead;
+  const itemsRead = readQuantity(input, "travelItemUnits");
+  if (!itemsRead.ok) return itemsRead;
+  const escortRead = readQuantity(input, "escortPassengerCount");
+  if (!escortRead.ok) return escortRead;
+
+  if (input.lane === "travel" && escortRead.value !== null) {
+    return { ok: false, errorKey: "error.transport_people_field_not_allowed" };
   }
+
+  const peopleCount = countRead.value;
+  const peopleCapacity = capacityRead.value;
+  const isCar = input.mode === "car";
+
+  const checkPeopleBound = (
+    value: number | null,
+    max: number,
+  ): TransportValidationResult | null => {
+    if (value === null) return null;
+    if (!isCar) {
+      if (value !== 0) {
+        return { ok: false, errorKey: "error.transport_people_not_allowed" };
+      }
+      return null;
+    }
+    if (value > max) {
+      return { ok: false, errorKey: "error.transport_people_bounds" };
+    }
+    return null;
+  };
+
+  const countBound = checkPeopleBound(peopleCount, current.maxPeopleCount);
+  if (countBound) return countBound;
+  const capacityBound = checkPeopleBound(
+    peopleCapacity,
+    current.maxPeopleCapacity,
+  );
+  if (capacityBound) return capacityBound;
 
   if (input.lane === "travel") {
-    const items = input.smallItemTotal ?? 0;
-    if ((people ?? 0) <= 0 && items <= 0) {
+    const people = peopleValueForCombo(
+      input.postType,
+      peopleCount,
+      peopleCapacity,
+    );
+    const items = itemsRead.value ?? 0;
+    if (people > 0 && !isCar) {
+      return { ok: false, errorKey: "error.transport_people_not_allowed" };
+    }
+    if (people === 0 && items === 0) {
       return { ok: false, errorKey: "error.transport_travel_empty" };
     }
   }
 
-  if (input.lane === "deliver") {
-    const cargo = input.largeCargoTotal ?? 0;
-    if (cargo <= 0) {
-      return { ok: false, errorKey: "error.transport_deliver_cargo_required" };
-    }
-    if (input.escortPassengerCount != null) {
-      if (!isFiniteInteger(input.escortPassengerCount)) {
-        return { ok: false, errorKey: "error.transport_escort_not_integer" };
-      }
-      if (
-        input.escortPassengerCount < 0 ||
-        input.escortPassengerCount > DELIVER_ESCORT_PASSENGER_MAX
-      ) {
-        return { ok: false, errorKey: "error.transport_escort_bounds" };
-      }
+  if (escortRead.value !== null) {
+    if (
+      escortRead.value > DELIVER_ESCORT_PASSENGER_MAX ||
+      input.lane !== "deliver"
+    ) {
+      return { ok: false, errorKey: "error.transport_escort_bounds" };
     }
   }
 

@@ -1,8 +1,10 @@
-# Transport / safety policy inventory (PHASE 6.7B.1A)
+# Transport / safety policy inventory (PHASE 6.7B.1A / 6.7B.1A.1)
 
 目标不是消灭所有代码常量，而是消灭散落和互相矛盾的业务规则。
 
-本轮只建立目标政策模块和本清单。不改生产发布表单、首页、费用结果、application payload V1、Fraud 水位、system_config、已执行 migration、init.sql。
+6.7B.1A 建立目标政策模块。6.7B.1A.1 修正 people 字段职责、lane fail-closed、Cargo V2 边界，并修复 Stage 1 canonical `transport_mode`/`title` 完整性（新 migration 尚未执行）。
+
+不要把仓库 SQL 当成 live catalog。Live catalog remains to be verified separately before deployment.
 
 分类：
 
@@ -86,22 +88,46 @@ Fraud 水位、hard deny、audit fail-closed **保持代码不变量**，不进 
 
 ## E. 数据库完整性
 
-只读 repo（未查询 live Supabase）：
+必须区分三种来源，不得把仓库 SQL 写成线上事实：
 
-| 结论 | 证据 |
+- **Repository SQL indicates** 仓库文件声称的结构（`posts_init.sql`、migrations）。
+- **Executed migrations** 用户已确认执行过的 migration 文件集合。
+- **Live catalog** 必须以用户手工跑的 catalog 查询为准。`posts_init.sql` 和 `init.sql` **都不是**线上事实来源。
+
+| 结论 | 证据边界 |
 | --- | --- |
-| `posts.transport_mode` 是 **text + CHECK**，不是 Postgres ENUM | `supabase/posts_init.sql` 允许 null 或 walking/scooter/bicycle/motorbike/subway/bus/train/flight/car/**van** |
-| 已执行 migration **没有**改该 CHECK | `supabase/migrations/` 内仅 `20260907000001` 在 view 中选出 `transport_mode`，无 ALTER CHECK |
-| 无独立 `transport_mode` enum type | 全库 rg 无 `CREATE TYPE ... transport` |
-| RPC 未硬编码 mode 列表 | `canonicalStage1.toRpcStage1Payload` **不含** `transport_mode` |
-| canonical hash **不含** `transport_mode` | `hashCanonicalStage1` 含 category、escort_seats、行李件数、share/delivery，不含 mode |
-| `public_posts_safe` **暴露** `transport_mode` | `20260907000001` view 列 + `src/lib/posts/publicPostSelect.ts` |
-| 历史 posts / 旧 matches / 未来 contract snapshots 依赖该 text | 改 CHECK 或删 van 会让历史行校验失败；contract snapshot 为 jsonb，可能拷贝 mode |
-| `init.sql` 冻结 | 本轮不得改 |
+| Repository SQL indicates `posts.transport_mode` 为 text + CHECK（含 van），不是 PG ENUM | `supabase/posts_init.sql` 声称如此。**Live catalog remains to be verified separately before deployment.** |
+| 已执行 migration 文件在 6.7B.1A.1 之前未 ALTER 该 CHECK | 仓库 `supabase/migrations/` 文本；不是 live catalog |
+| 6.7B.1A.1 新增 `20260909000001`：REPLACE `insert_stage1_post_v86` 写入 V1 `transport_mode` | 未执行前 live 仍是旧函数；**不得 apply 除非用户确认** |
+| canonical hash / RPC JSON **现在**绑定 `title` + `transport_mode` | TypeScript `canonicalStage1Core.ts` |
+| `public_posts_safe` 仓库 view 文本包含 `transport_mode` | `20260907000001`；live view 以 catalog 为准 |
+| `init.sql` 冻结 | 本轮 git diff 相对基线必须为空 |
 
-本轮：零 migration，不改已执行 SQL，不写 verify.sql，不操作 Supabase。
+新 V2 mode 在 CHECK 扩展并经 live catalog 确认之前，不得写入 posts。
 
-新 V2 mode（ebike、ferry、cargo_van 等）**不能**在改 CHECK 之前写入 posts，否则被现网约束拒绝。
+---
+
+## Cargo V2（明确未实现）
+
+下一独立 Phase 才建立生产模型，例如：
+
+`CargoRequirement` · `CargoCapacity` · `CargoItem` · `CargoHandlingConditions` · `CargoCompatibilityResult`
+
+计划内容：Demand 推荐车型、Provider 实际空间、长宽高、数量、重量/不确定、家具家电纸箱、易碎/超长/直立/液体/电池、楼层电梯、自行装卸或协助、押货人 0/1、明确不适配 / 需人工确认 / 可匹配。
+
+本轮禁止：生产字段、数据库列、改 application payload、改发布 UI、Cargo V2 费用、用 legacy 四档冒充上述字段。`transportPolicy` 不再使用 `largeCargoTotal` 表示 Deliver 合法。Deliver 最终非空校验由未来 Cargo V2 validator 完成。
+
+---
+
+## 6.7B.1A.1 政策修正
+
+- Demand `peopleCount` 与 Provider `peopleCapacity` 分离；错角色 fail closed。
+- 仅 car 可携带平台 Travel 人员。
+- `travelItemUnits` = 已分类的 Travel 允许小件/行李汇总。
+- `trailer` 更名为 `vehicle_with_trailer`（仅目标 policy）。
+- 物理承载与 lane eligibility 分离。
+- `getTransportFieldVisibility` 在 lane/mode 不匹配时返回 null。
+- safety facts 必须先 `validateSafetyFacts`。
 
 ---
 
@@ -145,7 +171,7 @@ Fraud 水位、hard deny、audit fail-closed **保持代码不变量**，不进 
 
 **1B（仍不挂大厅，不改发布生产行为）**
 
-1. 用本模块改 application payload V2：仅 car 人数；Travel 允许无人+小件；Deliver cargo>0；escort 0/1。
+1. 用本模块改 application payload V2：仅 car 人数；Travel 允许无人+小件。Deliver 非空货物由未来 Cargo V2 validator 负责，不要用 legacy 四档冒充。
 2. 修 MatchRequestSheet：render dispatch、草稿按 `targetPost.id` 重置、清除 server error、focus trap。
 3. 申请 UI 改用 `getTransportFieldVisibility`；运输 select 用目标 lane 列表，不把 van 当新 Travel。
 4. 不改 `TRANSPORT_MODES` 导出，避免发布表单提前出现新 mode。

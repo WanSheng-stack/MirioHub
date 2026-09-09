@@ -206,25 +206,26 @@ function validProviderOfferForm() {
     }
   }
   assert.equal(/GRANT\s+(SELECT|INSERT|UPDATE|DELETE|ALL)\b/i.test(migration67a), false);
+  const PHASE_67B1A_BASELINE = "189d1ef0561b6840df95e0a59874827fd01e4086";
   const migrationDiff = execFileSync(
     "git",
-    ["diff", "HEAD", "--", "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql"],
+    [
+      "diff",
+      PHASE_67B1A_BASELINE,
+      "--",
+      "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql",
+    ],
     { cwd: repoRoot, encoding: "utf8" },
   );
   assert.equal(migrationDiff, "");
-  const supabaseStatus = execFileSync(
-    "git",
-    ["status", "--porcelain", "--", "supabase"],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  assert.equal(supabaseStatus.trim(), "");
 }
 
 // TEST X public_posts_safe unchanged
 {
+  const PHASE_67B1A_BASELINE = "189d1ef0561b6840df95e0a59874827fd01e4086";
   const selectDiff = execFileSync(
     "git",
-    ["diff", "HEAD", "--", "src/lib/posts/publicPostSelect.ts"],
+    ["diff", PHASE_67B1A_BASELINE, "--", "src/lib/posts/publicPostSelect.ts"],
     { cwd: repoRoot, encoding: "utf8" },
   );
   assert.equal(selectDiff, "");
@@ -232,7 +233,7 @@ function validProviderOfferForm() {
     "git",
     [
       "diff",
-      "HEAD",
+      PHASE_67B1A_BASELINE,
       "--",
       "supabase/migrations/20260907000001_security_boundary_hardening_v86.sql",
     ],

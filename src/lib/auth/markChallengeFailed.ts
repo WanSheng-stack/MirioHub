@@ -5,6 +5,7 @@
 
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mapChallengeReserveReason } from "@/lib/auth/challengeReserveReason";
 
 export type ChallengeFence = {
   challengeId: string;
@@ -12,18 +13,7 @@ export type ChallengeFence = {
   processingToken: string;
 };
 
-export function mapChallengeReserveReason(reason: string | null | undefined): string {
-  switch (reason) {
-    case "expired":
-      return "error.device_verification_expired";
-    case "in_progress":
-      return "error.device_verification_in_progress";
-    case "failed":
-      return "error.device_verification_failed";
-    default:
-      return "error.device_verification_invalid";
-  }
-}
+export { mapChallengeReserveReason };
 
 export async function classifyChallengeReserveFailure(
   supabase: SupabaseClient,

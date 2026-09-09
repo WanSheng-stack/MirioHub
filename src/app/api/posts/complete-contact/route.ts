@@ -54,6 +54,11 @@ import {
   upsertPhoneHistory,
   upsertPlateHistory,
 } from '@/lib/post-form/submitPost';
+import {
+  completeContactTransportFillFilter,
+  decideAfterConditionalFillMiss,
+  decideCompleteContactTransport,
+} from '@/lib/posts/completeContactTransport';
 import { evaluatePublishIntercept } from '@/lib/security/evaluateFraudIntercept';
 import { geocodeAddress, toGeographyPointWkt } from '@/lib/route-kms';
 import { haversineKm } from '@/lib/geo';
@@ -99,6 +104,50 @@ async function persistAccountCurrentPhone(
   );
 }
 
+async function applyTransportFill(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input: {
+    postId: string;
+    userId: string;
+    decision: ReturnType<typeof decideCompleteContactTransport>;
+  },
+): Promise<{ ok: true } | { ok: false; errorKey: string }> {
+  if (input.decision.kind !== 'fill') return { ok: true };
+  const filter = completeContactTransportFillFilter({
+    postId: input.postId,
+    ownerUserId: input.userId,
+  });
+  const { data, error } = await supabase
+    .from('posts')
+    .update({ transport_mode: input.decision.mode })
+    .eq('id', filter.id)
+    .eq('user_id', filter.user_id)
+    .is('transport_mode', null)
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    console.error('[complete-contact] transport fill failed');
+    return { ok: false, errorKey: 'error.submit_failed' };
+  }
+  if (data) return { ok: true };
+  const { data: current } = await supabase
+    .from('posts')
+    .select('transport_mode')
+    .eq('id', filter.id)
+    .eq('user_id', filter.user_id)
+    .maybeSingle();
+  const raced = decideAfterConditionalFillMiss({
+    intendedMode: input.decision.mode,
+    currentMode:
+      (current as { transport_mode?: string | null } | null)?.transport_mode ??
+      null,
+  });
+  if (raced.kind === 'reject') {
+    return { ok: false, errorKey: raced.errorKey };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -113,6 +162,7 @@ interface ExistingPost {
   origin_address: string;
   destination_address: string;
   origin_gps: string | null;
+  transport_mode: string | null;
 }
 
 interface RequestBody {
@@ -182,7 +232,7 @@ export async function POST(request: Request) {
   const { data: rawPost, error: postErr } = await supabase
     .from('posts')
     .select(
-      'id, user_id, status, post_type, departure_date, departure_time_window, origin_address, destination_address, origin_gps',
+      'id, user_id, status, post_type, departure_date, departure_time_window, origin_address, destination_address, origin_gps, transport_mode',
     )
     .eq('id', postId)
     .eq('user_id', user.id)
@@ -196,6 +246,18 @@ export async function POST(request: Request) {
   }
 
   const post = rawPost as ExistingPost;
+
+  const transportDecision = decideCompleteContactTransport({
+    isOwner: post.user_id === user.id,
+    existingMode: post.transport_mode,
+    requested: transport_mode,
+  });
+  if (transportDecision.kind === 'reject') {
+    return NextResponse.json(
+      { ok: false, errorKey: transportDecision.errorKey },
+      { status: 400 },
+    );
+  }
 
   if (!['draft', 'active'].includes(post.status)) {
     return NextResponse.json(
@@ -257,8 +319,12 @@ export async function POST(request: Request) {
 
   // ── Plate — optional: only provider posts, only if provided ───────────────
   const plateRequiringModes = ['car', 'motorbike', 'van'];
+  const modeForPlate =
+    post.transport_mode ||
+    (transportDecision.kind === 'fill' ? transportDecision.mode : '') ||
+    (typeof transport_mode === 'string' ? transport_mode : '');
   const needsPlate =
-    post.post_type === 'provider' && plateRequiringModes.includes(transport_mode ?? '');
+    post.post_type === 'provider' && plateRequiringModes.includes(modeForPlate);
   let normalizedPlate: string | null = null;
   let rawPlate: string | null = null;
   let plateId: number | null = null;
@@ -332,7 +398,6 @@ export async function POST(request: Request) {
   if (provider_name !== undefined) updatePayload.provider_name = provider_name.trim() || null;
   if (vehicle_brand !== undefined) updatePayload.vehicle_brand = vehicle_brand.trim() || null;
   if (vehicle_color !== undefined) updatePayload.vehicle_color = vehicle_color.trim() || null;
-  if (transport_mode !== undefined) updatePayload.transport_mode = transport_mode || null;
 
   // ── Activation policy ─────────────────────────────────────────────────────
   // Channel A posts are already active — contact save only, status unchanged.
@@ -354,6 +419,17 @@ export async function POST(request: Request) {
           return NextResponse.json(
             { ok: false, errorKey: 'error.submit_failed' },
             { status: 500 },
+          );
+        }
+        const filled = await applyTransportFill(supabase, {
+          postId,
+          userId: user.id,
+          decision: transportDecision,
+        });
+        if (!filled.ok) {
+          return NextResponse.json(
+            { ok: false, errorKey: filled.errorKey },
+            { status: 400 },
           );
         }
         if (hasPhone && normalizedPhoneForPost) {
@@ -394,6 +470,18 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { ok: false, errorKey: 'error.submit_failed' },
       { status: 500 },
+    );
+  }
+
+  const filled = await applyTransportFill(supabase, {
+    postId,
+    userId: user.id,
+    decision: transportDecision,
+  });
+  if (!filled.ok) {
+    return NextResponse.json(
+      { ok: false, errorKey: filled.errorKey },
+      { status: 400 },
     );
   }
 

@@ -2,7 +2,7 @@
 -- MANUAL APPLY REQUIRED. Do not auto-apply.
 -- Does not alter 20260908000004 or earlier files.
 -- Does not alter posts.transport_mode CHECK.
--- Does not add V2 modes. Does not GRANT EXECUTE to PUBLIC/anon/authenticated.
+-- Does not add V2 modes. Does not GRANT EXECUTE to PUBLIC/anon/authenticated/service_role.
 
 CREATE OR REPLACE FUNCTION public.insert_stage1_post_v86(
   p_user_id           uuid,
@@ -101,3 +101,7 @@ REVOKE ALL ON FUNCTION public.insert_stage1_post_v86(
 REVOKE ALL ON FUNCTION public.insert_stage1_post_v86(
   uuid, uuid, text, text, jsonb, bigint, text
 ) FROM authenticated;
+
+REVOKE ALL ON FUNCTION public.insert_stage1_post_v86(
+  uuid, uuid, text, text, jsonb, bigint, text
+) FROM service_role;

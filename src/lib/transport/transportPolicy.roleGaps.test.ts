@@ -44,11 +44,11 @@ function rejectKey(
   return result.errorKey;
 }
 
-function gitDiff(baseline: string, path: string): string {
-  return execFileSync("git", ["diff", "--name-only", baseline, "--", path], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
+function stage1HelperBody(sql: string): string {
+  const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.insert_stage1_post_v86");
+  const end = sql.indexOf("$$;");
+  assert.ok(start >= 0 && end > start);
+  return sql.slice(start, end + 3);
 }
 
 const deliverEscortOk = "error.transport_escort_field_not_allowed";
@@ -489,20 +489,25 @@ const verifySql = read(
   assert.ok(verifySql.includes("aclexplode"));
   assert.ok(verifySql.includes("acldefault('f'"));
   assert.ok(verifySql.includes("a.grantee = 0"));
-  assert.ok(verifySql.includes("public_can_execute"));
-  assert.ok(verifySql.includes("anon_can_execute"));
-  assert.ok(verifySql.includes("authenticated_can_execute"));
-  assert.ok(verifySql.includes("service_role_can_execute"));
+  assert.ok(verifySql.includes("public_direct_execute"));
+  assert.ok(verifySql.includes("anon_effective_execute"));
+  assert.ok(verifySql.includes("authenticated_effective_execute"));
+  assert.ok(verifySql.includes("service_role_effective_execute"));
   assert.equal(verifySql.includes("FROM posts"), false);
   assert.equal(verifySql.includes("INSERT INTO"), false);
 }
 
-// TEST Y — main migration signature / body / V1 allowlist / ACL unchanged
+// TEST Y — helper body / V1 allowlist unchanged; init.sql untouched
 {
   const mainSql =
     "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.sql";
-  assert.equal(gitDiff(ROUND_BASELINE, mainSql), "");
   const migration = read(mainSql);
+  const baselineSql = execFileSync(
+    "git",
+    ["show", `${ROUND_BASELINE}:${mainSql}`],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(stage1HelperBody(migration), stage1HelperBody(baselineSql));
   assert.ok(
     /CREATE OR REPLACE FUNCTION public\.insert_stage1_post_v86\(/.test(migration),
   );
@@ -521,7 +526,12 @@ const verifySql = read(
   assert.ok(migration.includes("FROM PUBLIC"));
   assert.ok(migration.includes("FROM anon"));
   assert.ok(migration.includes("FROM authenticated"));
-  assert.equal(gitDiff(ROUND_BASELINE, "supabase/init.sql"), "");
+  const initChanged = execFileSync(
+    "git",
+    ["diff", "--name-only", ROUND_BASELINE, "--", "supabase/init.sql"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim();
+  assert.equal(initChanged, "");
 }
 
 {

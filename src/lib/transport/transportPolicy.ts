@@ -399,6 +399,9 @@ function peopleValueForCombo(
  * Role / scene field gates shared by the transport capability validator and
  * safety facts. Escort is Deliver Demand only — never a Provider public seat
  * field. travelItemUnits is Travel only; Deliver must not silently ignore it.
+ * Travel peopleCount / peopleCapacity use the platform 0–4 cap here so Safety
+ * facts without a transportMode still reject oversized counts. Mode-specific
+ * rules (only car may have people > 0) stay in validateTransportCapability.
  */
 export function validateTransportDeclaredFields(
   input: TransportDeclaredFieldsInput,
@@ -441,6 +444,18 @@ export function validateTransportDeclaredFields(
   if (!escortRead.ok) return escortRead;
 
   if (
+    countRead.value !== null &&
+    countRead.value > CAR_PEOPLE_COUNT_MAX
+  ) {
+    return { ok: false, errorKey: "error.transport_people_bounds" };
+  }
+  if (
+    capacityRead.value !== null &&
+    capacityRead.value > CAR_PEOPLE_CAPACITY_MAX
+  ) {
+    return { ok: false, errorKey: "error.transport_people_bounds" };
+  }
+  if (
     escortRead.value !== null &&
     escortRead.value > DELIVER_ESCORT_PASSENGER_MAX
   ) {
@@ -474,29 +489,18 @@ export function validateTransportCapability(
   const peopleCapacity = declared.peopleCapacity;
   const isCar = input.mode === "car";
 
-  const checkPeopleBound = (
+  const rejectNonCarPeople = (
     value: number | null,
-    max: number,
   ): TransportValidationResult | null => {
-    if (value === null) return null;
-    if (!isCar) {
-      if (value !== 0) {
-        return { ok: false, errorKey: "error.transport_people_not_allowed" };
-      }
-      return null;
-    }
-    if (value > max) {
-      return { ok: false, errorKey: "error.transport_people_bounds" };
+    if (value !== null && !isCar && value > 0) {
+      return { ok: false, errorKey: "error.transport_people_not_allowed" };
     }
     return null;
   };
 
-  const countBound = checkPeopleBound(peopleCount, current.maxPeopleCount);
+  const countBound = rejectNonCarPeople(peopleCount);
   if (countBound) return countBound;
-  const capacityBound = checkPeopleBound(
-    peopleCapacity,
-    current.maxPeopleCapacity,
-  );
+  const capacityBound = rejectNonCarPeople(peopleCapacity);
   if (capacityBound) return capacityBound;
 
   if (input.lane === "travel") {

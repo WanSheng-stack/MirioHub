@@ -32,11 +32,14 @@ import {
   matchRequestCloseActions,
   matchRequestInitialFocusIndex,
   matchRequestTabTrap,
+  readMatchRequestFocusEligibility,
+  restoreMatchRequestTriggerFocus,
+  safeFocusMatchRequestElement,
   shouldClearServerErrorOnUserEdit,
   shouldResetMatchRequestDraft,
-  shouldRestartMatchRequestFocusLifecycle,
   transportModesForMatchRequest,
   type MatchRequestFocusTreeNode,
+  type MatchRequestRestoreNode,
 } from "@/lib/matching/matchRequestSheetBehavior";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -404,6 +407,27 @@ function validProviderOfferForm() {
   assert.equal(sheetSrc.includes("public_posts_safe"), false);
 }
 
+{
+  const PHASE_67B15_PARENT = "10a0bf2a0f8c4b6f113b209ef236d3e2f8f93a86";
+  for (const file of [
+    "supabase/migrations",
+    "supabase/init.sql",
+    "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.sql",
+    "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql",
+    "src/lib/posts/publicPostSelect.ts",
+  ]) {
+    const diff = execFileSync("git", ["diff", PHASE_67B15_PARENT, "--", file], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.equal(diff, "", file);
+  }
+  assert.equal(sheetSrc.includes("eslint-disable"), false);
+  assert.equal(behaviorSrc.includes("eslint-disable"), false);
+  assert.equal(sheetSrc.includes("writeFraud"), false);
+  assert.equal(/fetch\s*\(\s*["']\/api\/match/.test(sheetSrc), false);
+}
+
 assert.ok(payloadSrc.includes("Client validator is UX"));
 assert.ok(payloadSrc.includes("6.7C"));
 assert.ok(payloadSrc.includes("Never trust browser-provided"));
@@ -436,11 +460,17 @@ assert.equal(sheetSrc.includes("[open, onOpenChange, submitting]"), false);
 assert.ok(sheetSrc.includes("submittingRef"));
 assert.ok(sheetSrc.includes("isEligibleMatchRequestFocusTarget"));
 assert.ok(sheetSrc.includes("readMatchRequestFocusEligibility"));
+assert.ok(sheetSrc.includes("safeMatchRequestStyleReader"));
+assert.ok(sheetSrc.includes("safeFocusMatchRequestElement"));
+assert.ok(sheetSrc.includes("restoreMatchRequestTriggerFocus"));
 assert.ok(sheetSrc.includes("isStayInPanelTrap"));
 assert.equal(sheetSrc.includes("if (trapNodes.length === 0) return;"), false);
 assert.equal(sheetSrc.includes("isMatchRequestFocusableCandidate"), false);
 assert.equal(sheetSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
 assert.equal(sheetSrc.includes("readMatchRequestRestoreTarget"), false);
+assert.equal(sheetSrc.includes("shouldRestartMatchRequestFocusLifecycle"), false);
+assert.equal(behaviorSrc.includes("shouldRestartMatchRequestFocusLifecycle"), false);
+assert.ok(behaviorSrc.includes("tabIndex < 0"));
 assert.ok(behaviorSrc.includes("inputTypeHidden"));
 assert.ok(behaviorSrc.includes("inertInTree"));
 assert.ok(behaviorSrc.includes("displayNoneInTree"));
@@ -585,7 +615,11 @@ assert.equal(behaviorSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
   });
   assert.equal(ancestorDisabled.disabled, true);
   assert.equal(isEligibleMatchRequestFocusTarget(ancestorDisabled), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: 0 })), true);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: 1 })), true);
   assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: -1 })), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: -2 })), false);
+  assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: -99 })), false);
   assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ inputTypeHidden: true })), false);
   assert.equal(
     isEligibleMatchRequestFocusTarget(
@@ -711,13 +745,143 @@ assert.equal(behaviorSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
   assert.equal(matchRequestInitialFocusIndex(4), 0);
   assert.equal(matchRequestInitialFocusIndex(1), 0);
   assert.equal(matchRequestInitialFocusIndex(0), null);
+
+  const eligibleFacts = eligibility();
+  const trigger: MatchRequestRestoreNode = { isConnected: true };
+  const panel: MatchRequestRestoreNode = { isConnected: true };
+  const child: MatchRequestRestoreNode = { isConnected: true };
+  const deep: MatchRequestRestoreNode = { isConnected: true };
+  function dialogContains(
+    dialog: MatchRequestRestoreNode | null,
+    target: MatchRequestRestoreNode,
+  ): boolean {
+    return dialog === panel && (target === panel || target === child || target === deep);
+  }
+  const focused: MatchRequestRestoreNode[] = [];
   assert.equal(
-    shouldRestartMatchRequestFocusLifecycle({ submittingChanged: true }),
+    restoreMatchRequestTriggerFocus({
+      target: trigger,
+      dialog: panel,
+      contains: dialogContains,
+      eligibility: eligibleFacts,
+      focus: (node) => {
+        focused.push(node);
+        return true;
+      },
+    }),
+    "restored",
+  );
+  assert.equal(focused.length, 1);
+  assert.equal(focused[0], trigger);
+  assert.equal(
+    restoreMatchRequestTriggerFocus({
+      target: panel,
+      dialog: panel,
+      contains: dialogContains,
+      eligibility: eligibleFacts,
+      focus: () => true,
+    }),
+    "skipped",
+  );
+  assert.equal(
+    restoreMatchRequestTriggerFocus({
+      target: child,
+      dialog: panel,
+      contains: dialogContains,
+      eligibility: eligibleFacts,
+      focus: () => true,
+    }),
+    "skipped",
+  );
+  assert.equal(
+    restoreMatchRequestTriggerFocus({
+      target: deep,
+      dialog: panel,
+      contains: dialogContains,
+      eligibility: eligibleFacts,
+      focus: () => true,
+    }),
+    "skipped",
+  );
+  assert.equal(
+    restoreMatchRequestTriggerFocus({
+      target: { isConnected: false },
+      dialog: panel,
+      contains: dialogContains,
+      eligibility: eligibleFacts,
+      focus: () => true,
+    }),
+    "skipped",
+  );
+  for (const blocked of [
+    eligibility({ disabled: true }),
+    eligibility({ chain: [{ ...visibleNode, hidden: true }] }),
+    eligibility({ chain: [{ ...visibleNode, ariaHidden: true }] }),
+    eligibility({ chain: [{ ...visibleNode, inert: true }] }),
+    eligibility({
+      chain: [visibleNode, { ...visibleNode, hidden: true }],
+    }),
+    eligibility({
+      chain: [visibleNode, { ...visibleNode, inert: true }],
+    }),
+  ]) {
+    assert.equal(
+      restoreMatchRequestTriggerFocus({
+        target: trigger,
+        dialog: panel,
+        contains: () => false,
+        eligibility: blocked,
+        focus: () => true,
+      }),
+      "skipped",
+    );
+  }
+
+  const fakeHost = {
+    isConnected: true,
+    tabIndex: 0,
+    hidden: false,
+    tagName: "BUTTON",
+    parentElement: null,
+    hasAttribute: () => false,
+    getAttribute: () => null,
+    matches: () => false,
+  } as unknown as HTMLElement;
+  const styleFailed = readMatchRequestFocusEligibility(fakeHost, {
+    getStyle: () => {
+      throw new Error("style");
+    },
+  });
+  assert.equal(isEligibleMatchRequestFocusTarget(styleFailed), false);
+
+  assert.equal(
+    safeFocusMatchRequestElement({
+      focus: () => {
+        throw new Error("initial");
+      },
+    }),
     false,
   );
   assert.equal(
-    shouldRestartMatchRequestFocusLifecycle({ submittingChanged: false }),
+    safeFocusMatchRequestElement({
+      focus: () => {
+        throw new Error("tab");
+      },
+    }),
     false,
+  );
+  assert.equal(safeFocusMatchRequestElement(null), false);
+  assert.equal(
+    restoreMatchRequestTriggerFocus({
+      target: trigger,
+      dialog: panel,
+      contains: () => false,
+      eligibility: eligibleFacts,
+      focus: () => {
+        throw new Error("restore");
+      },
+    }),
+    "focus_failed",
   );
 
   assert.deepEqual(transportModesForMatchRequest("deliver"), []);

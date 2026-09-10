@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PHASE 6.7B.1B.5 — unmounted match-request sheet.
+ * PHASE 6.7B.1B.5A — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
  * Deliver applications collect Cargo V2 aggregate space (applicant side only).
@@ -44,6 +44,9 @@ import {
   matchRequestInitialFocusIndex,
   matchRequestTabTrap,
   readMatchRequestFocusEligibility,
+  restoreMatchRequestTriggerFocus,
+  safeFocusMatchRequestElement,
+  safeMatchRequestStyleReader,
   shouldClearServerErrorOnUserEdit,
   transportModesForMatchRequest,
 } from "@/lib/matching/matchRequestSheetBehavior";
@@ -122,20 +125,29 @@ function MatchRequestSheetBody({
 
   useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
+    const dialog = panelRef.current;
+
+    function readFacts(el: HTMLElement) {
+      return readMatchRequestFocusEligibility(el, {
+        getStyle: safeMatchRequestStyleReader,
+      });
+    }
 
     function focusables(): HTMLElement[] {
-      if (!panelRef.current) return [];
-      return Array.from(
-        panelRef.current.querySelectorAll<HTMLElement>(MATCH_REQUEST_FOCUSABLE_SELECTOR),
-      ).filter((el) =>
-        isEligibleMatchRequestFocusTarget(readMatchRequestFocusEligibility(el)),
-      );
+      try {
+        if (!dialog) return [];
+        return Array.from(
+          dialog.querySelectorAll<HTMLElement>(MATCH_REQUEST_FOCUSABLE_SELECTOR),
+        ).filter((el) => isEligibleMatchRequestFocusTarget(readFacts(el)));
+      } catch {
+        return [];
+      }
     }
 
     const nodes = focusables();
     const initial = matchRequestInitialFocusIndex(nodes.length);
-    if (initial !== null) nodes[initial]?.focus();
-    else panelRef.current?.focus();
+    if (initial !== null) safeFocusMatchRequestElement(nodes[initial]);
+    else safeFocusMatchRequestElement(dialog);
 
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -157,21 +169,19 @@ function MatchRequestSheetBody({
       if (!trap) return;
       event.preventDefault();
       if (isStayInPanelTrap(trap)) {
-        panelRef.current?.focus();
+        safeFocusMatchRequestElement(dialog);
         return;
       }
-      trapNodes[trap.nextIndex]?.focus();
+      safeFocusMatchRequestElement(trapNodes[trap.nextIndex]);
     }
 
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (
-        previous &&
-        isEligibleMatchRequestFocusTarget(readMatchRequestFocusEligibility(previous))
-      ) {
-        previous.focus();
-      }
+      restoreMatchRequestTriggerFocus({
+        target: previous,
+        dialog,
+      });
     };
   }, []);
 

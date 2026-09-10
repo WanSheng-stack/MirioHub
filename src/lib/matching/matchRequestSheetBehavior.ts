@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7B.1B.5 — testable MatchRequestSheet lifecycle / a11y helpers.
+ * PHASE 6.7B.1B.5A — testable MatchRequestSheet lifecycle / a11y helpers.
  * Parent owns serverErrorKey. Tab and restore share one focus-eligibility rule.
  */
 
@@ -45,14 +45,6 @@ export function shouldClearServerErrorOnUserEdit(actionType: string): boolean {
 export function matchRequestInitialFocusIndex(focusableCount: number): number | null {
   if (focusableCount <= 0) return null;
   return 0;
-}
-
-/** submitting must not remount the focus/restore lifecycle. */
-export function shouldRestartMatchRequestFocusLifecycle(input: {
-  submittingChanged: boolean;
-}): boolean {
-  void input.submittingChanged;
-  return false;
 }
 
 export type MatchRequestTabTrapResult =
@@ -134,7 +126,7 @@ export function isEligibleMatchRequestFocusTarget(
 ): boolean {
   if (!facts.isConnected) return false;
   if (facts.disabled) return false;
-  if (facts.tabIndex === -1) return false;
+  if (facts.tabIndex < 0) return false;
   if (facts.inputTypeHidden) return false;
   if (facts.hiddenInTree) return false;
   if (facts.ariaHiddenInTree) return false;
@@ -144,13 +136,52 @@ export function isEligibleMatchRequestFocusTarget(
   return true;
 }
 
+function failClosedFocusEligibility(): MatchRequestFocusEligibility {
+  return {
+    isConnected: false,
+    disabled: true,
+    tabIndex: -1,
+    inputTypeHidden: true,
+    hiddenInTree: true,
+    ariaHiddenInTree: true,
+    inertInTree: true,
+    displayNoneInTree: true,
+    visibilityHiddenInTree: true,
+  };
+}
+
+export type MatchRequestStyleSnapshot = {
+  display: string;
+  visibility: string;
+};
+
+export function safeMatchRequestStyleReader(el: HTMLElement): MatchRequestStyleSnapshot {
+  const style = getComputedStyle(el);
+  return {
+    display: String(style.display),
+    visibility: String(style.visibility),
+  };
+}
+
+export function safeFocusMatchRequestElement(
+  element: { focus: () => void } | null | undefined,
+): boolean {
+  if (!element) return false;
+  try {
+    element.focus();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function nodeIsDisabled(el: HTMLElement): boolean {
   if (el.hasAttribute("disabled")) return true;
   if ((el as HTMLElement & { disabled?: boolean }).disabled === true) return true;
   try {
     if (typeof el.matches === "function" && el.matches(":disabled")) return true;
   } catch {
-    return false;
+    // Attribute/property already decided; a :disabled throw must not clear that.
   }
   return false;
 }
@@ -171,28 +202,102 @@ function nodeIsHiddenInput(el: HTMLElement): boolean {
 
 export function readMatchRequestFocusEligibility(
   el: HTMLElement,
+  options?: {
+    getStyle?: (node: HTMLElement) => MatchRequestStyleSnapshot;
+  },
 ): MatchRequestFocusEligibility {
-  const chain: MatchRequestFocusTreeNode[] = [];
-  let node: HTMLElement | null = el;
-  while (node) {
-    const style = getComputedStyle(node);
-    chain.push({
-      hidden: nodeIsHiddenFlag(node),
-      ariaHidden: node.getAttribute("aria-hidden") === "true",
-      inert: nodeIsInert(node),
-      disabled: nodeIsDisabled(node),
-      display: style.display,
-      visibility: style.visibility,
+  const getStyle = options?.getStyle ?? safeMatchRequestStyleReader;
+  try {
+    const chain: MatchRequestFocusTreeNode[] = [];
+    let node: HTMLElement | null = el;
+    while (node) {
+      let snapshot: MatchRequestStyleSnapshot;
+      try {
+        snapshot = getStyle(node);
+      } catch {
+        return failClosedFocusEligibility();
+      }
+      chain.push({
+        hidden: nodeIsHiddenFlag(node),
+        ariaHidden: node.getAttribute("aria-hidden") === "true",
+        inert: nodeIsInert(node),
+        disabled: nodeIsDisabled(node),
+        display: snapshot.display,
+        visibility: snapshot.visibility,
+      });
+      node = node.parentElement;
+    }
+    return collectMatchRequestFocusEligibility({
+      isConnected: el.isConnected,
+      disabled: nodeIsDisabled(el),
+      tabIndex: el.tabIndex,
+      inputTypeHidden: nodeIsHiddenInput(el),
+      chain,
     });
-    node = node.parentElement;
+  } catch {
+    return failClosedFocusEligibility();
   }
-  return collectMatchRequestFocusEligibility({
-    isConnected: el.isConnected,
-    disabled: nodeIsDisabled(el),
-    tabIndex: el.tabIndex,
-    inputTypeHidden: nodeIsHiddenInput(el),
-    chain,
-  });
+}
+
+export type RestoreMatchRequestTriggerFocusResult =
+  | "restored"
+  | "skipped"
+  | "focus_failed";
+
+export type MatchRequestRestoreNode = {
+  isConnected: boolean;
+  contains?(other: unknown): boolean;
+  focus?(): void;
+};
+
+export function restoreMatchRequestTriggerFocus(input: {
+  target: MatchRequestRestoreNode | HTMLElement | null;
+  dialog: MatchRequestRestoreNode | HTMLElement | null;
+  contains?: (
+    dialog: MatchRequestRestoreNode | HTMLElement | null,
+    target: MatchRequestRestoreNode | HTMLElement,
+  ) => boolean;
+  eligibility?: MatchRequestFocusEligibility;
+  readEligibility?: (
+    target: MatchRequestRestoreNode | HTMLElement,
+  ) => MatchRequestFocusEligibility;
+  focus?: (target: MatchRequestRestoreNode | HTMLElement) => boolean;
+}): RestoreMatchRequestTriggerFocusResult {
+  const target = input.target;
+  if (!target || target.isConnected !== true) return "skipped";
+
+  const insideDialog = input.contains
+    ? input.contains(input.dialog, target)
+    : typeof (input.dialog as HTMLElement | null)?.contains === "function"
+      ? Boolean((input.dialog as HTMLElement).contains(target as Node))
+      : false;
+  if (insideDialog) return "skipped";
+
+  let facts: MatchRequestFocusEligibility;
+  try {
+    facts =
+      input.eligibility ??
+      input.readEligibility?.(target) ??
+      readMatchRequestFocusEligibility(target as unknown as HTMLElement, {
+        getStyle: safeMatchRequestStyleReader,
+      });
+  } catch {
+    return "skipped";
+  }
+  if (!isEligibleMatchRequestFocusTarget(facts)) return "skipped";
+
+  try {
+    const focused = input.focus
+      ? input.focus(target)
+      : safeFocusMatchRequestElement(
+          typeof target.focus === "function"
+            ? { focus: () => target.focus?.() }
+            : null,
+        );
+    return focused ? "restored" : "focus_failed";
+  } catch {
+    return "focus_failed";
+  }
 }
 
 export const MATCH_REQUEST_FOCUSABLE_SELECTOR = [

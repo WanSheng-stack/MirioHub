@@ -445,7 +445,15 @@ assert.ok(behaviorSrc.includes("inputTypeHidden"));
 assert.ok(behaviorSrc.includes("inertInTree"));
 assert.ok(behaviorSrc.includes("displayNoneInTree"));
 assert.ok(behaviorSrc.includes("visibilityHiddenInTree"));
-assert.ok(behaviorSrc.includes("input:not([disabled]):not([type='hidden'])"));
+assert.ok(behaviorSrc.includes('el.hasAttribute("disabled")'));
+assert.ok(behaviorSrc.includes(".disabled === true"));
+assert.ok(behaviorSrc.includes('el.matches(":disabled")'));
+assert.ok(behaviorSrc.includes("el.hidden === true"));
+assert.ok(behaviorSrc.includes('el.hasAttribute("hidden")'));
+assert.ok(behaviorSrc.includes('input.type === "hidden"'));
+assert.ok(behaviorSrc.includes('input.getAttribute("type") === "hidden"'));
+assert.ok(behaviorSrc.includes("button:not(:disabled)"));
+assert.ok(behaviorSrc.includes("input:not(:disabled):not([type='hidden'])"));
 assert.equal(behaviorSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
 
 {
@@ -518,6 +526,7 @@ assert.equal(behaviorSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
     hidden: false,
     ariaHidden: false,
     inert: false,
+    disabled: false,
     display: "block",
     visibility: "visible",
   };
@@ -558,6 +567,24 @@ assert.equal(behaviorSrc.includes("canRestoreMatchRequestTriggerFocus"), false);
   assert.equal(isEligibleMatchRequestFocusTarget(ancestorBlocked), false);
   assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ isConnected: false })), false);
   assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ disabled: true })), false);
+  assert.equal(
+    isEligibleMatchRequestFocusTarget(
+      eligibility({
+        disabled: false,
+        chain: [visibleNode, { ...visibleNode, disabled: true }],
+      }),
+    ),
+    false,
+  );
+  const ancestorDisabled = collectMatchRequestFocusEligibility({
+    isConnected: true,
+    disabled: false,
+    tabIndex: 0,
+    inputTypeHidden: false,
+    chain: [visibleNode, { ...visibleNode, disabled: true }],
+  });
+  assert.equal(ancestorDisabled.disabled, true);
+  assert.equal(isEligibleMatchRequestFocusTarget(ancestorDisabled), false);
   assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ tabIndex: -1 })), false);
   assert.equal(isEligibleMatchRequestFocusTarget(eligibility({ inputTypeHidden: true })), false);
   assert.equal(

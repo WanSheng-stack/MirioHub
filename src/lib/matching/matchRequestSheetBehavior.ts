@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7B.1B.4 — testable MatchRequestSheet lifecycle / a11y helpers.
+ * PHASE 6.7B.1B.5 — testable MatchRequestSheet lifecycle / a11y helpers.
  * Parent owns serverErrorKey. Tab and restore share one focus-eligibility rule.
  */
 
@@ -102,6 +102,7 @@ export type MatchRequestFocusTreeNode = {
   hidden: boolean;
   ariaHidden: boolean;
   inert: boolean;
+  disabled: boolean;
   display: string;
   visibility: string;
 };
@@ -115,7 +116,7 @@ export function collectMatchRequestFocusEligibility(input: {
 }): MatchRequestFocusEligibility {
   return {
     isConnected: input.isConnected,
-    disabled: input.disabled,
+    disabled: input.disabled || input.chain.some((node) => node.disabled),
     tabIndex: input.tabIndex,
     inputTypeHidden: input.inputTypeHidden,
     hiddenInTree: input.chain.some((node) => node.hidden),
@@ -143,12 +144,29 @@ export function isEligibleMatchRequestFocusTarget(
   return true;
 }
 
+function nodeIsDisabled(el: HTMLElement): boolean {
+  if (el.hasAttribute("disabled")) return true;
+  if ((el as HTMLElement & { disabled?: boolean }).disabled === true) return true;
+  try {
+    if (typeof el.matches === "function" && el.matches(":disabled")) return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function nodeIsHiddenFlag(el: HTMLElement): boolean {
+  return el.hidden === true || el.hasAttribute("hidden");
+}
+
 function nodeIsInert(el: HTMLElement): boolean {
   return el.hasAttribute("inert") || Boolean((el as HTMLElement & { inert?: boolean }).inert);
 }
 
 function nodeIsHiddenInput(el: HTMLElement): boolean {
-  return el.tagName === "INPUT" && (el as HTMLInputElement).type === "hidden";
+  if (el.tagName !== "INPUT") return false;
+  const input = el as HTMLInputElement;
+  return input.type === "hidden" || input.getAttribute("type") === "hidden";
 }
 
 export function readMatchRequestFocusEligibility(
@@ -159,9 +177,10 @@ export function readMatchRequestFocusEligibility(
   while (node) {
     const style = getComputedStyle(node);
     chain.push({
-      hidden: node.hidden,
+      hidden: nodeIsHiddenFlag(node),
       ariaHidden: node.getAttribute("aria-hidden") === "true",
       inert: nodeIsInert(node),
+      disabled: nodeIsDisabled(node),
       display: style.display,
       visibility: style.visibility,
     });
@@ -169,7 +188,7 @@ export function readMatchRequestFocusEligibility(
   }
   return collectMatchRequestFocusEligibility({
     isConnected: el.isConnected,
-    disabled: el.hasAttribute("disabled"),
+    disabled: nodeIsDisabled(el),
     tabIndex: el.tabIndex,
     inputTypeHidden: nodeIsHiddenInput(el),
     chain,
@@ -178,10 +197,10 @@ export function readMatchRequestFocusEligibility(
 
 export const MATCH_REQUEST_FOCUSABLE_SELECTOR = [
   "a[href]",
-  "button:not([disabled])",
-  "textarea:not([disabled])",
-  "input:not([disabled]):not([type='hidden'])",
-  "select:not([disabled])",
+  "button:not(:disabled)",
+  "textarea:not(:disabled)",
+  "input:not(:disabled):not([type='hidden'])",
+  "select:not(:disabled)",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PHASE 6.7B.1B.4 — unmounted match-request sheet.
+ * PHASE 6.7B.1B.5 — unmounted match-request sheet.
  *
  * Client validator is UX + shared contract only.
  * Deliver applications collect Cargo V2 aggregate space (applicant side only).

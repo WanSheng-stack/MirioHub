@@ -196,12 +196,21 @@ OWNER against PostGIS.
 
 ## 12. Dual-post matching foundation (v93 schema only)
 
-- **Current state:** PHASE 6.7A.2 adds a forward migration that reshapes the
-  empty v90 `match_requests` / `match_contracts` tables and introduces
-  `match_contact_invitations` plus `contact_grants`. v90 is treated as already
-  deployed; the v90 main file and v90 verify stay frozen. Live apply is not
-  part of this phase. No RLS policy, GRANT, RPC, API, or UI writer lands here.
+- **Current state:** PHASE 6.7A.2 / 6.7A.2A land an undeployed forward migration
+  that reshapes empty v90 `match_requests` / `match_contracts` and introduces
+  `match_contact_invitations` plus `contact_grants`. v90 remains the exact
+  fail-fast fingerprint (columns, constraints, independent indexes, RLS,
+  FORCE RLS off, empty counts). Channel arrays now require 1-D 1-based
+  NULL-free 1–3 unique allowlisted names; `preferred_channel` is required.
+  Invitation `converted_at` / `invalidated_at` are bidirectional with status;
+  `invalidated_at` still covers invalidated, expired, and blocked. Live apply
+  is not part of this phase. No RLS policy, GRANT, RPC, API, or UI writer.
   `MatchRequestSheet` remains unmounted.
+- **Resolved in 6.7A.2A:** array CHECK bypasses (2-D / NULL / non-1 lower);
+  one-way invitation timestamps; coarse v90 column existence guard; verify
+  sequence name-scan and function name-regex false positives.
+- **Still unresolved:** v93 is not applied; no writer, capacity, fee,
+  membership, fulfillment, or Fraud work.
 - **Future replacement:** 6.7A.3+ owns orthogonal fulfillment facts (dispute,
   custody, cancel-request, completion-confirm). A later server API will re-read
   posts/profiles and write invitations, grants, and requests. Contract INSERT
@@ -210,7 +219,7 @@ OWNER against PostGIS.
   catalog, verify.sql is run read-only against that catalog, and a dedicated
   writer phase ships. Not this phase.
 - **Preconditions:** Empty matching tables at apply time; fail-fast guard
-  still sees v90 columns and no v93 columns; Demand may have many pending
-  requests; one contract per Demand post including terminal rows.
+  still sees the exact v90 fingerprint and no v93 tables; Demand may have many
+  pending requests; one contract per Demand post including terminal rows.
 - **Risk if wired early:** Client code inserting contracts without capacity
   and accept-time revalidation, or treating invitations as orders.

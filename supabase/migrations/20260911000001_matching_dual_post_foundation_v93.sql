@@ -1,4 +1,4 @@
--- PHASE 6.7A.2 — dual-post matching foundation (v93)
+-- PHASE 6.7A.2 / 6.7A.2A — dual-post matching foundation (v93)
 -- Forward-migrates empty v90 match_requests / match_contracts.
 -- v90 is treated as already deployed. Do not edit the v90 main file or v90 verify.
 -- MANUAL APPLY REQUIRED later. This round only lands the SQL in git.
@@ -10,131 +10,254 @@
 BEGIN;
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 0. Fail-fast guard (catalog + empty v90 counts only)
+-- 0. Fail-fast exact v90 schema fingerprint (catalog + empty counts only)
 -- ═══════════════════════════════════════════════════════════════════════════
 
 DO $$
 DECLARE
-  req_reg regclass;
-  con_reg regclass;
-  req_kind "char";
-  con_kind "char";
-  req_rls boolean;
-  con_rls boolean;
-  req_n bigint;
-  con_n bigint;
+  t text;
+  t_oid oid;
+  expected jsonb;
+  exp jsonb;
+  live_type text;
+  live_notnull boolean;
+  live_def text;
+  live_kind "char";
+  live_rls boolean;
+  live_force boolean;
+  live_n bigint;
+  missing text;
+  extra text;
+  n text;
+  exp_norm text;
+  exp_names text[];
+  live_names text[];
 BEGIN
-  req_reg := to_regclass('public.match_requests');
-  con_reg := to_regclass('public.match_contracts');
-  IF req_reg IS NULL OR con_reg IS NULL THEN
-    RAISE EXCEPTION 'v93_guard: required matching tables are missing';
+  IF to_regclass('public.match_contact_invitations') IS NOT NULL THEN
+    RAISE EXCEPTION 'v93_guard: table fingerprint extra: match_contact_invitations';
+  END IF;
+  IF to_regclass('public.contact_grants') IS NOT NULL THEN
+    RAISE EXCEPTION 'v93_guard: table fingerprint extra: contact_grants';
   END IF;
 
-  SELECT c.relkind, c.relrowsecurity
-  INTO req_kind, req_rls
-  FROM pg_catalog.pg_class c
-  WHERE c.oid = req_reg;
+  FOREACH t IN ARRAY ARRAY['match_requests', 'match_contracts'] LOOP
+    t_oid := to_regclass('public.' || t);
+    IF t_oid IS NULL THEN
+      RAISE EXCEPTION 'v93_guard: table fingerprint missing: %', t;
+    END IF;
 
-  SELECT c.relkind, c.relrowsecurity
-  INTO con_kind, con_rls
-  FROM pg_catalog.pg_class c
-  WHERE c.oid = con_reg;
+    IF t = 'match_requests' THEN
+      expected := $v90_requests_fp${"relkind":"r","relrowsecurity":true,"relforcerowsecurity":false,"columns":[{"name":"id","type":"uuid","not_null":true,"default_norm":"gen_random_uuid()"},{"name":"target_post_id","type":"uuid","not_null":true,"default_norm":""},{"name":"target_post_type","type":"text","not_null":true,"default_norm":""},{"name":"applicant_user_id","type":"uuid","not_null":true,"default_norm":""},{"name":"recipient_user_id","type":"uuid","not_null":true,"default_norm":""},{"name":"applicant_role","type":"text","not_null":true,"default_norm":""},{"name":"status","type":"text","not_null":true,"default_norm":"'pending'"},{"name":"payload_version","type":"integer","not_null":true,"default_norm":"1"},{"name":"application_payload","type":"jsonb","not_null":true,"default_norm":"'{}'::jsonb"},{"name":"client_request_id","type":"uuid","not_null":true,"default_norm":""},{"name":"created_at","type":"timestamp with time zone","not_null":true,"default_norm":"timezone('utc', now())"},{"name":"updated_at","type":"timestamp with time zone","not_null":true,"default_norm":"timezone('utc', now())"},{"name":"responded_at","type":"timestamp with time zone","not_null":false,"default_norm":""},{"name":"expires_at","type":"timestamp with time zone","not_null":false,"default_norm":""}],"constraints":[{"name":"match_requests_pkey","type":"p","def":"PRIMARY KEY (id)"},{"name":"match_requests_target_post_type_check","type":"c","def":"CHECK (target_post_type IN ('demand', 'provider'))"},{"name":"match_requests_applicant_role_check","type":"c","def":"CHECK (applicant_role IN ('demand', 'provider'))"},{"name":"match_requests_status_check","type":"c","def":"CHECK (status IN ('pending', 'accepted', 'rejected', 'withdrawn', 'expired'))"},{"name":"match_requests_payload_version_check","type":"c","def":"CHECK (payload_version > 0)"},{"name":"match_requests_application_payload_object_check","type":"c","def":"CHECK (jsonb_typeof(application_payload) = 'object')"},{"name":"match_requests_applicant_ne_recipient","type":"c","def":"CHECK (applicant_user_id <> recipient_user_id)"},{"name":"match_requests_role_aligns_target","type":"c","def":"CHECK ((target_post_type = 'demand' AND applicant_role = 'provider') OR (target_post_type = 'provider' AND applicant_role = 'demand'))"},{"name":"match_requests_applicant_client_request_id_key","type":"u","def":"UNIQUE (applicant_user_id, client_request_id)"},{"name":"match_requests_target_post_id_fkey","type":"f","def":"FOREIGN KEY (target_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_requests_applicant_user_id_fkey","type":"f","def":"FOREIGN KEY (applicant_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_requests_recipient_user_id_fkey","type":"f","def":"FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"}],"indexes":[{"name":"match_requests_one_pending_per_applicant_target","def":"CREATE UNIQUE INDEX match_requests_one_pending_per_applicant_target ON match_requests USING btree (target_post_id, applicant_user_id) WHERE status = 'pending'"},{"name":"match_requests_target_post_id_idx","def":"CREATE INDEX match_requests_target_post_id_idx ON match_requests USING btree (target_post_id)"},{"name":"match_requests_recipient_user_id_idx","def":"CREATE INDEX match_requests_recipient_user_id_idx ON match_requests USING btree (recipient_user_id)"}]}$v90_requests_fp$::jsonb;
+    ELSE
+      expected := $v90_contracts_fp${"relkind":"r","relrowsecurity":true,"relforcerowsecurity":false,"columns":[{"name":"id","type":"uuid","not_null":true,"default_norm":"gen_random_uuid()"},{"name":"request_id","type":"uuid","not_null":true,"default_norm":""},{"name":"source_post_id","type":"uuid","not_null":true,"default_norm":""},{"name":"source_post_type","type":"text","not_null":true,"default_norm":""},{"name":"demand_user_id","type":"uuid","not_null":true,"default_norm":""},{"name":"provider_user_id","type":"uuid","not_null":true,"default_norm":""},{"name":"status","type":"text","not_null":true,"default_norm":"'accepted'"},{"name":"snapshot_version","type":"integer","not_null":true,"default_norm":"1"},{"name":"demand_snapshot","type":"jsonb","not_null":true,"default_norm":""},{"name":"provider_snapshot","type":"jsonb","not_null":true,"default_norm":""},{"name":"agreement_snapshot","type":"jsonb","not_null":true,"default_norm":""},{"name":"accepted_at","type":"timestamp with time zone","not_null":true,"default_norm":"timezone('utc', now())"},{"name":"in_progress_at","type":"timestamp with time zone","not_null":false,"default_norm":""},{"name":"completed_at","type":"timestamp with time zone","not_null":false,"default_norm":""},{"name":"cancelled_at","type":"timestamp with time zone","not_null":false,"default_norm":""},{"name":"created_at","type":"timestamp with time zone","not_null":true,"default_norm":"timezone('utc', now())"},{"name":"updated_at","type":"timestamp with time zone","not_null":true,"default_norm":"timezone('utc', now())"}],"constraints":[{"name":"match_contracts_pkey","type":"p","def":"PRIMARY KEY (id)"},{"name":"match_contracts_request_id_key","type":"u","def":"UNIQUE (request_id)"},{"name":"match_contracts_request_id_fkey","type":"f","def":"FOREIGN KEY (request_id) REFERENCES match_requests(id) ON DELETE RESTRICT"},{"name":"match_contracts_source_post_id_fkey","type":"f","def":"FOREIGN KEY (source_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_contracts_source_post_type_check","type":"c","def":"CHECK (source_post_type IN ('demand', 'provider'))"},{"name":"match_contracts_demand_user_id_fkey","type":"f","def":"FOREIGN KEY (demand_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_contracts_provider_user_id_fkey","type":"f","def":"FOREIGN KEY (provider_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_contracts_status_check","type":"c","def":"CHECK (status IN ('accepted', 'in_progress', 'pending_completion', 'completed', 'disputed', 'cancelled'))"},{"name":"match_contracts_snapshot_version_check","type":"c","def":"CHECK (snapshot_version > 0)"},{"name":"match_contracts_demand_snapshot_object_check","type":"c","def":"CHECK (jsonb_typeof(demand_snapshot) = 'object')"},{"name":"match_contracts_provider_snapshot_object_check","type":"c","def":"CHECK (jsonb_typeof(provider_snapshot) = 'object')"},{"name":"match_contracts_agreement_snapshot_object_check","type":"c","def":"CHECK (jsonb_typeof(agreement_snapshot) = 'object')"},{"name":"match_contracts_demand_ne_provider","type":"c","def":"CHECK (demand_user_id <> provider_user_id)"},{"name":"match_contracts_completed_requires_timestamp","type":"c","def":"CHECK (status <> 'completed' OR completed_at IS NOT NULL)"},{"name":"match_contracts_cancelled_requires_timestamp","type":"c","def":"CHECK (status <> 'cancelled' OR cancelled_at IS NOT NULL)"},{"name":"match_contracts_completion_cancellation_exclusive","type":"c","def":"CHECK (completed_at IS NULL OR cancelled_at IS NULL)"}],"indexes":[{"name":"match_contracts_provider_user_id_idx","def":"CREATE INDEX match_contracts_provider_user_id_idx ON match_contracts USING btree (provider_user_id)"},{"name":"match_contracts_demand_user_id_idx","def":"CREATE INDEX match_contracts_demand_user_id_idx ON match_contracts USING btree (demand_user_id)"},{"name":"match_contracts_source_post_id_idx","def":"CREATE INDEX match_contracts_source_post_id_idx ON match_contracts USING btree (source_post_id)"}]}$v90_contracts_fp$::jsonb;
+    END IF;
 
-  IF req_kind IS DISTINCT FROM 'r' OR con_kind IS DISTINCT FROM 'r' THEN
-    RAISE EXCEPTION 'v93_guard: matching relations are not ordinary tables';
-  END IF;
+    SELECT c.relkind, c.relrowsecurity, c.relforcerowsecurity
+    INTO live_kind, live_rls, live_force
+    FROM pg_catalog.pg_class c
+    WHERE c.oid = t_oid;
 
-  IF req_rls IS NOT TRUE OR con_rls IS NOT TRUE THEN
-    RAISE EXCEPTION 'v93_guard: matching table RLS is not enabled';
-  END IF;
+    IF live_kind IS DISTINCT FROM 'r' THEN
+      RAISE EXCEPTION 'v93_guard: % relkind fingerprint mismatch', t;
+    END IF;
+    IF live_rls IS DISTINCT FROM (expected->>'relrowsecurity')::boolean THEN
+      RAISE EXCEPTION 'v93_guard: % rls fingerprint mismatch: relrowsecurity', t;
+    END IF;
+    IF live_force IS DISTINCT FROM (expected->>'relforcerowsecurity')::boolean THEN
+      RAISE EXCEPTION 'v93_guard: % rls fingerprint mismatch: relforcerowsecurity', t;
+    END IF;
 
-  SELECT count(*) INTO req_n FROM public.match_requests;
-  SELECT count(*) INTO con_n FROM public.match_contracts;
-  IF req_n IS DISTINCT FROM 0 OR con_n IS DISTINCT FROM 0 THEN
-    RAISE EXCEPTION 'v93_guard: matching tables are not empty';
-  END IF;
+    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO live_n;
+    IF live_n IS DISTINCT FROM 0 THEN
+      RAISE EXCEPTION 'v93_guard: % empty fingerprint mismatch', t;
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'target_post_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'target_post_type'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'applicant_user_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'applicant_role'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'application_payload'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  ) THEN
-    RAISE EXCEPTION 'v93_guard: v90 request columns missing';
-  END IF;
+    SELECT coalesce(array_agg(a.attname ORDER BY a.attnum), ARRAY[]::text[])
+    INTO live_names
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = t_oid AND a.attnum > 0 AND NOT a.attisdropped;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = con_reg AND a.attname = 'source_post_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = con_reg AND a.attname = 'source_post_type'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR NOT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = con_reg AND a.attname = 'status'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  ) THEN
-    RAISE EXCEPTION 'v93_guard: v90 contract columns missing';
-  END IF;
+    SELECT coalesce(array_agg(x.elem->>'name' ORDER BY x.ord), ARRAY[]::text[])
+    INTO exp_names
+    FROM jsonb_array_elements(expected->'columns') WITH ORDINALITY AS x(elem, ord);
 
-  IF EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'invitation_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'demand_post_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = req_reg AND a.attname = 'provider_post_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  ) THEN
-    RAISE EXCEPTION 'v93_guard: v93 request columns already present';
-  END IF;
+    missing := (
+      SELECT string_agg(q, ',' ORDER BY q)
+      FROM unnest(exp_names) q
+      WHERE NOT q = ANY (live_names)
+    );
+    IF missing IS NOT NULL THEN
+      RAISE EXCEPTION 'v93_guard: % column fingerprint missing: %', t, missing;
+    END IF;
+    extra := (
+      SELECT string_agg(q, ',' ORDER BY q)
+      FROM unnest(live_names) q
+      WHERE NOT q = ANY (exp_names)
+    );
+    IF extra IS NOT NULL THEN
+      RAISE EXCEPTION 'v93_guard: % column fingerprint extra: %', t, extra;
+    END IF;
+    IF live_names IS DISTINCT FROM exp_names THEN
+      RAISE EXCEPTION 'v93_guard: % column fingerprint mismatch: order', t;
+    END IF;
 
-  IF EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = con_reg AND a.attname = 'demand_post_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = con_reg AND a.attname = 'provider_post_id'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  )
-  OR EXISTS (
-    SELECT 1 FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = con_reg AND a.attname = 'lifecycle_projection'
-      AND a.attnum > 0 AND NOT a.attisdropped
-  ) THEN
-    RAISE EXCEPTION 'v93_guard: v93 contract columns already present';
-  END IF;
+    FOR exp IN
+      SELECT elem FROM jsonb_array_elements(expected->'columns') AS elem
+    LOOP
+      SELECT format_type(a.atttypid, a.atttypmod), a.attnotnull,
+             pg_get_expr(ad.adbin, ad.adrelid)
+      INTO live_type, live_notnull, live_def
+      FROM pg_catalog.pg_attribute a
+      LEFT JOIN pg_catalog.pg_attrdef ad
+        ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+      WHERE a.attrelid = t_oid AND a.attname = exp->>'name';
+
+      n := lower(coalesce(live_def, ''));
+      n := replace(n, '::text', '');
+      n := regexp_replace(n, '\mpublic\.', '', 'g');
+      n := btrim(regexp_replace(n, '\s+', ' ', 'g'));
+
+      IF live_type IS DISTINCT FROM exp->>'type'
+         OR live_notnull IS DISTINCT FROM (exp->>'not_null')::boolean
+         OR n IS DISTINCT FROM coalesce(exp->>'default_norm', '') THEN
+        RAISE EXCEPTION 'v93_guard: % column fingerprint mismatch: %', t, exp->>'name';
+      END IF;
+    END LOOP;
+
+    missing := (
+      SELECT string_agg(e->>'name', ',' ORDER BY 1)
+      FROM jsonb_array_elements(expected->'constraints') e
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint c
+        WHERE c.conrelid = t_oid
+          AND c.conname = e->>'name'
+          AND c.contype IN ('p', 'u', 'c', 'f')
+      )
+    );
+    IF missing IS NOT NULL THEN
+      RAISE EXCEPTION 'v93_guard: % constraint fingerprint missing: %', t, missing;
+    END IF;
+    extra := (
+      SELECT string_agg(c.conname, ',' ORDER BY 1)
+      FROM pg_catalog.pg_constraint c
+      WHERE c.conrelid = t_oid
+        AND c.contype IN ('p', 'u', 'c', 'f')
+        AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements(expected->'constraints') e
+          WHERE e->>'name' = c.conname
+        )
+    );
+    IF extra IS NOT NULL THEN
+      RAISE EXCEPTION 'v93_guard: % constraint fingerprint extra: %', t, extra;
+    END IF;
+
+    FOR exp IN
+      SELECT elem FROM jsonb_array_elements(expected->'constraints') AS elem
+    LOOP
+      SELECT c.contype::text, pg_get_constraintdef(c.oid)
+      INTO live_type, live_def
+      FROM pg_catalog.pg_constraint c
+      WHERE c.conrelid = t_oid AND c.conname = exp->>'name';
+
+      n := lower(coalesce(live_def, ''));
+      n := replace(n, '::text', '');
+      n := replace(n, '::regclass', '');
+      n := regexp_replace(n, '\mpublic\.', '', 'g');
+      n := regexp_replace(n, '\s+on update no action\y', '', 'g');
+      n := regexp_replace(n, '= any \(array\[([^\]]*)\]\)', 'in (\1)', 'g');
+      n := regexp_replace(n, ' on (match_requests|match_contracts) \(', ' on \1 using btree (', 'g');
+      n := regexp_replace(n, '[()]', ' ', 'g');
+      n := regexp_replace(n, ',', ', ', 'g');
+      n := btrim(regexp_replace(n, '\s+', ' ', 'g'));
+
+      exp_norm := lower(coalesce(exp->>'def', ''));
+      exp_norm := replace(exp_norm, '::text', '');
+      exp_norm := replace(exp_norm, '::regclass', '');
+      exp_norm := regexp_replace(exp_norm, '\mpublic\.', '', 'g');
+      exp_norm := regexp_replace(exp_norm, '\s+on update no action\y', '', 'g');
+      exp_norm := regexp_replace(exp_norm, '= any \(array\[([^\]]*)\]\)', 'in (\1)', 'g');
+      exp_norm := regexp_replace(exp_norm, ' on (match_requests|match_contracts) \(', ' on \1 using btree (', 'g');
+      exp_norm := regexp_replace(exp_norm, '[()]', ' ', 'g');
+      exp_norm := regexp_replace(exp_norm, ',', ', ', 'g');
+      exp_norm := btrim(regexp_replace(exp_norm, '\s+', ' ', 'g'));
+
+      IF live_type IS DISTINCT FROM exp->>'type' OR n IS DISTINCT FROM exp_norm THEN
+        RAISE EXCEPTION 'v93_guard: % constraint fingerprint mismatch: %', t, exp->>'name';
+      END IF;
+    END LOOP;
+
+    missing := (
+      SELECT string_agg(e->>'name', ',' ORDER BY 1)
+      FROM jsonb_array_elements(expected->'indexes') e
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
+        WHERE i.indrelid = t_oid
+          AND ic.relname = e->>'name'
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_constraint co
+            WHERE co.conrelid = t_oid AND co.conindid = i.indexrelid
+          )
+      )
+    );
+    IF missing IS NOT NULL THEN
+      RAISE EXCEPTION 'v93_guard: % index fingerprint missing: %', t, missing;
+    END IF;
+    extra := (
+      SELECT string_agg(ic.relname, ',' ORDER BY 1)
+      FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
+      WHERE i.indrelid = t_oid
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_constraint co
+          WHERE co.conrelid = t_oid AND co.conindid = i.indexrelid
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements(expected->'indexes') e
+          WHERE e->>'name' = ic.relname
+        )
+    );
+    IF extra IS NOT NULL THEN
+      RAISE EXCEPTION 'v93_guard: % index fingerprint extra: %', t, extra;
+    END IF;
+
+    FOR exp IN
+      SELECT elem FROM jsonb_array_elements(expected->'indexes') AS elem
+    LOOP
+      SELECT pg_get_indexdef(i.indexrelid)
+      INTO live_def
+      FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
+      WHERE i.indrelid = t_oid AND ic.relname = exp->>'name';
+
+      n := lower(coalesce(live_def, ''));
+      n := replace(n, '::text', '');
+      n := replace(n, '::regclass', '');
+      n := regexp_replace(n, '\mpublic\.', '', 'g');
+      n := regexp_replace(n, '\s+on update no action\y', '', 'g');
+      n := regexp_replace(n, '= any \(array\[([^\]]*)\]\)', 'in (\1)', 'g');
+      n := regexp_replace(n, ' on (match_requests|match_contracts) \(', ' on \1 using btree (', 'g');
+      n := regexp_replace(n, '[()]', ' ', 'g');
+      n := regexp_replace(n, ',', ', ', 'g');
+      n := btrim(regexp_replace(n, '\s+', ' ', 'g'));
+
+      exp_norm := lower(coalesce(exp->>'def', ''));
+      exp_norm := replace(exp_norm, '::text', '');
+      exp_norm := replace(exp_norm, '::regclass', '');
+      exp_norm := regexp_replace(exp_norm, '\mpublic\.', '', 'g');
+      exp_norm := regexp_replace(exp_norm, '\s+on update no action\y', '', 'g');
+      exp_norm := regexp_replace(exp_norm, '= any \(array\[([^\]]*)\]\)', 'in (\1)', 'g');
+      exp_norm := regexp_replace(exp_norm, ' on (match_requests|match_contracts) \(', ' on \1 using btree (', 'g');
+      exp_norm := regexp_replace(exp_norm, '[()]', ' ', 'g');
+      exp_norm := regexp_replace(exp_norm, ',', ', ', 'g');
+      exp_norm := btrim(regexp_replace(exp_norm, '\s+', ' ', 'g'));
+
+      IF n IS DISTINCT FROM exp_norm THEN
+        RAISE EXCEPTION 'v93_guard: % index fingerprint mismatch: %', t, exp->>'name';
+      END IF;
+    END LOOP;
+  END LOOP;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -197,12 +320,12 @@ CREATE TABLE public.match_contact_invitations (
     CHECK (btrim(contact_code_hash) <> ''),
   CONSTRAINT match_contact_invitations_expires_after_created
     CHECK (expires_at > created_at),
-  CONSTRAINT match_contact_invitations_converted_requires_ts
-    CHECK (status <> 'converted' OR converted_at IS NOT NULL),
-  CONSTRAINT match_contact_invitations_invalid_requires_ts
+  CONSTRAINT match_contact_invitations_converted_ts_consistent
+    CHECK ((status = 'converted') = (converted_at IS NOT NULL)),
+  CONSTRAINT match_contact_invitations_invalid_ts_consistent
     CHECK (
-      status NOT IN ('invalidated', 'expired', 'blocked')
-      OR invalidated_at IS NOT NULL
+      (status IN ('invalidated', 'expired', 'blocked'))
+      = (invalidated_at IS NOT NULL)
     ),
   CONSTRAINT match_contact_invitations_converted_invalid_exclusive
     CHECK (converted_at IS NULL OR invalidated_at IS NULL),
@@ -233,6 +356,9 @@ COMMENT ON COLUMN public.match_contact_invitations.contact_code_hash IS
 COMMENT ON COLUMN public.match_contact_invitations.initiator_post_id IS
   'Must be either demand_post_id or provider_post_id. Future API re-reads post owner and role.';
 
+COMMENT ON COLUMN public.match_contact_invitations.invalidated_at IS
+  'Time the invitation stopped being valid. Used for invalidated, expired, and blocked; not renamed in v1.';
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 2. contact_grants
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -249,7 +375,7 @@ CREATE TABLE public.contact_grants (
     CONSTRAINT contact_grants_viewer_user_id_fkey
       REFERENCES public.profiles(id) ON DELETE RESTRICT,
   allowed_channels text[] NOT NULL,
-  preferred_channel text,
+  preferred_channel text NOT NULL,
   policy_version integer NOT NULL,
   granted_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
   expires_at timestamptz NOT NULL,
@@ -257,32 +383,24 @@ CREATE TABLE public.contact_grants (
   created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
   CONSTRAINT contact_grants_distinct_users
     CHECK (subject_user_id <> viewer_user_id),
-  CONSTRAINT contact_grants_allowed_channels_cardinality_check
-    CHECK (cardinality(allowed_channels) BETWEEN 1 AND 3),
-  CONSTRAINT contact_grants_allowed_channels_subset_check
-    CHECK (allowed_channels <@ ARRAY['phone', 'whatsapp', 'viber']::text[]),
-  CONSTRAINT contact_grants_allowed_channels_lower_check
-    CHECK (array_lower(allowed_channels, 1) = 1),
-  CONSTRAINT contact_grants_allowed_channels_pairwise_unique_check
+  CONSTRAINT contact_grants_allowed_channels_contract_check
     CHECK (
-      (
-        cardinality(allowed_channels) = 1
-      )
-      OR (
-        cardinality(allowed_channels) = 2
-        AND allowed_channels[1] <> allowed_channels[2]
-      )
-      OR (
-        cardinality(allowed_channels) = 3
-        AND allowed_channels[1] <> allowed_channels[2]
-        AND allowed_channels[1] <> allowed_channels[3]
-        AND allowed_channels[2] <> allowed_channels[3]
-      )
-    ),
-  CONSTRAINT contact_grants_preferred_in_allowed_check
-    CHECK (
-      preferred_channel IS NULL
-      OR preferred_channel = ANY (allowed_channels)
+      array_ndims(allowed_channels) = 1
+      AND array_lower(allowed_channels, 1) = 1
+      AND array_length(allowed_channels, 1) = cardinality(allowed_channels)
+      AND cardinality(allowed_channels) BETWEEN 1 AND 3
+      AND array_position(allowed_channels, NULL) IS NULL
+      AND allowed_channels <@ ARRAY['phone', 'whatsapp', 'viber']::text[]
+      AND CASE cardinality(allowed_channels)
+        WHEN 1 THEN true
+        WHEN 2 THEN allowed_channels[1] <> allowed_channels[2]
+        WHEN 3 THEN
+          allowed_channels[1] <> allowed_channels[2]
+          AND allowed_channels[1] <> allowed_channels[3]
+          AND allowed_channels[2] <> allowed_channels[3]
+        ELSE false
+      END
+      AND preferred_channel = ANY (allowed_channels)
     ),
   CONSTRAINT contact_grants_policy_version_check
     CHECK (policy_version > 0),
@@ -306,6 +424,9 @@ COMMENT ON TABLE public.contact_grants IS
 
 COMMENT ON COLUMN public.contact_grants.allowed_channels IS
   'Channel names only (phone, whatsapp, viber). Never a phone number or account handle.';
+
+COMMENT ON COLUMN public.contact_grants.preferred_channel IS
+  'Required member of allowed_channels. Channel name only; never a phone number or account handle.';
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 3. Reshape empty match_requests into dual-post formal requests

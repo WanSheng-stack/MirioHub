@@ -1,0 +1,525 @@
+/**
+ * PHASE 6.7C.1 — contact invitation parse, HTTP mapping, writer simulation.
+ * Helper simulation is not a live PostgreSQL run.
+ * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/contactInvitationCreate.test.ts
+ */
+
+import assert from "node:assert/strict";
+import {
+  CONTACT_INVITATION_ERROR,
+  CONTACT_INVITATION_SAFE_LOGS,
+  evaluateContactInvitationWriter,
+  generateCodeWithPepper,
+  httpStatusForContactInvitationError,
+  parseContactInvitationCreateBody,
+  runContactInvitationCreate,
+  type ContactInvitationRouteDeps,
+  type ContactInvitationWriterRow,
+  type SimulatedInvitation,
+  type SimulatedWriterResult,
+  type SimulatedWriterState,
+} from "@/lib/matching/contactInvitationCreate";
+
+const PEPPER = "miriohub-contact-code-pepper-32chars!!";
+const ACTOR = "11111111-1111-4111-8111-111111111111";
+const OTHER = "22222222-2222-4222-8222-222222222222";
+const DEMAND = "33333333-3333-4333-8333-333333333333";
+const PROVIDER = "44444444-4444-4444-8444-444444444444";
+const CLIENT = "55555555-5555-4555-8555-555555555555";
+const CLIENT_B = "66666666-6666-4666-8666-666666666666";
+const NOW = "2026-09-12T00:00:00.000Z";
+
+const validBody = {
+  initiatorPostId: DEMAND,
+  counterpartPostId: PROVIDER,
+  clientRequestId: CLIENT,
+};
+
+assert.equal(parseContactInvitationCreateBody(null).ok, false);
+assert.equal(parseContactInvitationCreateBody([]).ok, false);
+assert.equal(parseContactInvitationCreateBody("x").ok, false);
+{
+  const parsed = parseContactInvitationCreateBody(validBody);
+  assert.equal(parsed.ok, true);
+}
+{
+  const parsed = parseContactInvitationCreateBody({
+    ...validBody,
+    userId: ACTOR,
+  });
+  assert.equal(parsed.ok, false);
+  if (!parsed.ok) {
+    assert.equal(parsed.errorKey, CONTACT_INVITATION_ERROR.unknownKey);
+    assert.equal(parsed.status, 400);
+  }
+}
+{
+  const parsed = parseContactInvitationCreateBody({
+    initiatorPostId: "nope",
+    counterpartPostId: PROVIDER,
+    clientRequestId: CLIENT,
+  });
+  assert.equal(parsed.ok, false);
+  if (!parsed.ok) {
+    assert.equal(parsed.errorKey, CONTACT_INVITATION_ERROR.invalidInput);
+  }
+}
+
+function baseState(): SimulatedWriterState {
+  return {
+    now: NOW,
+    config: {
+      matching_contact_mode: "cold_start",
+      matching_contact_policy_version: 1,
+      matching_contact_invitation_ttl_minutes: 1440,
+    },
+    posts: [
+      {
+        id: DEMAND,
+        user_id: ACTOR,
+        post_type: "demand",
+        category: "travel",
+        status: "active",
+      },
+      {
+        id: PROVIDER,
+        user_id: OTHER,
+        post_type: "provider",
+        category: "travel",
+        status: "active",
+      },
+    ],
+    invitations: [],
+  };
+}
+
+const pair = generateCodeWithPepper(ACTOR, CLIENT, PEPPER);
+
+function writerErrorKey(result: SimulatedWriterResult): string | undefined {
+  return result.ok ? undefined : result.errorKey;
+}
+
+{
+  const created = evaluateContactInvitationWriter(baseState(), {
+    actorUserId: ACTOR,
+    initiatorPostId: DEMAND,
+    counterpartPostId: PROVIDER,
+    clientRequestId: CLIENT,
+    contactCodeHash: pair.codeHash,
+  });
+  assert.equal(created.ok, true);
+  if (created.ok) {
+    assert.equal(created.row.created, true);
+    assert.equal(created.row.disclosure_mode, "mutual_eligible_contact");
+    assert.equal(created.row.effective_client_request_id, CLIENT);
+    assert.equal(created.state.invitations[0]?.recipient_user_id, OTHER);
+    assert.equal(created.state.invitations[0]?.demand_post_id, DEMAND);
+    assert.equal(created.state.invitations[0]?.provider_post_id, PROVIDER);
+    assert.equal(
+      created.state.invitations[0]?.expires_at,
+      "2026-09-13T00:00:00.000Z",
+    );
+    const retry = evaluateContactInvitationWriter(created.state, {
+      actorUserId: ACTOR,
+      initiatorPostId: DEMAND,
+      counterpartPostId: PROVIDER,
+      clientRequestId: CLIENT,
+      contactCodeHash: pair.codeHash,
+    });
+    assert.equal(retry.ok, true);
+    if (retry.ok) {
+      assert.equal(retry.row.created, false);
+      assert.equal(retry.row.expires_at, created.row.expires_at);
+      assert.equal(retry.state.invitations.length, 1);
+      assert.equal(retry.state.invitations[0]?.updated_at, NOW);
+    }
+  }
+}
+
+{
+  const providerFirst = evaluateContactInvitationWriter(baseState(), {
+    actorUserId: OTHER,
+    initiatorPostId: PROVIDER,
+    counterpartPostId: DEMAND,
+    clientRequestId: CLIENT_B,
+    contactCodeHash: generateCodeWithPepper(OTHER, CLIENT_B, PEPPER).codeHash,
+  });
+  assert.equal(providerFirst.ok, true);
+  if (providerFirst.ok) {
+    assert.equal(providerFirst.state.invitations[0]?.demand_post_id, DEMAND);
+    assert.equal(providerFirst.state.invitations[0]?.provider_post_id, PROVIDER);
+    assert.equal(providerFirst.state.invitations[0]?.initiator_post_id, PROVIDER);
+    assert.equal(providerFirst.state.invitations[0]?.recipient_user_id, ACTOR);
+  }
+}
+
+{
+  const mature = baseState();
+  mature.config = {
+    matching_contact_mode: "mature",
+    matching_contact_policy_version: 2,
+    matching_contact_invitation_ttl_minutes: 60,
+  };
+  const result = evaluateContactInvitationWriter(mature, {
+    actorUserId: ACTOR,
+    initiatorPostId: DEMAND,
+    counterpartPostId: PROVIDER,
+    clientRequestId: CLIENT,
+    contactCodeHash: pair.codeHash,
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.row.disclosure_mode, "recipient_contacts_initiator");
+    assert.equal(result.row.expires_at, "2026-09-12T01:00:00.000Z");
+    assert.equal(result.state.invitations[0]?.contact_policy_version, 2);
+  }
+}
+
+assert.equal(
+  writerErrorKey(
+    evaluateContactInvitationWriter(baseState(), {
+      actorUserId: OTHER,
+      initiatorPostId: DEMAND,
+      counterpartPostId: PROVIDER,
+      clientRequestId: CLIENT,
+      contactCodeHash: pair.codeHash,
+    }),
+  ),
+  CONTACT_INVITATION_ERROR.postNotOwned,
+);
+assert.equal(
+  writerErrorKey(
+    evaluateContactInvitationWriter(baseState(), {
+      actorUserId: ACTOR,
+      initiatorPostId: DEMAND,
+      counterpartPostId: DEMAND,
+      clientRequestId: CLIENT,
+      contactCodeHash: pair.codeHash,
+    }),
+  ),
+  CONTACT_INVITATION_ERROR.selfNotAllowed,
+);
+{
+  const selfOwner = baseState();
+  selfOwner.posts[1] = { ...selfOwner.posts[1], user_id: ACTOR };
+  assert.equal(
+    writerErrorKey(
+      evaluateContactInvitationWriter(selfOwner, {
+        actorUserId: ACTOR,
+        initiatorPostId: DEMAND,
+        counterpartPostId: PROVIDER,
+        clientRequestId: CLIENT,
+        contactCodeHash: pair.codeHash,
+      }),
+    ),
+    CONTACT_INVITATION_ERROR.selfNotAllowed,
+  );
+}
+{
+  const inactive = baseState();
+  inactive.posts[1] = { ...inactive.posts[1], status: "closed" };
+  assert.equal(
+    writerErrorKey(
+      evaluateContactInvitationWriter(inactive, {
+        actorUserId: ACTOR,
+        initiatorPostId: DEMAND,
+        counterpartPostId: PROVIDER,
+        clientRequestId: CLIENT,
+        contactCodeHash: pair.codeHash,
+      }),
+    ),
+    CONTACT_INVITATION_ERROR.postUnavailable,
+  );
+}
+{
+  const sameRole = baseState();
+  sameRole.posts[1] = { ...sameRole.posts[1], post_type: "demand" };
+  assert.equal(
+    writerErrorKey(
+      evaluateContactInvitationWriter(sameRole, {
+        actorUserId: ACTOR,
+        initiatorPostId: DEMAND,
+        counterpartPostId: PROVIDER,
+        clientRequestId: CLIENT,
+        contactCodeHash: pair.codeHash,
+      }),
+    ),
+    CONTACT_INVITATION_ERROR.roleMismatch,
+  );
+}
+{
+  const mismatch = baseState();
+  mismatch.posts[1] = { ...mismatch.posts[1], category: "deliver" };
+  assert.equal(
+    writerErrorKey(
+      evaluateContactInvitationWriter(mismatch, {
+        actorUserId: ACTOR,
+        initiatorPostId: DEMAND,
+        counterpartPostId: PROVIDER,
+        clientRequestId: CLIENT,
+        contactCodeHash: pair.codeHash,
+      }),
+    ),
+    CONTACT_INVITATION_ERROR.categoryMismatch,
+  );
+}
+
+{
+  const first = evaluateContactInvitationWriter(baseState(), {
+    actorUserId: ACTOR,
+    initiatorPostId: DEMAND,
+    counterpartPostId: PROVIDER,
+    clientRequestId: CLIENT,
+    contactCodeHash: pair.codeHash,
+  });
+  assert.equal(first.ok, true);
+  if (first.ok) {
+    const conflict = evaluateContactInvitationWriter(first.state, {
+      actorUserId: ACTOR,
+      initiatorPostId: DEMAND,
+      counterpartPostId: PROVIDER,
+      clientRequestId: CLIENT,
+      contactCodeHash: "aa".repeat(32),
+    });
+    assert.equal(writerErrorKey(conflict), CONTACT_INVITATION_ERROR.idempotencyConflict);
+    const otherClient = evaluateContactInvitationWriter(first.state, {
+      actorUserId: ACTOR,
+      initiatorPostId: DEMAND,
+      counterpartPostId: PROVIDER,
+      clientRequestId: CLIENT_B,
+      contactCodeHash: generateCodeWithPepper(ACTOR, CLIENT_B, PEPPER).codeHash,
+    });
+    assert.equal(writerErrorKey(otherClient), CONTACT_INVITATION_ERROR.alreadyOpen);
+    const reverse = evaluateContactInvitationWriter(first.state, {
+      actorUserId: OTHER,
+      initiatorPostId: PROVIDER,
+      counterpartPostId: DEMAND,
+      clientRequestId: CLIENT_B,
+      contactCodeHash: generateCodeWithPepper(OTHER, CLIENT_B, PEPPER).codeHash,
+    });
+    assert.equal(writerErrorKey(reverse), CONTACT_INVITATION_ERROR.alreadyOpen);
+    if (!reverse.ok) {
+      const publicError = JSON.stringify({
+        ok: reverse.ok,
+        errorKey: reverse.errorKey,
+      });
+      assert.equal(publicError.includes(CLIENT), false);
+      assert.equal(publicError.includes(pair.codeHash), false);
+      assert.equal(publicError.includes(pair.code), false);
+    }
+  }
+}
+
+{
+  const expired: SimulatedInvitation = {
+    id: "77777777-7777-4777-8777-777777777777",
+    demand_post_id: DEMAND,
+    provider_post_id: PROVIDER,
+    initiator_user_id: ACTOR,
+    recipient_user_id: OTHER,
+    initiator_post_id: DEMAND,
+    status: "open",
+    contact_policy_version: 1,
+    disclosure_mode: "mutual_eligible_contact",
+    contact_code_hash: "bb".repeat(32),
+    client_request_id: CLIENT_B,
+    expires_at: "2026-09-11T00:00:00.000Z",
+    converted_at: null,
+    invalidated_at: null,
+    created_at: "2026-09-10T00:00:00.000Z",
+    updated_at: "2026-09-10T00:00:00.000Z",
+  };
+  const state = baseState();
+  state.invitations = [expired];
+  const created = evaluateContactInvitationWriter(state, {
+    actorUserId: ACTOR,
+    initiatorPostId: DEMAND,
+    counterpartPostId: PROVIDER,
+    clientRequestId: CLIENT,
+    contactCodeHash: pair.codeHash,
+  });
+  assert.equal(created.ok, true);
+  if (created.ok) {
+    assert.equal(created.row.created, true);
+    assert.equal(created.state.invitations[0]?.status, "expired");
+    assert.equal(created.state.invitations[0]?.invalidated_at, NOW);
+    assert.equal(created.state.invitations[1]?.status, "open");
+    assert.equal(created.state.posts.every((post) => post.status === "active"), true);
+    assert.equal(
+      created.state.invitations.some((row) => "match_request" in row),
+      false,
+    );
+  }
+}
+
+assert.equal(
+  httpStatusForContactInvitationError(CONTACT_INVITATION_ERROR.postNotOwned),
+  403,
+);
+assert.equal(
+  httpStatusForContactInvitationError(CONTACT_INVITATION_ERROR.postNotFound),
+  404,
+);
+assert.equal(
+  httpStatusForContactInvitationError(CONTACT_INVITATION_ERROR.alreadyOpen),
+  409,
+);
+
+function writerRow(created: boolean): ContactInvitationWriterRow {
+  return {
+    invitation_id: "88888888-8888-4888-8888-888888888888",
+    invitation_status: "open",
+    disclosure_mode: "mutual_eligible_contact",
+    expires_at: "2026-09-13T00:00:00.000Z",
+    effective_client_request_id: CLIENT,
+    created,
+  };
+}
+
+async function main() {
+async function run(overrides: Partial<ContactInvitationRouteDeps> & {
+  body?: unknown;
+}) {
+  let adminCreated = false;
+  return runContactInvitationCreate({
+    readBody: async () => overrides.body ?? validBody,
+    getUser: overrides.getUser ?? (async () => ACTOR),
+    readPepper: overrides.readPepper ?? (() => PEPPER),
+    generateCode:
+      overrides.generateCode ??
+      ((actorUserId, clientRequestId) =>
+        generateCodeWithPepper(actorUserId, clientRequestId, PEPPER)),
+    createAdmin:
+      overrides.createAdmin ??
+      (() => {
+        adminCreated = true;
+        return { kind: "admin" };
+      }),
+    callWriter:
+      overrides.callWriter ??
+      (async () => writerRow(true)),
+  }).then((result) => ({ ...result, sawAdmin: adminCreated || result.adminCreated }));
+}
+
+{
+  const result = await run({ body: ["x"] });
+  assert.equal(result.status, 400);
+  assert.equal(result.sawAdmin, false);
+}
+{
+  const result = await run({ body: { ...validBody, userId: ACTOR } });
+  assert.equal(result.json.ok, false);
+  if (!result.json.ok) {
+    assert.equal(result.json.errorKey, CONTACT_INVITATION_ERROR.unknownKey);
+  }
+  assert.equal(result.sawAdmin, false);
+}
+{
+  const result = await run({ getUser: async () => null });
+  assert.equal(result.status, 401);
+  assert.equal(result.sawAdmin, false);
+}
+{
+  const result = await run({
+    getUser: async () => {
+      throw new Error("supabase boom");
+    },
+  });
+  assert.equal(result.status, 500);
+  assert.deepEqual(result.logs, [CONTACT_INVITATION_SAFE_LOGS.authLookupFailed]);
+  assert.equal(result.sawAdmin, false);
+  assert.equal(JSON.stringify(result).includes("supabase boom"), false);
+}
+{
+  const result = await run({ readPepper: () => null });
+  assert.equal(result.status, 500);
+  if (!result.json.ok) {
+    assert.equal(result.json.errorKey, CONTACT_INVITATION_ERROR.serverConfiguration);
+  }
+  assert.deepEqual(result.logs, [
+    CONTACT_INVITATION_SAFE_LOGS.serverConfigurationMissing,
+  ]);
+  assert.equal(result.sawAdmin, false);
+}
+{
+  const result = await run({ readPepper: () => "short" });
+  assert.equal(result.status, 500);
+  assert.equal(result.sawAdmin, false);
+}
+{
+  const result = await run({
+    generateCode: () => {
+      throw new Error("hmac leaked");
+    },
+  });
+  assert.equal(result.status, 500);
+  assert.deepEqual(result.logs, [CONTACT_INVITATION_SAFE_LOGS.codeGenerationFailed]);
+  assert.equal(JSON.stringify(result).includes("hmac leaked"), false);
+  assert.equal(result.sawAdmin, false);
+}
+{
+  const created = await run({});
+  assert.equal(created.status, 201);
+  assert.equal(created.json.ok, true);
+  if (created.json.ok) {
+    assert.equal(created.json.invitation.created, true);
+    assert.equal(created.json.invitation.contactCode, pair.code);
+    assert.equal("disclosureMode" in created.json.invitation, false);
+    assert.equal("effectiveClientRequestId" in created.json.invitation, false);
+    assert.equal("contactCodeHash" in created.json.invitation, false);
+  }
+  const replay = await run({
+    callWriter: async () => writerRow(false),
+  });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.json.ok, true);
+  if (replay.json.ok) {
+    assert.equal(replay.json.invitation.created, false);
+    assert.equal(replay.json.invitation.contactCode, pair.code);
+  }
+}
+{
+  const result = await run({
+    callWriter: async () => {
+      throw new Error("error.match_contact_post_not_found");
+    },
+  });
+  assert.equal(result.status, 404);
+  if (!result.json.ok) {
+    assert.equal(result.json.errorKey, CONTACT_INVITATION_ERROR.postNotFound);
+  }
+}
+{
+  const result = await run({
+    callWriter: async () => ({
+      ...writerRow(true),
+      effective_client_request_id: CLIENT_B,
+    }),
+  });
+  assert.equal(result.status, 409);
+  if (!result.json.ok) {
+    assert.equal(result.json.errorKey, CONTACT_INVITATION_ERROR.alreadyOpen);
+  }
+  assert.equal(JSON.stringify(result.json).includes(pair.code), false);
+}
+{
+  const dumped = JSON.stringify([
+    CONTACT_INVITATION_SAFE_LOGS,
+    await run({
+      getUser: async () => {
+        throw new Error(`${pair.code} ${pair.codeHash} ${ACTOR} ${CLIENT}`);
+      },
+    }),
+  ]);
+  assert.equal(dumped.includes(pair.code), false);
+  assert.equal(dumped.includes(pair.codeHash), false);
+  assert.equal(dumped.includes(ACTOR), false);
+}
+
+console.log("contactInvitationCreate.test.ts: ok");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

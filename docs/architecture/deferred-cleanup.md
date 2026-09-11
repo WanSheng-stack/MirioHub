@@ -265,3 +265,27 @@ OWNER against PostGIS.
   cross-contract interval oversell.
 - **Risk if wired early:** Half-contracts, oversell, or browser DML against
   fail-closed tables.
+
+## 14. Contact invitation creation boundary (v95)
+
+- **Current state:** PHASE 6.7C.1 lands an undeployed writer that lets a
+  signed-in user create one open contact invitation from their own active
+  post to one complementary active post. v90–v94 main migrations stay frozen.
+  The four-digit contact code is HMAC-derived from
+  `MATCH_CONTACT_CODE_PEPPER` and never stored in plaintext. The database
+  stores `contact_code_hash` only. `disclosure_mode` is a
+  `system_configs` snapshot (`cold_start` → `mutual_eligible_contact`,
+  `mature` → `recipient_contacts_initiator`) and is not phone-read
+  authorization. This phase does not write `contact_grants`, match
+  requests, contracts, allocations, or Fraud tables, and does not mount UI.
+- **Still unresolved / later phases:** invitation list, notifications,
+  contact-grant writer, MatchRequestSheet mount, formal match request,
+  accept/reject, and 6.7C.3 contract+allocation transaction.
+- **Future replacement:** A later grant writer must re-check recipient
+  settings and confirmed channels before any contact DTO.
+- **Earliest safe production use:** After v95 is applied, verify.sql is run
+  read-only, and a dedicated UI phase mounts the API. Not this phase.
+- **Preconditions:** matching foundation tables still empty at apply;
+  `MATCH_CONTACT_CODE_PEPPER` is server-only and at least 32 characters.
+- **Risk if wired early:** Treating an invitation as an order, or returning
+  phone numbers from `disclosure_mode` alone.

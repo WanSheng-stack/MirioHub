@@ -566,22 +566,19 @@ function assertNotConflictFromHandling(
 }
 
 {
-  const names = execFileSync(
-    "git",
-    ["diff", "--name-only", PHASE_BASELINE, "--", "supabase/migrations"],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).trim();
-  assert.equal(names, "");
-  assert.equal(gitDiff(V92_REL), "");
-  assert.equal(
-    gitDiff(
-      "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.verify.sql",
-    ),
-    "",
-  );
-  assert.equal(gitDiff(V91_REL), "");
-  assert.equal(gitDiff(V86_REL), "");
-  assert.equal(gitDiff("supabase/init.sql"), "");
+  // This test freezes only historical files the Cargo phase promised not to
+  // change. Later legal forward migrations are not a Cargo regression.
+  const cargoFrozenPaths = [
+    V86_REL,
+    V91_REL,
+    "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.verify.sql",
+    V92_REL,
+    "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.verify.sql",
+    "supabase/init.sql",
+  ] as const;
+  for (const path of cargoFrozenPaths) {
+    assert.equal(gitDiff(path), "", path);
+  }
 }
 
 {

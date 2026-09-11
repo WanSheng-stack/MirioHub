@@ -11,10 +11,10 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   allocationCategoryInvariant,
+  checklistItemKeyInvariant,
+  checklistItemOrderInvariant,
+  checklistItemsSetInvariant,
   cloneFingerprint,
-  confirmedItemsKeyPatternSql,
-  confirmedItemsPairwiseUniquenessSql,
-  confirmedItemsShapeInvariant,
   diffTableFingerprint,
   eventActorInvariant,
   eventPayloadInvariant,
@@ -26,10 +26,12 @@ import {
   fingerprintFailClosed,
   forbiddenSqlOps,
   guardReadsMigrationHistory,
+  hasConfirmedItemsArrayColumn,
   hasDuplicateIndependentIndex,
   independentIndexNamesFromSql,
   lifecycleIncludesDisputed,
   mentionsHardcoded72h,
+  pairwiseConfirmedItemsComparisonCount,
   parseDollarJson,
   projectionInvariant,
   sqlBody,
@@ -53,6 +55,8 @@ import {
   V94_ALLOCATION_CATEGORIES,
   V94_APP_ROLES,
   V94_CHECKLIST_STAGES,
+  V94_CLAIMS_DDL_REQUIRES_NONEMPTY_CHECKLIST_ITEMS,
+  V94_CLAIMS_EVENT_PAYLOAD_CHECK_IS_RECURSIVE,
   V94_CLAIMS_SINGLE_TABLE_PREVENTS_OVERSELL,
   V94_COMPLETION_DUE_HOURS_HARDCODED,
   V94_CONTRACT_ALLOCATION_COLUMNS,
@@ -60,6 +64,7 @@ import {
   V94_CONTRACT_STATE_PROJECTION_COLUMNS,
   V94_DIMENSION_CM_MAX,
   V94_DIMENSION_CM_MIN,
+  V94_EVENT_PAYLOAD_DB_CHECK_SCOPE,
   V94_EVENT_TYPES,
   V94_FORBIDDEN_SENSITIVE_COLUMNS,
   V94_GUARD_JSON_TAGS,
@@ -69,13 +74,15 @@ import {
   V94_PEOPLE_CAPACITY_MAX,
   V94_PEOPLE_UNITS_MAX,
   V94_PROVIDER_TRIP_STATE_COLUMNS,
+  V94_REMOVED_PAIRWISE_COMPARISON_COUNT,
   V94_SAFETY_CHECKLIST_COLUMNS,
+  V94_SAFETY_CHECKLIST_ITEM_COLUMNS,
   V94_TABLES,
   V94_VERIFY_REL,
   V94_WEIGHT_KG_MAX,
   V94_WORK_UNITS_MAX,
   type AllocationDraft,
-  type ConfirmedItemsShape,
+  type ChecklistItemDraft,
   type ProjectionDraft,
 } from "@/lib/matching/allocationEventFoundationV94.contract";
 import { freezeLegacyDirectMatchIntercept } from "@/lib/matching/legacyMatchingFreeze";
@@ -157,11 +164,12 @@ function constraintDef(name: string): string {
   return match[0];
 }
 
-function items(
-  values: Array<string | null>,
-  extra: Partial<ConfirmedItemsShape> = {},
-): ConfirmedItemsShape {
-  return { ndims: 1, lower: 1, values, ...extra };
+function item(
+  acceptanceId: string,
+  key: string,
+  order: number,
+): ChecklistItemDraft {
+  return { acceptance_id: acceptanceId, item_key: key, item_order: order };
 }
 
 const travelBase = (): AllocationDraft => ({
@@ -760,6 +768,9 @@ const openProjection = (): ProjectionDraft => ({
   assert.equal(eventPayloadInvariant({ phone: "+1" }), false);
   assert.equal(eventPayloadInvariant({ nested: { whatsapp: "abc" } }), false);
   assert.equal(eventPayloadInvariant({ demand_snapshot: {} }), false);
+  assert.equal(V94_CLAIMS_EVENT_PAYLOAD_CHECK_IS_RECURSIVE, false);
+  assert.equal(V94_EVENT_PAYLOAD_DB_CHECK_SCOPE, "top_level_keys_only");
+  assert.ok(migration.includes("top level only"));
   assert.equal(migration.includes("'status_changed'"), false);
   assert.ok(constraintDef("contract_events_contract_sequence_key").includes("UNIQUE (contract_id, sequence_no)"));
   assert.ok(
@@ -781,40 +792,83 @@ const openProjection = (): ProjectionDraft => ({
   assert.ok(migration.includes("Future writers may INSERT only"));
 }
 
-// TEST J — checklist array shape and no upload / unknown-risk fields
+// TEST J — normalized checklist items (helper simulates UNIQUE/CHECK; not a live PG run)
 {
-  assert.equal(confirmedItemsShapeInvariant(items(["seatbelt"])), true);
-  assert.equal(confirmedItemsShapeInvariant(items(["seatbelt"], { ndims: 2 })), false);
-  assert.equal(confirmedItemsShapeInvariant(items(["seatbelt"], { lower: 0 })), false);
-  assert.equal(confirmedItemsShapeInvariant(items(["seatbelt", null])), false);
-  assert.equal(confirmedItemsShapeInvariant(items([])), false);
-  assert.equal(confirmedItemsShapeInvariant(items(["seatbelt", "seatbelt"])), false);
-  assert.equal(confirmedItemsShapeInvariant(items([" "])), false);
-  assert.equal(confirmedItemsShapeInvariant(items(["Seatbelt"])), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", "pickup.identity_checked", 1)]), true);
   assert.equal(
-    confirmedItemsShapeInvariant(items(Array.from({ length: 65 }, (_, i) => `item_${i}`))),
+    checklistItemsSetInvariant(
+      Array.from({ length: 64 }, (_, i) => item("a1", `item_${i + 1}`, i + 1)),
+    ),
+    true,
+  );
+  assert.equal(checklistItemOrderInvariant(65), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", "ok_key", 65)]), false);
+  assert.equal(checklistItemOrderInvariant(0), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", "ok_key", 0)]), false);
+  assert.equal(checklistItemOrderInvariant(-1), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", "ok_key", -1)]), false);
+  assert.equal(
+    checklistItemsSetInvariant([
+      item("a1", "pickup.identity_checked", 1),
+      item("a1", "pickup.identity_checked", 2),
+    ]),
     false,
   );
-  const create = extractCreateTable(migration, "safety_checklist_acceptances");
-  assert.deepEqual(v94CreateTableColumnNames(create), [...V94_SAFETY_CHECKLIST_COLUMNS]);
+  assert.equal(
+    checklistItemsSetInvariant([
+      item("a1", "pickup.identity_checked", 1),
+      item("a1", "delivery.code_confirmed", 1),
+    ]),
+    false,
+  );
+  assert.equal(
+    checklistItemsSetInvariant([
+      item("a1", "pickup.identity_checked", 1),
+      item("a2", "pickup.identity_checked", 1),
+    ]),
+    true,
+  );
+  assert.equal(checklistItemKeyInvariant(""), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", "", 1)]), false);
+  assert.equal(checklistItemKeyInvariant(" padded.key "), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", " padded.key ", 1)]), false);
+  assert.equal(checklistItemKeyInvariant(`k${"x".repeat(100)}`), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", `k${"x".repeat(100)}`, 1)]), false);
+  assert.equal(checklistItemKeyInvariant("Bad Key"), false);
+  assert.equal(checklistItemsSetInvariant([item("a1", "Bad Key", 1)]), false);
+  assert.equal(checklistItemKeyInvariant("pickup.identity_checked"), true);
+  assert.equal(checklistItemKeyInvariant("delivery.code_confirmed"), true);
+
+  assert.equal(hasConfirmedItemsArrayColumn(migration), false);
+  assert.equal(pairwiseConfirmedItemsComparisonCount(migration), 0);
+  assert.equal(V94_REMOVED_PAIRWISE_COMPARISON_COUNT, 2016);
+  assert.equal(/confirmed_items\[\d+\]/.test(migration), false);
+  assert.equal(migration.includes("safety_checklist_acceptances_items_shape"), false);
+  assert.equal(V94_CLAIMS_DDL_REQUIRES_NONEMPTY_CHECKLIST_ITEMS, false);
+  assert.ok(migration.includes("non-empty checklist items is a future transactional writer invariant"));
+
+  const header = extractCreateTable(migration, "safety_checklist_acceptances");
+  const itemsCreate = extractCreateTable(migration, "safety_checklist_acceptance_items");
+  assert.deepEqual(v94CreateTableColumnNames(header), [...V94_SAFETY_CHECKLIST_COLUMNS]);
+  assert.deepEqual(v94CreateTableColumnNames(itemsCreate), [...V94_SAFETY_CHECKLIST_ITEM_COLUMNS]);
   for (const col of V94_FORBIDDEN_SENSITIVE_COLUMNS) {
-    assert.equal(new RegExp(`\\b${col}\\b`).test(create), false, col);
+    assert.equal(new RegExp(`\\b${col}\\b`).test(header), false, col);
+    assert.equal(new RegExp(`\\b${col}\\b`).test(itemsCreate), false, col);
   }
-  assert.equal(/no_unknown_risk/.test(create), false);
-  assert.equal(/photo_url/.test(create), false);
-  assert.equal(/file_url/.test(create), false);
-  assert.ok(create.includes("overall_confirmed boolean NOT NULL"));
+  assert.equal(/no_unknown_risk/.test(header), false);
+  assert.equal(/photo_url/.test(header + itemsCreate), false);
+  assert.equal(/file_url/.test(header + itemsCreate), false);
+  assert.ok(header.includes("overall_confirmed boolean NOT NULL"));
   assert.ok(constraintDef("safety_checklist_acceptances_overall_true").includes("IS TRUE"));
+  assert.ok(constraintDef("safety_checklist_acceptance_items_item_order_check").includes("BETWEEN 1 AND 64"));
+  assert.ok(constraintDef("safety_checklist_acceptance_items_pkey").includes("PRIMARY KEY (acceptance_id, item_key)"));
   assert.ok(
-    constraintDef("safety_checklist_acceptances_items_shape").includes(
-      confirmedItemsPairwiseUniquenessSql().slice(0, 80),
+    constraintDef("safety_checklist_acceptance_items_acceptance_id_item_order_key").includes(
+      "UNIQUE (acceptance_id, item_order)",
     ),
   );
-  assert.ok(
-    constraintDef("safety_checklist_acceptances_items_shape").includes(
-      confirmedItemsKeyPatternSql().slice(0, 80),
-    ),
-  );
+  assert.ok(itemsCreate.includes("ON DELETE RESTRICT"));
+  assert.ok(itemsCreate.includes("ON UPDATE RESTRICT"));
   for (const stage of V94_CHECKLIST_STAGES) {
     assert.ok(constraintDef("safety_checklist_acceptances_stage_check").includes(`'${stage}'`));
   }
@@ -840,6 +894,10 @@ const openProjection = (): ProjectionDraft => ({
     independentIndexNamesFromSql(migration, "safety_checklist_acceptances"),
     ["safety_checklist_acceptances_contract_stage_confirmed_idx"],
   );
+  assert.deepEqual(
+    independentIndexNamesFromSql(migration, "safety_checklist_acceptance_items"),
+    [],
+  );
 }
 
 // TEST L — verify is one result set, sequences a+i, no function regex
@@ -862,6 +920,9 @@ const openProjection = (): ProjectionDraft => ({
   assert.ok(verifySql.includes("WHEN t.oid IS NULL OR r.oid IS NULL THEN 'FAIL'"));
   assert.ok(verifySql.includes("THEN 'NULL'"));
   assert.ok(expectComments.some((line) => line.includes("single result set")));
+  assert.ok(verifySql.includes("overall_pass"));
+  assert.ok(verifySql.includes("safety_checklist_acceptance_items"));
+  assert.ok(verifySql.includes("no confirmed_items column"));
   assert.ok(expectComments.some((line) => line.includes("relkind = r")));
   assert.ok(expectComments.some((line) => line.includes("relrowsecurity = true")));
   assert.ok(expectComments.some((line) => line.includes("relforcerowsecurity = false")));
@@ -881,9 +942,9 @@ const openProjection = (): ProjectionDraft => ({
   assert.ok(sheetSrc.includes("export function MatchRequestSheet"));
   const runtimeFiles = walkRuntimeTs(join(repoRoot, "src"));
   const writerRe =
-    /\.from\(\s*["'](provider_trip_state|contract_allocations|contract_state_projections|contract_events|safety_checklist_acceptances)["']\s*\)/;
+    /\.from\(\s*["'](provider_trip_state|contract_allocations|contract_state_projections|contract_events|safety_checklist_acceptances|safety_checklist_acceptance_items)["']\s*\)/;
   const insertRe =
-    /INSERT\s+INTO\s+public\.(provider_trip_state|contract_allocations|contract_state_projections|contract_events|safety_checklist_acceptances)/i;
+    /INSERT\s+INTO\s+public\.(provider_trip_state|contract_allocations|contract_state_projections|contract_events|safety_checklist_acceptances|safety_checklist_acceptance_items)/i;
   const contractImportRe = /allocationEventFoundationV94\.contract/;
   for (const file of runtimeFiles) {
     const rel = relative(repoRoot, file).replaceAll("\\", "/");

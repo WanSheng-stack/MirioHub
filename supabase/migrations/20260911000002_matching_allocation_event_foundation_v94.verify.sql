@@ -9,7 +9,7 @@
 -- v94 defines no functions; CREATE FUNCTION is forbidden by static tests.
 -- This file does not scan public.pg_proc by name regex.
 -- Owned sequences cover serial/owned (deptype a) and identity (deptype i).
--- EXPECT: single result set with check_order, area, check_name, result, observed, expected
+-- EXPECT: single result set with check_order, area, check_name, result, observed, expected, overall_pass
 -- EXPECT result PASS when catalog matches the v94 contract
 -- EXPECT relkind = r
 -- EXPECT relrowsecurity = true
@@ -22,7 +22,9 @@
 -- EXPECT no owned sequence (deptype a or i)
 -- EXPECT no non-internal trigger
 -- EXPECT v93 four tables still empty and fail-closed
--- EXPECT no sensitive columns on events, checklist, or projection
+-- EXPECT no sensitive columns on events, checklist, items, or projection
+-- EXPECT safety_checklist_acceptances has no confirmed_items column
+-- EXPECT six v94 tables including safety_checklist_acceptance_items
 
 WITH
 v94_tables(relname, col_csv) AS (
@@ -45,7 +47,11 @@ v94_tables(relname, col_csv) AS (
     ),
     (
       'safety_checklist_acceptances',
-      'id,contract_id,stage,actor_user_id,checklist_version,confirmed_items,overall_confirmed,client_confirmation_id,confirmed_at,created_at'
+      'id,contract_id,stage,actor_user_id,checklist_version,overall_confirmed,client_confirmation_id,confirmed_at,created_at'
+    ),
+    (
+      'safety_checklist_acceptance_items',
+      'acceptance_id,item_key,item_order,created_at'
     )
 ),
 v93_tables(relname) AS (
@@ -179,10 +185,11 @@ counts AS (
     UNION ALL SELECT 3, 'contract_state_projections', (SELECT count(*) FROM public.contract_state_projections)
     UNION ALL SELECT 4, 'contract_events', (SELECT count(*) FROM public.contract_events)
     UNION ALL SELECT 5, 'safety_checklist_acceptances', (SELECT count(*) FROM public.safety_checklist_acceptances)
-    UNION ALL SELECT 6, 'match_contact_invitations', (SELECT count(*) FROM public.match_contact_invitations)
-    UNION ALL SELECT 7, 'contact_grants', (SELECT count(*) FROM public.contact_grants)
-    UNION ALL SELECT 8, 'match_requests', (SELECT count(*) FROM public.match_requests)
-    UNION ALL SELECT 9, 'match_contracts', (SELECT count(*) FROM public.match_contracts)
+    UNION ALL SELECT 6, 'safety_checklist_acceptance_items', (SELECT count(*) FROM public.safety_checklist_acceptance_items)
+    UNION ALL SELECT 7, 'match_contact_invitations', (SELECT count(*) FROM public.match_contact_invitations)
+    UNION ALL SELECT 8, 'contact_grants', (SELECT count(*) FROM public.contact_grants)
+    UNION ALL SELECT 9, 'match_requests', (SELECT count(*) FROM public.match_requests)
+    UNION ALL SELECT 10, 'match_contracts', (SELECT count(*) FROM public.match_contracts)
   ) AS x
 ),
 columns AS (
@@ -234,8 +241,10 @@ critical_types AS (
       (453, 'provider_trip_state', 'version', 'bigint'),
       (454, 'contract_state_projections', 'last_event_sequence', 'bigint'),
       (455, 'contract_events', 'event_payload', 'jsonb'),
-      (456, 'safety_checklist_acceptances', 'confirmed_items', 'text[]'),
-      (457, 'safety_checklist_acceptances', 'overall_confirmed', 'boolean')
+      (456, 'safety_checklist_acceptances', 'overall_confirmed', 'boolean'),
+      (457, 'safety_checklist_acceptance_items', 'item_key', 'text'),
+      (458, 'safety_checklist_acceptance_items', 'item_order', 'smallint'),
+      (459, 'safety_checklist_acceptance_items', 'acceptance_id', 'uuid')
   ) AS x(check_order, relname, colname, expected_type)
 ),
 type_checks AS (
@@ -332,7 +341,7 @@ unique_keys AS (
         SELECT 1
         FROM pg_constraint con
         WHERE con.conrelid = t.oid
-          AND con.contype = 'u'
+          AND con.contype IN ('u', 'p')
           AND con.conname = x.conname
       ) THEN 'PASS'
       ELSE 'FAIL'
@@ -345,7 +354,9 @@ unique_keys AS (
       (2, 'contract_events', 'contract_events_contract_sequence_key', 'events unique contract_id sequence_no'),
       (3, 'contract_events', 'contract_events_contract_client_event_id_key', 'events unique contract_id client_event_id'),
       (4, 'safety_checklist_acceptances', 'safety_checklist_acceptances_stage_actor_version_key', 'checklist unique stage actor version'),
-      (5, 'safety_checklist_acceptances', 'safety_checklist_acceptances_client_confirmation_id_key', 'checklist unique client_confirmation_id')
+      (5, 'safety_checklist_acceptances', 'safety_checklist_acceptances_client_confirmation_id_key', 'checklist unique client_confirmation_id'),
+      (6, 'safety_checklist_acceptance_items', 'safety_checklist_acceptance_items_pkey', 'items unique acceptance_id item_key'),
+      (7, 'safety_checklist_acceptance_items', 'safety_checklist_acceptance_items_acceptance_id_item_order_key', 'items unique acceptance_id item_order')
   ) AS x(ord, relname, conname, check_name)
   LEFT JOIN pg_namespace n ON n.nspname = 'public'
   LEFT JOIN pg_class t
@@ -588,7 +599,8 @@ sensitive AS (
   WHERE t.relname IN (
     'contract_events',
     'contract_state_projections',
-    'safety_checklist_acceptances'
+    'safety_checklist_acceptances',
+    'safety_checklist_acceptance_items'
   )
 ),
 volume_numeric AS (
@@ -620,6 +632,68 @@ volume_numeric AS (
     ON t.relnamespace = n.oid
    AND t.relname = 'contract_allocations'
    AND t.relkind = 'r'
+),
+no_confirmed_items AS (
+  SELECT
+    932,
+    'checklist'::text,
+    'acceptances has no confirmed_items column',
+    CASE
+      WHEN t.oid IS NULL THEN 'FAIL'
+      WHEN EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        WHERE a.attrelid = t.oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND a.attname = 'confirmed_items'
+      ) THEN 'FAIL'
+      ELSE 'PASS'
+    END,
+    CASE
+      WHEN t.oid IS NULL THEN 'NULL'
+      WHEN EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        WHERE a.attrelid = t.oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND a.attname = 'confirmed_items'
+      ) THEN 'present'
+      ELSE 'absent'
+    END,
+    'absent'::text
+  FROM (SELECT 1) dummy
+  LEFT JOIN pg_namespace n ON n.nspname = 'public'
+  LEFT JOIN pg_class t
+    ON t.relnamespace = n.oid
+   AND t.relname = 'safety_checklist_acceptances'
+   AND t.relkind = 'r'
+),
+items_fk_restrict AS (
+  SELECT
+    933,
+    'fk'::text,
+    'items acceptance_id FK update/delete RESTRICT',
+    CASE
+      WHEN t.oid IS NULL OR con.oid IS NULL THEN 'FAIL'
+      WHEN con.confdeltype = 'r' AND con.confupdtype = 'r' THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    CASE
+      WHEN t.oid IS NULL OR con.oid IS NULL THEN 'NULL'
+      ELSE con.confupdtype::text || '/' || con.confdeltype::text
+    END,
+    'r/r'::text
+  FROM (SELECT 1) dummy
+  LEFT JOIN pg_namespace n ON n.nspname = 'public'
+  LEFT JOIN pg_class t
+    ON t.relnamespace = n.oid
+   AND t.relname = 'safety_checklist_acceptance_items'
+   AND t.relkind = 'r'
+  LEFT JOIN pg_constraint con
+    ON con.conrelid = t.oid
+   AND con.conname = 'safety_checklist_acceptance_items_acceptance_id_fkey'
 ),
 no_72h AS (
   SELECT
@@ -670,6 +744,8 @@ all_checks AS (
   UNION ALL SELECT * FROM sensitive
   UNION ALL SELECT * FROM volume_numeric
   UNION ALL SELECT * FROM no_72h
+  UNION ALL SELECT * FROM no_confirmed_items
+  UNION ALL SELECT * FROM items_fk_restrict
 )
 SELECT
   check_order,
@@ -677,6 +753,12 @@ SELECT
   check_name,
   result,
   observed,
-  expected
+  expected,
+  CASE
+    WHEN NOT EXISTS (
+      SELECT 1 FROM all_checks fail_row WHERE fail_row.result <> 'PASS'
+    ) THEN 'PASS'
+    ELSE 'FAIL'
+  END AS overall_pass
 FROM all_checks
 ORDER BY check_order;

@@ -220,14 +220,24 @@ OWNER against PostGIS.
 
 ## 13. Allocation and event foundation (v94 schema only)
 
-- **Current state:** PHASE 6.7A.3 lands an undeployed forward migration that
-  adds `provider_trip_state`, `contract_allocations`,
-  `contract_state_projections`, `contract_events`, and
-  `safety_checklist_acceptances`. Guard fingerprints the **live v93 catalog**
-  (columns, constraints, independent indexes, RLS, FORCE off, empty counts)
-  and refuses pre-existing v94 tables. It does not read migration history.
-  Five tables: RLS on, not FORCE, no policy, no GRANT, UUID defaults, no
-  RPC/trigger/sequence. No production writer, API, or UI.
+- **Current state:** PHASE 6.7A.3 / 6.7A.3A lands an undeployed forward
+  migration that adds six tables: `provider_trip_state`,
+  `contract_allocations`, `contract_state_projections`, `contract_events`,
+  `safety_checklist_acceptances`, and `safety_checklist_acceptance_items`.
+  Guard fingerprints the **live v93 catalog** (columns, constraints,
+  independent indexes, RLS, FORCE off, empty counts) and refuses
+  pre-existing v94 tables. It does not read migration history. All six
+  tables: RLS on, not FORCE, no policy, no GRANT, UUID defaults, no
+  RPC/trigger/sequence. No production writer, API, or UI. Checklist item
+  keys are a child table; `confirmed_items text[]` and 2016 pairwise array
+  comparisons were removed in 6.7A.3A. `item_order` 1–64 UNIQUE per
+  acceptance caps cardinality. **non-empty checklist items is a future
+  transactional writer invariant** — DDL does not require a header to have
+  a child row. Actor-is-contract-participant is also a future writer
+  re-read, not a single-table CHECK. `contract_events.event_payload` CHECK
+  blocks listed sensitive keys at the **top level only**; the future writer
+  must recursively inspect the JSON tree. Browser has no write privilege;
+  tables stay empty until that writer exists.
 - **Still unresolved / later phases:** 6.7C.3 owns the atomic accept
   transaction (lock mother trip, sum interval allocations, insert contract +
   allocation + formed event + projection together, refuse new contracts after

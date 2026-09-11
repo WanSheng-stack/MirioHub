@@ -369,6 +369,7 @@ export const V94_TABLES = [
   "contract_state_projections",
   "contract_events",
   "safety_checklist_acceptances",
+  "safety_checklist_acceptance_items",
 ] as const;
 
 export const V94_APP_ROLES = V93_APP_ROLES;
@@ -391,6 +392,11 @@ export const V94_CONFIRMED_ITEMS_MAX = 64;
 export const V94_CLAIMS_SINGLE_TABLE_PREVENTS_OVERSELL = false;
 export const V94_COMPLETION_DUE_HOURS_HARDCODED = false;
 export const V94_HAS_PRODUCTION_WRITER = false;
+export const V94_CLAIMS_DDL_REQUIRES_NONEMPTY_CHECKLIST_ITEMS = false;
+export const V94_CLAIMS_EVENT_PAYLOAD_CHECK_IS_RECURSIVE = false;
+export const V94_EVENT_PAYLOAD_DB_CHECK_SCOPE = "top_level_keys_only" as const;
+export const V94_REMOVED_PAIRWISE_COMPARISON_COUNT = 2016;
+export const V94_CHECKLIST_ITEM_KEY_MAX = 100;
 
 export const V94_TRIP_STATES = ["open", "started", "ended"] as const;
 export const V94_ALLOCATION_CATEGORIES = [
@@ -543,10 +549,16 @@ export const V94_SAFETY_CHECKLIST_COLUMNS = [
   "stage",
   "actor_user_id",
   "checklist_version",
-  "confirmed_items",
   "overall_confirmed",
   "client_confirmation_id",
   "confirmed_at",
+  "created_at",
+] as const;
+
+export const V94_SAFETY_CHECKLIST_ITEM_COLUMNS = [
+  "acceptance_id",
+  "item_key",
+  "item_order",
   "created_at",
 ] as const;
 
@@ -621,12 +633,12 @@ export const V94_EVENT_PAYLOAD_FORBIDDEN_KEYS = [
 const HIGH_RISK_PAYLOAD_KEY =
   /(phone|whatsapp|viber|plate|license_plate|address|gps|latitude|longitude|verification_code|pickup_code|delivery_code|completion_code|consignee_code|message_body|photo_url|file_url|id_number|passport|snapshot)/i;
 
-const CHECKLIST_ITEM_KEY = /^[a-z][a-z0-9_]{0,62}$/;
+const CHECKLIST_ITEM_KEY = /^[a-z0-9][a-z0-9_.:-]*$/;
 
-export type ConfirmedItemsShape = {
-  ndims: number;
-  lower: number;
-  values: Array<string | null>;
+export type ChecklistItemDraft = {
+  acceptance_id: string;
+  item_key: string;
+  item_order: number;
 };
 
 export type TripStateDraft = {
@@ -1171,33 +1183,59 @@ export const V94_GUARD_JSON_TAGS = {
 export function v94CreateTableColumnNames(createSql: string): string[] {
   return [
     ...createSql.matchAll(
-      /^\s+([a-z_][a-z0-9_]*)\s+(uuid|text\[\]|text|integer|bigint|numeric(?:\([^)]+\))?|boolean|jsonb|timestamptz)\b/gim,
+      /^\s+([a-z_][a-z0-9_]*)\s+(uuid|text\[\]|text|integer|smallint|bigint|numeric(?:\([^)]+\))?|boolean|jsonb|timestamptz)\b/gim,
     ),
   ].map((match) => match[1]);
 }
 
-export function confirmedItemsPairwiseUniquenessSql(
-  column = "confirmed_items",
-): string {
-  const parts: string[] = [];
-  for (let i = 1; i <= V94_CONFIRMED_ITEMS_MAX; i += 1) {
-    for (let j = i + 1; j <= V94_CONFIRMED_ITEMS_MAX; j += 1) {
-      parts.push(
-        `(cardinality(${column}) < ${j} OR ${column}[${i}] <> ${column}[${j}])`,
-      );
-    }
-  }
-  return parts.join("\n      AND ");
+export function pairwiseConfirmedItemsComparisonCount(sql: string): number {
+  return [
+    ...sql.matchAll(/confirmed_items\[\d+\]\s*<>\s*confirmed_items\[\d+\]/g),
+  ].length;
 }
 
-export function confirmedItemsKeyPatternSql(column = "confirmed_items"): string {
-  const parts: string[] = [];
-  for (let i = 1; i <= V94_CONFIRMED_ITEMS_MAX; i += 1) {
-    parts.push(
-      `(cardinality(${column}) < ${i} OR ${column}[${i}] ~ '^[a-z][a-z0-9_]{0,62}$')`,
-    );
+export function hasConfirmedItemsArrayColumn(sql: string): boolean {
+  return /^\s+confirmed_items\s+text\[\]/im.test(sql);
+}
+
+/**
+ * Field rules for one checklist item row. This is not a live PostgreSQL run.
+ */
+export function checklistItemKeyInvariant(key: string): boolean {
+  if (key !== key.trim()) return false;
+  if (key.length < 1 || key.length > V94_CHECKLIST_ITEM_KEY_MAX) return false;
+  return CHECKLIST_ITEM_KEY.test(key);
+}
+
+export function checklistItemOrderInvariant(order: number): boolean {
+  return (
+    Number.isInteger(order) &&
+    order >= 1 &&
+    order <= V94_CONFIRMED_ITEMS_MAX
+  );
+}
+
+/**
+ * Simulates UNIQUE(acceptance_id, item_key) and UNIQUE(acceptance_id, item_order)
+ * plus field CHECKs. Does not claim PostgreSQL executed these constraints.
+ * An empty set is DDL-legal; a future writer must require >= 1 item per header.
+ */
+export function checklistItemsSetInvariant(items: ChecklistItemDraft[]): boolean {
+  const keysByAcceptance = new Map<string, Set<string>>();
+  const ordersByAcceptance = new Map<string, Set<number>>();
+  for (const item of items) {
+    if (!checklistItemKeyInvariant(item.item_key)) return false;
+    if (!checklistItemOrderInvariant(item.item_order)) return false;
+    const keys = keysByAcceptance.get(item.acceptance_id) ?? new Set<string>();
+    if (keys.has(item.item_key)) return false;
+    keys.add(item.item_key);
+    keysByAcceptance.set(item.acceptance_id, keys);
+    const orders = ordersByAcceptance.get(item.acceptance_id) ?? new Set<number>();
+    if (orders.has(item.item_order)) return false;
+    orders.add(item.item_order);
+    ordersByAcceptance.set(item.acceptance_id, orders);
   }
-  return parts.join("\n      AND ");
+  return true;
 }
 
 export function isNonNegativeSafeInt(value: number | null): boolean {
@@ -1426,17 +1464,6 @@ export function projectionInvariant(draft: ProjectionDraft): boolean {
   return true;
 }
 
-export function confirmedItemsShapeInvariant(shape: ConfirmedItemsShape): boolean {
-  if (shape.ndims !== 1) return false;
-  if (shape.lower !== 1) return false;
-  const card = shape.values.length;
-  if (card < 1 || card > V94_CONFIRMED_ITEMS_MAX) return false;
-  if (shape.values.some((value) => value == null)) return false;
-  const keys = shape.values as string[];
-  if (keys.some((key) => !CHECKLIST_ITEM_KEY.test(key))) return false;
-  return new Set(keys).size === card;
-}
-
 export function eventActorInvariant(draft: EventActorDraft): boolean {
   if (draft.actor_kind === "user") return draft.actor_user_id != null;
   if (draft.actor_kind === "system") return draft.actor_user_id == null;
@@ -1465,6 +1492,11 @@ function walkPayloadForbidden(value: unknown): boolean {
   return false;
 }
 
+/**
+ * Recursive TypeScript walk. The SQL CHECK is top-level keys only
+ * (V94_EVENT_PAYLOAD_DB_CHECK_SCOPE). This helper is not a live DB run and
+ * is not an authorization boundary.
+ */
 export function eventPayloadInvariant(payload: unknown): boolean {
   if (payload == null || typeof payload !== "object" || Array.isArray(payload)) {
     return false;

@@ -293,14 +293,19 @@ export function fingerprintFailClosed(mismatches: FingerprintMismatch[]): boolea
   return mismatches.length > 0;
 }
 
-export function parseDollarJson(sql: string, tag: string): unknown {
+export function parseDollarText(sql: string, tag: string): string | null {
   const open = `$${tag}$`;
   const start = sql.indexOf(open);
   if (start < 0) return null;
   const from = start + open.length;
   const end = sql.indexOf(open, from);
   if (end < 0) return null;
-  return JSON.parse(sql.slice(from, end));
+  return sql.slice(from, end);
+}
+
+export function parseDollarJson(sql: string, tag: string): unknown {
+  const text = parseDollarText(sql, tag);
+  return text == null ? null : JSON.parse(text);
 }
 
 export function tableFingerprintFromGuardJson(raw: unknown): TableFingerprint {
@@ -1728,6 +1733,99 @@ export function volumeUsesNumericThenMultiply(sql: string): boolean {
       sql,
     );
   return numericFirst && !intThenCast;
+}
+
+/** Frozen SHA of the executed v94 main migration. Do not rewrite or re-run it. */
+export const V94_DEPLOYED_MIGRATION_SHA =
+  "3f623b338120e4a59f0ad1cf10c85155c0fea3d2";
+
+export const V94_DELIVER_SHAPE_CONSTRAINT_NAME =
+  "contract_allocations_deliver_shape";
+
+export const V94_VOLUME_NUMERIC_CHECK_ORDER = 930 as const;
+export const V94_VOLUME_NUMERIC_CHECK_NAME =
+  "volume_cm3 numeric-then-multiply" as const;
+export const V94_VOLUME_NUMERIC_EXPECTED_LABEL =
+  "exact deployed contract_allocations_deliver_shape definition" as const;
+export const V94_DELIVER_SHAPE_GUARD_JSON_TAG = "v94_deliver_shape";
+
+/**
+ * Live pg_get_constraintdef(oid, false) for public.contract_allocations
+ * constraint contract_allocations_deliver_shape after v94 apply.
+ * First verify false-failed because it searched column::numeric while
+ * PostgreSQL rendered (column)::numeric. The constraint itself is correct.
+ */
+export const V94_DEPLOYED_DELIVER_SHAPE_DEFINITION =
+  "CHECK (((category <> 'deliver'::text) OR ((segment_from_order IS NOT NULL) AND (space_length_cm IS NOT NULL) AND ((space_length_cm >= 1) AND (space_length_cm <= 2000)) AND (space_width_cm IS NOT NULL) AND ((space_width_cm >= 1) AND (space_width_cm <= 2000)) AND (space_height_cm IS NOT NULL) AND ((space_height_cm >= 1) AND (space_height_cm <= 2000)) AND (volume_cm3 IS NOT NULL) AND (volume_cm3 = (((space_length_cm)::numeric * (space_width_cm)::numeric) * (space_height_cm)::numeric)) AND (weight_unknown IS NOT NULL) AND (((weight_unknown IS TRUE) AND (weight_kg IS NULL)) OR ((weight_unknown IS FALSE) AND (weight_kg IS NOT NULL) AND (weight_kg > (0)::numeric) AND (weight_kg <= (10000)::numeric))) AND (people_units IS NULL) AND (small_item_units IS NULL) AND (medium_item_units IS NULL) AND (large_item_units IS NULL) AND (xlarge_item_units IS NULL) AND (work_units IS NULL))))";
+
+export type VolumeNumericCatalogConstraint = {
+  name: string;
+  type: string;
+  def: string;
+};
+
+export type VolumeNumericVerifyCatalog = {
+  tableExists: boolean;
+  constraints: readonly VolumeNumericCatalogConstraint[];
+};
+
+export type VolumeNumericVerifyRow = {
+  check_order: typeof V94_VOLUME_NUMERIC_CHECK_ORDER;
+  area: "allocation";
+  check_name: typeof V94_VOLUME_NUMERIC_CHECK_NAME;
+  result: "PASS" | "FAIL";
+  observed: string | null;
+  expected: typeof V94_VOLUME_NUMERIC_EXPECTED_LABEL;
+};
+
+/**
+ * Same semantics as verify.sql check 930: exact name, single CHECK,
+ * whitespace-only canonicalize against the frozen deployed definition.
+ */
+export function verifyVolumeNumericConstraint(
+  catalog: VolumeNumericVerifyCatalog,
+): VolumeNumericVerifyRow {
+  const expected = V94_VOLUME_NUMERIC_EXPECTED_LABEL;
+  const base = {
+    check_order: V94_VOLUME_NUMERIC_CHECK_ORDER,
+    area: "allocation" as const,
+    check_name: V94_VOLUME_NUMERIC_CHECK_NAME,
+    expected,
+  };
+  if (!catalog.tableExists) {
+    return { ...base, result: "FAIL", observed: null };
+  }
+  const matches = catalog.constraints.filter(
+    (constraint) => constraint.name === V94_DELIVER_SHAPE_CONSTRAINT_NAME,
+  );
+  if (matches.length === 0) {
+    return { ...base, result: "FAIL", observed: null };
+  }
+  if (matches.length !== 1) {
+    return { ...base, result: "FAIL", observed: String(matches.length) };
+  }
+  const only = matches[0];
+  const live = canonicalizeCatalogDef(only.def);
+  if (only.type !== "c") {
+    return { ...base, result: "FAIL", observed: live };
+  }
+  const want = canonicalizeCatalogDef(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION);
+  if (live !== want) {
+    return { ...base, result: "FAIL", observed: live };
+  }
+  return { ...base, result: "PASS", observed: live };
+}
+
+export function deployedDeliverShapeConstraint(
+  def = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION,
+  extras: Partial<VolumeNumericCatalogConstraint> = {},
+): VolumeNumericCatalogConstraint {
+  return {
+    name: V94_DELIVER_SHAPE_CONSTRAINT_NAME,
+    type: "c",
+    def,
+    ...extras,
+  };
 }
 
 export function mentionsHardcoded72h(sql: string): boolean {

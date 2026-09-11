@@ -35,6 +35,7 @@ import {
   mentionsHardcoded72h,
   pairwiseConfirmedItemsComparisonCount,
   parseDollarJson,
+  parseDollarText,
   projectionInvariant,
   sqlBody,
   tableFingerprintFromGuardJson,
@@ -45,7 +46,13 @@ import {
   verifyIsSingleResultSet,
   verifyScansFunctionsByRegex,
   verifyUsesOwnedSequencesAi,
+  verifyVolumeNumericConstraint,
   volumeUsesNumericThenMultiply,
+  V94_DEPLOYED_DELIVER_SHAPE_DEFINITION,
+  V94_DEPLOYED_MIGRATION_SHA,
+  V94_DELIVER_SHAPE_CONSTRAINT_NAME,
+  V94_DELIVER_SHAPE_GUARD_JSON_TAG,
+  V94_VOLUME_NUMERIC_EXPECTED_LABEL,
   V93_APP_ROLES,
   V93_CONTRACT_LIFECYCLE,
   V93_DEPLOYED_CATALOG_OBJECTS,
@@ -90,6 +97,7 @@ import {
   type AllocationDraft,
   type ChecklistItemDraft,
   type ProjectionDraft,
+  type VolumeNumericCatalogConstraint,
 } from "@/lib/matching/allocationEventFoundationV94.contract";
 import { freezeLegacyDirectMatchIntercept } from "@/lib/matching/legacyMatchingFreeze";
 
@@ -130,8 +138,8 @@ const body = sqlBody(migration);
 const guard = extractDoBlock(migration);
 const expectComments = extractExpectComments(verifySql);
 
-function gitDiff(path: string): string {
-  return execFileSync("git", ["diff", PHASE_BASELINE, "--", path], {
+function gitDiff(path: string, baseline = PHASE_BASELINE): string {
+  return execFileSync("git", ["diff", baseline, "--", path], {
     cwd: repoRoot,
     encoding: "utf8",
   });
@@ -1305,6 +1313,177 @@ function fingerprintHasObject(
   assert.equal(verifySql.includes("FROM public.profiles"), false);
   assert.equal(verifySql.includes("FROM public.posts"), false);
   assert.equal(/proname\s*~\*/.test(verifySql), false);
+}
+
+function deliverShapeConstraint(
+  def: string,
+  extras: Partial<VolumeNumericCatalogConstraint> = {},
+): VolumeNumericCatalogConstraint {
+  return {
+    name: V94_DELIVER_SHAPE_CONSTRAINT_NAME,
+    type: "c",
+    def,
+    ...extras,
+  };
+}
+
+function volumeRow(
+  constraints: VolumeNumericCatalogConstraint[],
+  tableExists = true,
+) {
+  return verifyVolumeNumericConstraint({ tableExists, constraints });
+}
+
+// TEST L2 — verify check 930 uses frozen deployed deliver_shape definition
+{
+  assert.equal(
+    parseDollarText(verifySql, V94_DELIVER_SHAPE_GUARD_JSON_TAG),
+    V94_DEPLOYED_DELIVER_SHAPE_DEFINITION,
+  );
+  assert.ok(verifySql.includes("pg_get_constraintdef(con.oid, false)"));
+  assert.ok(verifySql.includes("con.conname = 'contract_allocations_deliver_shape'"));
+  assert.ok(verifySql.includes(V94_VOLUME_NUMERIC_EXPECTED_LABEL));
+  assert.equal(verifySql.includes("numeric-cast-first"), false);
+  assert.equal(verifySql.includes("%space_length_cm::numeric%"), false);
+  assert.equal(verifySql.includes("%space_width_cm::numeric%"), false);
+  assert.equal(verifySql.includes("%space_height_cm::numeric%"), false);
+  assert.equal(
+    verifySql.includes("%(space_length_cm * space_width_cm * space_height_cm)::numeric%"),
+    false,
+  );
+  assert.ok(verifySql.includes("267 PASS + 1 false FAIL"));
+  assert.ok(ledger.includes("6.7A.3B.1"));
+  assert.ok(ledger.includes("false FAIL"));
+  assert.equal(gitDiff(V94_MIGRATION_REL, V94_DEPLOYED_MIGRATION_SHA), "");
+  for (const path of [
+    "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql",
+    "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.sql",
+    "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql",
+    "supabase/migrations/20260911000001_matching_dual_post_foundation_v93.sql",
+    "supabase/init.sql",
+  ]) {
+    assert.equal(gitDiff(path, V94_DEPLOYED_MIGRATION_SHA), "", path);
+  }
+
+  const livePass = volumeRow([
+    deliverShapeConstraint(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION),
+  ]);
+  assert.equal(livePass.result, "PASS");
+  assert.equal(
+    livePass.observed,
+    canonicalizeCatalogDef(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION),
+  );
+  assert.equal(livePass.expected, V94_VOLUME_NUMERIC_EXPECTED_LABEL);
+  assert.notEqual(livePass.observed, "numeric-cast-first");
+  assert.ok(livePass.observed?.includes("(space_length_cm)::numeric"));
+  assert.ok(livePass.observed?.includes("(space_width_cm)::numeric"));
+  assert.ok(livePass.observed?.includes("(space_height_cm)::numeric"));
+
+  const onlyLengthCast = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION
+    .replace("(space_width_cm)::numeric", "space_width_cm")
+    .replace("(space_height_cm)::numeric", "space_height_cm");
+  assert.equal(
+    volumeRow([deliverShapeConstraint(onlyLengthCast)]).result,
+    "FAIL",
+  );
+
+  const lengthWidthCast = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace(
+    "(space_height_cm)::numeric",
+    "space_height_cm",
+  );
+  assert.equal(
+    volumeRow([deliverShapeConstraint(lengthWidthCast)]).result,
+    "FAIL",
+  );
+
+  const intThenCast = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace(
+    "(((space_length_cm)::numeric * (space_width_cm)::numeric) * (space_height_cm)::numeric)",
+    "(space_length_cm * space_width_cm * space_height_cm)::numeric",
+  );
+  const intThenCastRow = volumeRow([deliverShapeConstraint(intThenCast)]);
+  assert.equal(intThenCastRow.result, "FAIL");
+  assert.ok(intThenCastRow.observed?.includes(
+    "(space_length_cm * space_width_cm * space_height_cm)::numeric",
+  ));
+  assert.notEqual(intThenCastRow.observed, intThenCastRow.expected);
+
+  const noVolumeCompare = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace(
+    "AND (volume_cm3 = (((space_length_cm)::numeric * (space_width_cm)::numeric) * (space_height_cm)::numeric)) ",
+    "",
+  );
+  assert.equal(
+    volumeRow([deliverShapeConstraint(noVolumeCompare)]).result,
+    "FAIL",
+  );
+
+  assert.equal(
+    volumeRow([
+      deliverShapeConstraint(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION, {
+        name: "contract_allocations_travel_shape",
+      }),
+    ]).result,
+    "FAIL",
+  );
+  assert.equal(volumeRow([]).observed, null);
+  assert.equal(volumeRow([]).result, "FAIL");
+  assert.equal(
+    verifyVolumeNumericConstraint({ tableExists: false, constraints: [] }).observed,
+    null,
+  );
+
+  const duplicate = volumeRow([
+    deliverShapeConstraint(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION),
+    deliverShapeConstraint(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION),
+  ]);
+  assert.equal(duplicate.result, "FAIL");
+  assert.equal(duplicate.observed, "2");
+
+  assert.equal(
+    volumeRow([
+      deliverShapeConstraint(V94_DEPLOYED_DELIVER_SHAPE_DEFINITION, { type: "u" }),
+    ]).result,
+    "FAIL",
+  );
+
+  const spaced = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace(
+    " OR ",
+    "\r\n  OR\r\n  ",
+  );
+  assert.equal(volumeRow([deliverShapeConstraint(spaced)]).result, "PASS");
+
+  const regrouped = V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace(
+    "(((space_length_cm)::numeric * (space_width_cm)::numeric) * (space_height_cm)::numeric)",
+    "((space_length_cm)::numeric * ((space_width_cm)::numeric * (space_height_cm)::numeric))",
+  );
+  assert.equal(volumeRow([deliverShapeConstraint(regrouped)]).result, "FAIL");
+
+  assert.equal(
+    volumeRow([
+      deliverShapeConstraint(
+        V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace("<= 2000", "<= 2001"),
+      ),
+    ]).result,
+    "FAIL",
+  );
+  assert.equal(
+    volumeRow([
+      deliverShapeConstraint(
+        V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace("<= (10000)::numeric", "<= (9999)::numeric"),
+      ),
+    ]).result,
+    "FAIL",
+  );
+  assert.equal(
+    volumeRow([
+      deliverShapeConstraint(
+        V94_DEPLOYED_DELIVER_SHAPE_DEFINITION.replace(
+          "(people_units IS NULL)",
+          "(people_units IS NOT NULL)",
+        ),
+      ),
+    ]).result,
+    "FAIL",
+  );
 }
 
 // TEST M — production UI/API/payload/sheet have no v94 import or writer

@@ -220,8 +220,14 @@ OWNER against PostGIS.
 
 ## 13. Allocation and event foundation (v94 schema only)
 
-- **Current state:** PHASE 6.7A.3 / 6.7A.3A / 6.7A.3B lands an undeployed
-  forward migration that adds six tables: `provider_trip_state`,
+- **Current state:** PHASE 6.7A.3B.1 — the v94 main migration is already
+  deployed (six tables exist) and is frozen. Do not rewrite or re-run it.
+  First live verify returned 267 PASS + 1 false FAIL on check 930
+  (`volume_cm3 numeric-then-multiply`). PostgreSQL renders
+  `(space_length_cm)::numeric`; the old verify searched
+  `space_length_cm::numeric`. The deployed `contract_allocations_deliver_shape`
+  CHECK is correct. This round repairs verify only. The original 6.7A.3 /
+  6.7A.3A / 6.7A.3B work added six tables: `provider_trip_state`,
   `contract_allocations`, `contract_state_projections`, `contract_events`,
   `safety_checklist_acceptances`, and `safety_checklist_acceptance_items`.
   Guard fingerprints the **live v93 catalog** (columns, constraints,
@@ -251,8 +257,9 @@ OWNER against PostGIS.
   `terminal_privacy_at` must stop returning counterpart phone, WhatsApp/Viber
   capability, full plate, precise address/GPS, delegate contacts, and
   identity-document fields; server-restricted snapshots remain.
-- **Earliest safe production use:** After v94 SQL is applied, verify.sql is
-  run read-only, and 6.7C.3 ships. Not this phase.
+- **Earliest safe production use:** After the repaired verify.sql is run
+  read-only against the already-applied v94 catalog, and 6.7C.3 ships.
+  This round does not re-apply v94.
 - **Preconditions:** v93 four tables still empty at apply time; v94 tables
   must not already exist; do not claim single-table CHECKs prevent
   cross-contract interval oversell.

@@ -29,6 +29,19 @@
 -- EXPECT no sensitive columns on events, checklist, items, or projection
 -- EXPECT safety_checklist_acceptances has no confirmed_items column
 -- EXPECT six v94 tables including safety_checklist_acceptance_items
+-- EXPECT volume_cm3 numeric-then-multiply matches exact deployed
+-- contract_allocations_deliver_shape definition
+-- First live verify after v94 apply: 267 PASS + 1 false FAIL on check 930.
+-- PostgreSQL renders (space_length_cm)::numeric; the old ILIKE searched
+-- space_length_cm::numeric. The deployed CHECK is correct. This file only
+-- repairs that verify. Do not rewrite or re-run the v94 main migration.
+-- EXPECT volume_cm3 numeric-then-multiply matches exact deployed
+-- contract_allocations_deliver_shape definition
+-- Check 930 locates that one CHECK by schema/table/name, reads
+-- pg_get_constraintdef(oid, false), and compares whitespace-only.
+-- First live verify was 267 PASS + 1 false FAIL: PostgreSQL renders
+-- (space_length_cm)::numeric, not space_length_cm::numeric. The
+-- deployed constraint is correct. This file only repairs that check.
 
 WITH
 v94_tables(relname, col_csv) AS (
@@ -607,35 +620,73 @@ sensitive AS (
     'safety_checklist_acceptance_items'
   )
 ),
+deliver_shape_catalog AS (
+  SELECT
+    t.oid AS table_oid,
+    (
+      SELECT count(*)::int
+      FROM pg_catalog.pg_constraint con
+      WHERE con.conrelid = t.oid
+        AND con.conname = 'contract_allocations_deliver_shape'
+    ) AS constraint_count,
+    (
+      SELECT con.oid
+      FROM pg_catalog.pg_constraint con
+      WHERE con.conrelid = t.oid
+        AND con.conname = 'contract_allocations_deliver_shape'
+      ORDER BY con.oid
+      LIMIT 1
+    ) AS constraint_oid,
+    (
+      SELECT con.contype::text
+      FROM pg_catalog.pg_constraint con
+      WHERE con.conrelid = t.oid
+        AND con.conname = 'contract_allocations_deliver_shape'
+      ORDER BY con.oid
+      LIMIT 1
+    ) AS constraint_type,
+    (
+      SELECT pg_get_constraintdef(con.oid, false)
+      FROM pg_catalog.pg_constraint con
+      WHERE con.conrelid = t.oid
+        AND con.conname = 'contract_allocations_deliver_shape'
+      ORDER BY con.oid
+      LIMIT 1
+    ) AS constraint_definition
+  FROM (SELECT 1) dummy
+  LEFT JOIN pg_catalog.pg_namespace n ON n.nspname = 'public'
+  LEFT JOIN pg_catalog.pg_class t
+    ON t.relnamespace = n.oid
+   AND t.relname = 'contract_allocations'
+   AND t.relkind = 'r'
+),
 volume_numeric AS (
   SELECT
     930,
     'allocation'::text,
     'volume_cm3 numeric-then-multiply',
     CASE
-      WHEN t.oid IS NULL THEN 'FAIL'
-      WHEN EXISTS (
-        SELECT 1
-        FROM pg_constraint con
-        WHERE con.conrelid = t.oid
-          AND pg_get_constraintdef(con.oid) ILIKE '%space_length_cm::numeric%space_width_cm::numeric%space_height_cm::numeric%'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint con
-        WHERE con.conrelid = t.oid
-          AND pg_get_constraintdef(con.oid) ILIKE '%(space_length_cm * space_width_cm * space_height_cm)::numeric%'
-      ) THEN 'PASS'
-      ELSE 'FAIL'
+      WHEN c.table_oid IS NULL THEN 'FAIL'
+      WHEN c.constraint_count IS DISTINCT FROM 1 THEN 'FAIL'
+      WHEN c.constraint_type IS DISTINCT FROM 'c' THEN 'FAIL'
+      WHEN btrim(regexp_replace(coalesce(c.constraint_definition, ''), '\s+', ' ', 'g'))
+        IS DISTINCT FROM btrim(regexp_replace(
+          $v94_deliver_shape$CHECK (((category <> 'deliver'::text) OR ((segment_from_order IS NOT NULL) AND (space_length_cm IS NOT NULL) AND ((space_length_cm >= 1) AND (space_length_cm <= 2000)) AND (space_width_cm IS NOT NULL) AND ((space_width_cm >= 1) AND (space_width_cm <= 2000)) AND (space_height_cm IS NOT NULL) AND ((space_height_cm >= 1) AND (space_height_cm <= 2000)) AND (volume_cm3 IS NOT NULL) AND (volume_cm3 = (((space_length_cm)::numeric * (space_width_cm)::numeric) * (space_height_cm)::numeric)) AND (weight_unknown IS NOT NULL) AND (((weight_unknown IS TRUE) AND (weight_kg IS NULL)) OR ((weight_unknown IS FALSE) AND (weight_kg IS NOT NULL) AND (weight_kg > (0)::numeric) AND (weight_kg <= (10000)::numeric))) AND (people_units IS NULL) AND (small_item_units IS NULL) AND (medium_item_units IS NULL) AND (large_item_units IS NULL) AND (xlarge_item_units IS NULL) AND (work_units IS NULL))))$v94_deliver_shape$,
+          '\s+',
+          ' ',
+          'g'
+        ))
+      THEN 'FAIL'
+      ELSE 'PASS'
     END,
-    CASE WHEN t.oid IS NULL THEN 'NULL' ELSE 'numeric-cast-first' END,
-    'numeric-cast-first'::text
-  FROM (SELECT 1) dummy
-  LEFT JOIN pg_namespace n ON n.nspname = 'public'
-  LEFT JOIN pg_class t
-    ON t.relnamespace = n.oid
-   AND t.relname = 'contract_allocations'
-   AND t.relkind = 'r'
+    CASE
+      WHEN c.table_oid IS NULL THEN NULL
+      WHEN c.constraint_count IS NULL OR c.constraint_count = 0 THEN NULL
+      WHEN c.constraint_count <> 1 THEN c.constraint_count::text
+      ELSE btrim(regexp_replace(coalesce(c.constraint_definition, ''), '\s+', ' ', 'g'))
+    END,
+    'exact deployed contract_allocations_deliver_shape definition'::text
+  FROM deliver_shape_catalog c
 ),
 no_confirmed_items AS (
   SELECT

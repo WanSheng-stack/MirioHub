@@ -196,30 +196,52 @@ OWNER against PostGIS.
 
 ## 12. Dual-post matching foundation (v93 schema only)
 
-- **Current state:** PHASE 6.7A.2 / 6.7A.2A land an undeployed forward migration
-  that reshapes empty v90 `match_requests` / `match_contracts` and introduces
-  `match_contact_invitations` plus `contact_grants`. v90 remains the exact
-  fail-fast fingerprint (columns, constraints, independent indexes, RLS,
-  FORCE RLS off, empty counts). Channel arrays now require 1-D 1-based
-  NULL-free 1–3 unique allowlisted names; `preferred_channel` is required.
-  Invitation `converted_at` / `invalidated_at` are bidirectional with status;
-  `invalidated_at` still covers invalidated, expired, and blocked. Live apply
-  is not part of this phase. No RLS policy, GRANT, RPC, API, or UI writer.
-  `MatchRequestSheet` remains unmounted.
+- **Current state:** v93 is live on the catalog via SQL Editor. The four tables
+  (`match_contact_invitations`, `contact_grants`, `match_requests`,
+  `match_contracts`) exist, are empty, have RLS enabled, FORCE RLS off, no
+  policies, and no app-role grants. Manual apply did **not** write
+  `schema_migrations`; absence from migration history must not be treated as
+  “v93 undeployed”. Do not re-run v93, forge history, or edit the executed
+  v93 files. `MatchRequestSheet` remains unmounted. No writer.
 - **Resolved in 6.7A.2A:** array CHECK bypasses (2-D / NULL / non-1 lower);
   one-way invitation timestamps; coarse v90 column existence guard; verify
   sequence name-scan and function name-regex false positives.
-- **Still unresolved:** v93 is not applied; no writer, capacity, fee,
-  membership, fulfillment, or Fraud work.
-- **Future replacement:** 6.7A.3+ owns orthogonal fulfillment facts (dispute,
-  custody, cancel-request, completion-confirm). A later server API will re-read
-  posts/profiles and write invitations, grants, and requests. Contract INSERT
-  stays forbidden until a safe-accept transaction exists.
-- **Earliest safe production use:** After the v93 SQL is applied to live
-  catalog, verify.sql is run read-only against that catalog, and a dedicated
-  writer phase ships. Not this phase.
-- **Preconditions:** Empty matching tables at apply time; fail-fast guard
-  still sees the exact v90 fingerprint and no v93 tables; Demand may have many
-  pending requests; one contract per Demand post including terminal rows.
+- **Still unresolved:** no invitation/request/accept API, no capacity writer,
+  no fee, membership, fulfillment, or Fraud work.
+- **Future replacement:** A later server API will re-read posts/profiles and
+  write invitations, grants, and requests. Contract INSERT stays forbidden
+  until a safe-accept transaction exists (6.7C.3).
+- **Earliest safe production use:** After a dedicated writer phase ships.
+- **Preconditions:** Keep the four tables empty until a production writer
+  exists. Demand may have many pending requests; one contract per Demand post
+  including terminal rows.
 - **Risk if wired early:** Client code inserting contracts without capacity
   and accept-time revalidation, or treating invitations as orders.
+
+## 13. Allocation and event foundation (v94 schema only)
+
+- **Current state:** PHASE 6.7A.3 lands an undeployed forward migration that
+  adds `provider_trip_state`, `contract_allocations`,
+  `contract_state_projections`, `contract_events`, and
+  `safety_checklist_acceptances`. Guard fingerprints the **live v93 catalog**
+  (columns, constraints, independent indexes, RLS, FORCE off, empty counts)
+  and refuses pre-existing v94 tables. It does not read migration history.
+  Five tables: RLS on, not FORCE, no policy, no GRANT, UUID defaults, no
+  RPC/trigger/sequence. No production writer, API, or UI.
+- **Still unresolved / later phases:** 6.7C.3 owns the atomic accept
+  transaction (lock mother trip, sum interval allocations, insert contract +
+  allocation + formed event + projection together, refuse new contracts after
+  trip start). 6.8A owns notifications, credit aggregation, and related
+  writers. 6.8B owns completion/consignee codes, verification tables, and the
+  72-hour auto-complete job. Dispute handling is not a writer in this phase.
+- **Future replacement:** Server writers only. Ordinary DTOs after
+  `terminal_privacy_at` must stop returning counterpart phone, WhatsApp/Viber
+  capability, full plate, precise address/GPS, delegate contacts, and
+  identity-document fields; server-restricted snapshots remain.
+- **Earliest safe production use:** After v94 SQL is applied, verify.sql is
+  run read-only, and 6.7C.3 ships. Not this phase.
+- **Preconditions:** v93 four tables still empty at apply time; v94 tables
+  must not already exist; do not claim single-table CHECKs prevent
+  cross-contract interval oversell.
+- **Risk if wired early:** Half-contracts, oversell, or browser DML against
+  fail-closed tables.

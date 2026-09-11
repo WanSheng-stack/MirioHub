@@ -220,13 +220,16 @@ OWNER against PostGIS.
 
 ## 13. Allocation and event foundation (v94 schema only)
 
-- **Current state:** PHASE 6.7A.3 / 6.7A.3A lands an undeployed forward
-  migration that adds six tables: `provider_trip_state`,
+- **Current state:** PHASE 6.7A.3 / 6.7A.3A / 6.7A.3B lands an undeployed
+  forward migration that adds six tables: `provider_trip_state`,
   `contract_allocations`, `contract_state_projections`, `contract_events`,
   `safety_checklist_acceptances`, and `safety_checklist_acceptance_items`.
   Guard fingerprints the **live v93 catalog** (columns, constraints,
   independent indexes, RLS, FORCE off, empty counts) and refuses
-  pre-existing v94 tables. It does not read migration history. All six
+  pre-existing v94 tables. Constraint and independent-index expected defs
+  are frozen production `pg_get_constraintdef` / `pg_get_indexdef` forms;
+  compare is whitespace-only and does not strip parentheses or rewrite
+  IN / ANY / ALL / BETWEEN. It does not read migration history. All six
   tables: RLS on, not FORCE, no policy, no GRANT, UUID defaults, no
   RPC/trigger/sequence. No production writer, API, or UI. Checklist item
   keys are a child table; `confirmed_items text[]` and 2016 pairwise array

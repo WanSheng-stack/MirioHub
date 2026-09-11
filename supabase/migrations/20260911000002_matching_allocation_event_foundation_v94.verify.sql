@@ -1,6 +1,10 @@
 -- Read-only verification for 20260911000002_matching_allocation_event_foundation_v94
 -- MANUAL APPLY of the sibling migration first. Do not run as a migration.
 -- Catalog reads plus count(*) of v93 and v94 matching tables only.
+-- v94/v93 row counts use static SELECT count(*) FROM public.<table>.
+-- If a v94 target table is missing, PostgreSQL raises relation does not exist.
+-- That is fail-closed. This script does not return a NULL/FAIL row for a
+-- missing v94 table.
 -- Do not SELECT matching row bodies, posts, or profiles.
 -- Do not output snapshots, UUIDs, phones, plates, codes, or function source.
 -- Do not call business functions. Do not GRANT/REVOKE. Do not write.

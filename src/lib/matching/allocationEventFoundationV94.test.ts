@@ -14,7 +14,9 @@ import {
   checklistItemKeyInvariant,
   checklistItemOrderInvariant,
   checklistItemsSetInvariant,
+  canonicalizeCatalogDef,
   cloneFingerprint,
+  deployedCatalogObject,
   diffTableFingerprint,
   eventActorInvariant,
   eventPayloadInvariant,
@@ -46,6 +48,10 @@ import {
   volumeUsesNumericThenMultiply,
   V93_APP_ROLES,
   V93_CONTRACT_LIFECYCLE,
+  V93_DEPLOYED_CATALOG_OBJECTS,
+  V93_DEPLOYED_CATALOG_ROW_COUNT,
+  V93_DEPLOYED_CONSTRAINT_COUNT,
+  V93_DEPLOYED_INDEPENDENT_INDEX_COUNT,
   V93_LIVE_CONTRACT_FINGERPRINT,
   V93_LIVE_FINGERPRINTS,
   V93_LIVE_GRANT_FINGERPRINT,
@@ -265,8 +271,11 @@ const openProjection = (): ProjectionDraft => ({
   assert.ok(guard.includes("relrowsecurity"));
   assert.ok(guard.includes("relforcerowsecurity"));
   assert.ok(guard.includes("format_type(a.atttypid, a.atttypmod)"));
-  assert.ok(guard.includes("pg_get_constraintdef"));
-  assert.ok(guard.includes("pg_get_indexdef"));
+  assert.ok(guard.includes("pg_get_constraintdef(c.oid, false)"));
+  assert.ok(guard.includes("pg_get_indexdef(i.indexrelid, 0, false)"));
+  assert.ok(guard.includes("btrim(regexp_replace(coalesce(live_def, ''), '\\s+', ' ', 'g'))"));
+  assert.equal(guard.includes("[()]"), false);
+  assert.equal(/= any \\+\(array/i.test(guard), false);
   assert.ok(guard.includes("co.conindid = i.indexrelid"));
   assert.equal(/EXCEPTION\s+WHEN/i.test(guard), false);
   assert.equal(/FROM public\.posts\b/i.test(guard), false);
@@ -329,20 +338,20 @@ const openProjection = (): ProjectionDraft => ({
     );
   }
   assert.deepEqual(
-    extractIndexNames(v93Sql, "match_contact_invitations"),
-    V93_LIVE_INVITATION_FINGERPRINT.indexes.map((index) => index.name),
+    [...extractIndexNames(v93Sql, "match_contact_invitations")].sort(),
+    [...V93_LIVE_INVITATION_FINGERPRINT.indexes.map((index) => index.name)].sort(),
   );
   assert.deepEqual(
-    extractIndexNames(v93Sql, "contact_grants"),
-    V93_LIVE_GRANT_FINGERPRINT.indexes.map((index) => index.name),
+    [...extractIndexNames(v93Sql, "contact_grants")].sort(),
+    [...V93_LIVE_GRANT_FINGERPRINT.indexes.map((index) => index.name)].sort(),
   );
   assert.deepEqual(
-    extractIndexNames(v93Sql, "match_requests"),
-    V93_LIVE_REQUEST_FINGERPRINT.indexes.map((index) => index.name),
+    [...extractIndexNames(v93Sql, "match_requests")].sort(),
+    [...V93_LIVE_REQUEST_FINGERPRINT.indexes.map((index) => index.name)].sort(),
   );
   assert.deepEqual(
-    extractIndexNames(v93Sql, "match_contracts"),
-    V93_LIVE_CONTRACT_FINGERPRINT.indexes.map((index) => index.name),
+    [...extractIndexNames(v93Sql, "match_contracts")].sort(),
+    [...V93_LIVE_CONTRACT_FINGERPRINT.indexes.map((index) => index.name)].sort(),
   );
 }
 
@@ -424,6 +433,368 @@ const openProjection = (): ProjectionDraft => ({
       forceOn,
     ).some(
       (item) => item.kind === "rls" && item.object === "relforcerowsecurity",
+    ),
+  );
+}
+
+/**
+ * 029cc7f guard helper. Kept only to prove the live false fail.
+ * Must not re-enter the production migration.
+ */
+function legacyNormalizeCatalogDef(raw: string | null | undefined): string {
+  if (raw == null || raw === "") return "";
+  let s = raw.toLowerCase();
+  s = s.replace(/::text\[\]/g, "");
+  s = s.replace(/::text/g, "");
+  s = s.replace(/::regclass/g, "");
+  s = s.replace(/\bpublic\./g, "");
+  s = s.replace(/\s+on update no action\b/g, "");
+  s = s.replace(/= any \(array\[([^\]]*)\]\)/g, "in ($1)");
+  s = s.replace(/ on ([a-z_]+) \(/g, " on $1 using btree (");
+  s = s.replace(/[()]/g, " ");
+  s = s.replace(/,/g, ", ");
+  s = s.replace(/\s+/g, " ").trim();
+  return s;
+}
+
+const HANDWRITTEN_INITIATOR_POST_BELONGS =
+  "CHECK (initiator_post_id IN (demand_post_id, provider_post_id))";
+const HANDWRITTEN_ALLOWED_CHANNELS_BETWEEN =
+  "CHECK (array_ndims(allowed_channels) = 1 AND array_lower(allowed_channels, 1) = 1 AND array_length(allowed_channels, 1) = cardinality(allowed_channels) AND cardinality(allowed_channels) BETWEEN 1 AND 3 AND array_position(allowed_channels, NULL) IS NULL AND allowed_channels <@ ARRAY['phone', 'whatsapp', 'viber'] AND CASE cardinality(allowed_channels) WHEN 1 THEN true WHEN 2 THEN allowed_channels[1] <> allowed_channels[2] WHEN 3 THEN allowed_channels[1] <> allowed_channels[2] AND allowed_channels[1] <> allowed_channels[3] AND allowed_channels[2] <> allowed_channels[3] ELSE false END AND preferred_channel = ANY (allowed_channels))";
+const HANDWRITTEN_REQUESTS_NOT_IN =
+  "CHECK (status NOT IN ('invalidated', 'expired') OR responded_at IS NULL)";
+const HANDWRITTEN_CONTRACTS_NOT_IN =
+  "CHECK (lifecycle_projection NOT IN ('completed', 'cancelled') OR terminal_at IS NOT NULL)";
+
+function catalogObject(table: (typeof V93_TABLES)[number], name: string) {
+  return deployedCatalogObject(table, name);
+}
+
+function liveDef(table: (typeof V93_TABLES)[number], name: string): string {
+  return catalogObject(table, name).object_definition;
+}
+
+function fingerprintHasObject(
+  table: (typeof V93_TABLES)[number],
+  name: string,
+): boolean {
+  const fp = V93_LIVE_FINGERPRINTS[table];
+  return (
+    fp.constraints.some((item) => item.name === name) ||
+    fp.indexes.some((item) => item.name === name)
+  );
+}
+
+// TEST B3 — frozen deployed-catalog fingerprint vs 029cc7f false fail
+{
+  assert.equal(V93_DEPLOYED_CATALOG_OBJECTS.length, 76);
+  assert.equal(V93_DEPLOYED_CATALOG_ROW_COUNT, 76);
+  assert.equal(V93_DEPLOYED_CONSTRAINT_COUNT, 61);
+  assert.equal(V93_DEPLOYED_INDEPENDENT_INDEX_COUNT, 15);
+  assert.equal(
+    V93_DEPLOYED_CATALOG_OBJECTS.filter(
+      (row) => row.object_type !== "independent_index",
+    ).length,
+    61,
+  );
+  assert.equal(
+    V93_DEPLOYED_CATALOG_OBJECTS.filter(
+      (row) => row.object_type === "independent_index",
+    ).length,
+    15,
+  );
+  assert.equal(migration.includes("legacyNormalizeCatalogDef"), false);
+  assert.equal(migration.includes("regexp_replace(n, '[()]', ' ', 'g')"), false);
+
+  const initiatorLive = liveDef(
+    "match_contact_invitations",
+    "match_contact_invitations_initiator_post_belongs",
+  );
+  assert.equal(
+    initiatorLive,
+    "CHECK (((initiator_post_id = demand_post_id) OR (initiator_post_id = provider_post_id)))",
+  );
+  assert.notEqual(
+    legacyNormalizeCatalogDef(HANDWRITTEN_INITIATOR_POST_BELONGS),
+    legacyNormalizeCatalogDef(initiatorLive),
+  );
+  assert.equal(
+    canonicalizeCatalogDef(initiatorLive),
+    canonicalizeCatalogDef(
+      V93_LIVE_INVITATION_FINGERPRINT.constraints.find(
+        (item) => item.name === "match_contact_invitations_initiator_post_belongs",
+      )?.def,
+    ),
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(HANDWRITTEN_INITIATOR_POST_BELONGS),
+    canonicalizeCatalogDef(initiatorLive),
+  );
+
+  const channelsLive = liveDef(
+    "contact_grants",
+    "contact_grants_allowed_channels_contract_check",
+  );
+  assert.ok(channelsLive.includes("(cardinality(allowed_channels) >= 1)"));
+  assert.ok(channelsLive.includes("(cardinality(allowed_channels) <= 3)"));
+  assert.equal(channelsLive.includes("BETWEEN"), false);
+  assert.equal(
+    canonicalizeCatalogDef(channelsLive),
+    canonicalizeCatalogDef(
+      V93_LIVE_GRANT_FINGERPRINT.constraints.find(
+        (item) => item.name === "contact_grants_allowed_channels_contract_check",
+      )?.def,
+    ),
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(HANDWRITTEN_ALLOWED_CHANNELS_BETWEEN),
+    canonicalizeCatalogDef(channelsLive),
+  );
+
+  const requestTerminal = liveDef(
+    "match_requests",
+    "match_requests_non_response_terminal_null",
+  );
+  assert.ok(requestTerminal.includes("<> ALL (ARRAY["));
+  assert.equal(requestTerminal.includes("NOT IN"), false);
+  assert.equal(
+    canonicalizeCatalogDef(requestTerminal),
+    canonicalizeCatalogDef(
+      V93_LIVE_REQUEST_FINGERPRINT.constraints.find(
+        (item) => item.name === "match_requests_non_response_terminal_null",
+      )?.def,
+    ),
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(HANDWRITTEN_REQUESTS_NOT_IN),
+    canonicalizeCatalogDef(requestTerminal),
+  );
+
+  const contractTerminal = liveDef(
+    "match_contracts",
+    "match_contracts_terminal_required_when_closed",
+  );
+  assert.ok(contractTerminal.includes("<> ALL (ARRAY["));
+  assert.equal(
+    canonicalizeCatalogDef(contractTerminal),
+    canonicalizeCatalogDef(
+      V93_LIVE_CONTRACT_FINGERPRINT.constraints.find(
+        (item) =>
+          item.name === "match_contracts_terminal_required_when_closed",
+      )?.def,
+    ),
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(HANDWRITTEN_CONTRACTS_NOT_IN),
+    canonicalizeCatalogDef(contractTerminal),
+  );
+
+  for (const name of [
+    "match_contact_invitations_status_check",
+    "match_contact_invitations_disclosure_mode_check",
+    "match_requests_status_check",
+    "match_contracts_category_check",
+    "match_contracts_lifecycle_projection_check",
+  ] as const) {
+    const table = name.startsWith("match_contact")
+      ? "match_contact_invitations"
+      : name.startsWith("match_requests")
+        ? "match_requests"
+        : "match_contracts";
+    const def = liveDef(table, name);
+    assert.ok(def.includes("= ANY (ARRAY["), name);
+    assert.equal(
+      canonicalizeCatalogDef(def),
+      canonicalizeCatalogDef(
+        V93_LIVE_FINGERPRINTS[table].constraints.find((item) => item.name === name)
+          ?.def,
+      ),
+      name,
+    );
+  }
+
+  const openPair = liveDef(
+    "match_contact_invitations",
+    "match_contact_invitations_one_open_pair",
+  );
+  assert.ok(openPair.includes("ON public.match_contact_invitations"));
+  assert.ok(openPair.includes("USING btree"));
+  assert.ok(openPair.includes("WHERE (status = 'open'::text)"));
+  assert.equal(
+    canonicalizeCatalogDef(openPair).includes("public.match_contact_invitations"),
+    true,
+  );
+  assert.equal(canonicalizeCatalogDef(openPair).includes("::text"), true);
+  assert.equal(canonicalizeCatalogDef(openPair).includes("USING btree"), true);
+
+  const spaced = initiatorLive.replace(" OR ", "\r\n  OR\r\n  ");
+  assert.equal(
+    canonicalizeCatalogDef(spaced),
+    canonicalizeCatalogDef(initiatorLive),
+  );
+  const indentedCase = channelsLive
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .map((line) => `    ${line.trim()}`)
+    .join("\r\n\r\n");
+  assert.equal(
+    canonicalizeCatalogDef(indentedCase),
+    canonicalizeCatalogDef(channelsLive),
+  );
+
+  const literalChanged = initiatorLive.replace("demand_post_id", "demand_post_idx");
+  assert.notEqual(
+    canonicalizeCatalogDef(literalChanged),
+    canonicalizeCatalogDef(initiatorLive),
+  );
+
+  const andOrChanged = initiatorLive.replace(" OR ", " AND ");
+  assert.notEqual(
+    canonicalizeCatalogDef(andOrChanged),
+    canonicalizeCatalogDef(initiatorLive),
+  );
+
+  const groupingA = "CHECK (((a OR b) AND c))";
+  const groupingB = "CHECK ((a OR (b AND c)))";
+  assert.notEqual(
+    canonicalizeCatalogDef(groupingA),
+    canonicalizeCatalogDef(groupingB),
+  );
+  assert.equal(
+    legacyNormalizeCatalogDef(groupingA),
+    legacyNormalizeCatalogDef(groupingB),
+  );
+
+  const demandFk = liveDef(
+    "match_contact_invitations",
+    "match_contact_invitations_demand_post_id_fkey",
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(demandFk.replace("posts(id)", "profiles(id)")),
+    canonicalizeCatalogDef(demandFk),
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(demandFk.replace("demand_post_id", "provider_post_id")),
+    canonicalizeCatalogDef(demandFk),
+  );
+  assert.notEqual(
+    canonicalizeCatalogDef(demandFk.replace("ON DELETE RESTRICT", "ON DELETE CASCADE")),
+    canonicalizeCatalogDef(demandFk),
+  );
+
+  const missingConstraint = cloneFingerprint(V93_LIVE_INVITATION_FINGERPRINT);
+  missingConstraint.constraints = missingConstraint.constraints.filter(
+    (item) => item.name !== "match_contact_invitations_initiator_post_belongs",
+  );
+  assert.ok(
+    diffTableFingerprint(
+      "match_contact_invitations",
+      V93_LIVE_INVITATION_FINGERPRINT,
+      missingConstraint,
+    ).some(
+      (item) =>
+        item.kind === "constraint" &&
+        item.issue === "missing" &&
+        item.object === "match_contact_invitations_initiator_post_belongs",
+    ),
+  );
+
+  const extraConstraint = cloneFingerprint(V93_LIVE_INVITATION_FINGERPRINT);
+  extraConstraint.constraints = [
+    ...extraConstraint.constraints,
+    {
+      name: "match_contact_invitations_extra_check",
+      type: "c",
+      def: "CHECK ((true))",
+    },
+  ];
+  assert.ok(
+    diffTableFingerprint(
+      "match_contact_invitations",
+      V93_LIVE_INVITATION_FINGERPRINT,
+      extraConstraint,
+    ).some(
+      (item) =>
+        item.kind === "constraint" &&
+        item.issue === "extra" &&
+        item.object === "match_contact_invitations_extra_check",
+    ),
+  );
+
+  const missingIndex = cloneFingerprint(V93_LIVE_INVITATION_FINGERPRINT);
+  missingIndex.indexes = missingIndex.indexes.filter(
+    (item) => item.name !== "match_contact_invitations_one_open_pair",
+  );
+  assert.ok(
+    diffTableFingerprint(
+      "match_contact_invitations",
+      V93_LIVE_INVITATION_FINGERPRINT,
+      missingIndex,
+    ).some(
+      (item) =>
+        item.kind === "index" &&
+        item.issue === "missing" &&
+        item.object === "match_contact_invitations_one_open_pair",
+    ),
+  );
+
+  const extraIndex = cloneFingerprint(V93_LIVE_INVITATION_FINGERPRINT);
+  extraIndex.indexes = [
+    ...extraIndex.indexes,
+    {
+      name: "match_contact_invitations_extra_idx",
+      def: "CREATE INDEX match_contact_invitations_extra_idx ON public.match_contact_invitations USING btree (id)",
+    },
+  ];
+  assert.ok(
+    diffTableFingerprint(
+      "match_contact_invitations",
+      V93_LIVE_INVITATION_FINGERPRINT,
+      extraIndex,
+    ).some(
+      (item) =>
+        item.kind === "index" &&
+        item.issue === "extra" &&
+        item.object === "match_contact_invitations_extra_idx",
+    ),
+  );
+
+  for (const row of V93_DEPLOYED_CATALOG_OBJECTS) {
+    assert.equal(fingerprintHasObject(row.table_name, row.object_name), true, row.object_name);
+    const fp = V93_LIVE_FINGERPRINTS[row.table_name];
+    if (row.object_type === "independent_index") {
+      const index = fp.indexes.find((item) => item.name === row.object_name);
+      assert.ok(index, row.object_name);
+      assert.equal(
+        canonicalizeCatalogDef(index.def),
+        canonicalizeCatalogDef(row.object_definition),
+        row.object_name,
+      );
+    } else {
+      const constraint = fp.constraints.find((item) => item.name === row.object_name);
+      assert.ok(constraint, row.object_name);
+      assert.equal(
+        canonicalizeCatalogDef(constraint.def),
+        canonicalizeCatalogDef(row.object_definition),
+        row.object_name,
+      );
+    }
+  }
+
+  const mutatedChar = initiatorLive.replace("demand_post_id", "demand_post_iX");
+  assert.ok(
+    diffTableFingerprint("match_contact_invitations", V93_LIVE_INVITATION_FINGERPRINT, {
+      ...cloneFingerprint(V93_LIVE_INVITATION_FINGERPRINT),
+      constraints: V93_LIVE_INVITATION_FINGERPRINT.constraints.map((item) =>
+        item.name === "match_contact_invitations_initiator_post_belongs"
+          ? { ...item, def: mutatedChar }
+          : item,
+      ),
+    }).some(
+      (item) =>
+        item.kind === "constraint" &&
+        item.issue === "mismatch" &&
+        item.object === "match_contact_invitations_initiator_post_belongs",
     ),
   );
 }
@@ -919,6 +1290,9 @@ const openProjection = (): ProjectionDraft => ({
   );
   assert.ok(verifySql.includes("WHEN t.oid IS NULL OR r.oid IS NULL THEN 'FAIL'"));
   assert.ok(verifySql.includes("THEN 'NULL'"));
+  assert.ok(verifySql.includes("static SELECT count(*) FROM public.<table>"));
+  assert.ok(verifySql.includes("relation does not exist"));
+  assert.ok(verifySql.includes("This script does not return a NULL/FAIL row for a"));
   assert.ok(expectComments.some((line) => line.includes("single result set")));
   assert.ok(verifySql.includes("overall_pass"));
   assert.ok(verifySql.includes("safety_checklist_acceptance_items"));

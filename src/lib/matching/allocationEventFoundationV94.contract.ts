@@ -127,20 +127,15 @@ export function normalizeDefaultExpr(raw: string | null | undefined): string {
   return s;
 }
 
-export function normalizeCatalogDef(raw: string | null | undefined): string {
+/**
+ * Whitespace-only catalog canonicalize. Matches the inline PL/pgSQL
+ * expression btrim(regexp_replace(value, '\s+', ' ', 'g')).
+ * Does not delete parentheses, lower the string, strip casts, or rewrite
+ * IN / ANY / ALL / BETWEEN / OR.
+ */
+export function canonicalizeCatalogDef(raw: string | null | undefined): string {
   if (raw == null || raw === "") return "";
-  let s = raw.toLowerCase();
-  s = s.replace(/::text\[\]/g, "");
-  s = s.replace(/::text/g, "");
-  s = s.replace(/::regclass/g, "");
-  s = s.replace(/\bpublic\./g, "");
-  s = s.replace(/\s+on update no action\b/g, "");
-  s = s.replace(/= any \(array\[([^\]]*)\]\)/g, "in ($1)");
-  s = s.replace(/ on ([a-z_]+) \(/g, " on $1 using btree (");
-  s = s.replace(/[()]/g, " ");
-  s = s.replace(/,/g, ", ");
-  s = s.replace(/\s+/g, " ").trim();
-  return s;
+  return raw.replace(/\s+/g, " ").trim();
 }
 
 export function cloneFingerprint(fp: TableFingerprint): TableFingerprint {
@@ -261,7 +256,7 @@ export function diffTableFingerprint(
     if (!act) continue;
     if (
       act.type !== exp.type ||
-      normalizeCatalogDef(act.def) !== normalizeCatalogDef(exp.def)
+      canonicalizeCatalogDef(act.def) !== canonicalizeCatalogDef(exp.def)
     ) {
       mismatches.push({
         table,
@@ -287,7 +282,7 @@ export function diffTableFingerprint(
   for (const [name, exp] of expIdx) {
     const act = actIdx.get(name);
     if (!act) continue;
-    if (normalizeCatalogDef(act.def) !== normalizeCatalogDef(exp.def)) {
+    if (canonicalizeCatalogDef(act.def) !== canonicalizeCatalogDef(exp.def)) {
       mismatches.push({ table, kind: "index", issue: "mismatch", object: name });
     }
   }
@@ -709,6 +704,538 @@ function tsNull(name: string): CatalogColumn {
   return col(name, ts, false, "");
 }
 
+export type V93DeployedCatalogObjectType =
+  | "check"
+  | "foreign_key"
+  | "unique"
+  | "primary_key"
+  | "independent_index";
+
+export type V93DeployedCatalogObject = {
+  table_name: (typeof V93_TABLES)[number];
+  object_type: V93DeployedCatalogObjectType;
+  object_name: string;
+  object_definition: string;
+};
+
+/**
+ * Frozen production pg_get_constraintdef / pg_get_indexdef output for the
+ * four deployed v93 tables. Audited from the 76-row catalog snippet.
+ * Production SQL embeds the same defs; it never reads a CSV at runtime.
+ */
+export const V93_DEPLOYED_CATALOG_ROW_COUNT = 76 as const;
+export const V93_DEPLOYED_CONSTRAINT_COUNT = 61 as const;
+export const V93_DEPLOYED_INDEPENDENT_INDEX_COUNT = 15 as const;
+
+export const V93_DEPLOYED_CATALOG_OBJECTS: readonly V93DeployedCatalogObject[] = [
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_contact_code_hash_present",
+    "object_definition": "CHECK ((btrim(contact_code_hash) <> ''::text))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_converted_invalid_exclusive",
+    "object_definition": "CHECK (((converted_at IS NULL) OR (invalidated_at IS NULL)))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_converted_ts_consistent",
+    "object_definition": "CHECK (((status = 'converted'::text) = (converted_at IS NOT NULL)))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "foreign_key",
+    "object_name": "match_contact_invitations_demand_post_id_fkey",
+    "object_definition": "FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_disclosure_mode_check",
+    "object_definition": "CHECK ((disclosure_mode = ANY (ARRAY['recipient_contacts_initiator'::text, 'mutual_eligible_contact'::text])))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_distinct_posts",
+    "object_definition": "CHECK ((demand_post_id <> provider_post_id))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_distinct_users",
+    "object_definition": "CHECK ((initiator_user_id <> recipient_user_id))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_expires_after_created",
+    "object_definition": "CHECK ((expires_at > created_at))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "unique",
+    "object_name": "match_contact_invitations_initiator_client_request_id_key",
+    "object_definition": "UNIQUE (initiator_user_id, client_request_id)"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_initiator_post_belongs",
+    "object_definition": "CHECK (((initiator_post_id = demand_post_id) OR (initiator_post_id = provider_post_id)))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "foreign_key",
+    "object_name": "match_contact_invitations_initiator_post_id_fkey",
+    "object_definition": "FOREIGN KEY (initiator_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "foreign_key",
+    "object_name": "match_contact_invitations_initiator_user_id_fkey",
+    "object_definition": "FOREIGN KEY (initiator_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_invalid_ts_consistent",
+    "object_definition": "CHECK (((status = ANY (ARRAY['invalidated'::text, 'expired'::text, 'blocked'::text])) = (invalidated_at IS NOT NULL)))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "primary_key",
+    "object_name": "match_contact_invitations_pkey",
+    "object_definition": "PRIMARY KEY (id)"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_policy_version_check",
+    "object_definition": "CHECK ((contact_policy_version > 0))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "foreign_key",
+    "object_name": "match_contact_invitations_provider_post_id_fkey",
+    "object_definition": "FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "foreign_key",
+    "object_name": "match_contact_invitations_recipient_user_id_fkey",
+    "object_definition": "FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "check",
+    "object_name": "match_contact_invitations_status_check",
+    "object_definition": "CHECK ((status = ANY (ARRAY['open'::text, 'converted'::text, 'invalidated'::text, 'expired'::text, 'blocked'::text])))"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "independent_index",
+    "object_name": "match_contact_invitations_initiator_status_created_idx",
+    "object_definition": "CREATE INDEX match_contact_invitations_initiator_status_created_idx ON public.match_contact_invitations USING btree (initiator_user_id, status, created_at DESC)"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "independent_index",
+    "object_name": "match_contact_invitations_one_open_pair",
+    "object_definition": "CREATE UNIQUE INDEX match_contact_invitations_one_open_pair ON public.match_contact_invitations USING btree (demand_post_id, provider_post_id) WHERE (status = 'open'::text)"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "independent_index",
+    "object_name": "match_contact_invitations_open_expires_idx",
+    "object_definition": "CREATE INDEX match_contact_invitations_open_expires_idx ON public.match_contact_invitations USING btree (expires_at) WHERE (status = 'open'::text)"
+  },
+  {
+    "table_name": "match_contact_invitations",
+    "object_type": "independent_index",
+    "object_name": "match_contact_invitations_recipient_status_created_idx",
+    "object_definition": "CREATE INDEX match_contact_invitations_recipient_status_created_idx ON public.match_contact_invitations USING btree (recipient_user_id, status, created_at DESC)"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "check",
+    "object_name": "contact_grants_allowed_channels_contract_check",
+    "object_definition": "CHECK (((array_ndims(allowed_channels) = 1) AND (array_lower(allowed_channels, 1) = 1) AND (array_length(allowed_channels, 1) = cardinality(allowed_channels)) AND ((cardinality(allowed_channels) >= 1) AND (cardinality(allowed_channels) <= 3)) AND (array_position(allowed_channels, NULL::text) IS NULL) AND (allowed_channels <@ ARRAY['phone'::text, 'whatsapp'::text, 'viber'::text]) AND\nCASE cardinality(allowed_channels)\n    WHEN 1 THEN true\n    WHEN 2 THEN (allowed_channels[1] <> allowed_channels[2])\n    WHEN 3 THEN ((allowed_channels[1] <> allowed_channels[2]) AND (allowed_channels[1] <> allowed_channels[3]) AND (allowed_channels[2] <> allowed_channels[3]))\n    ELSE false\nEND AND (preferred_channel = ANY (allowed_channels))))"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "check",
+    "object_name": "contact_grants_distinct_users",
+    "object_definition": "CHECK ((subject_user_id <> viewer_user_id))"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "check",
+    "object_name": "contact_grants_expires_after_granted",
+    "object_definition": "CHECK ((expires_at > granted_at))"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "foreign_key",
+    "object_name": "contact_grants_invitation_id_fkey",
+    "object_definition": "FOREIGN KEY (invitation_id) REFERENCES match_contact_invitations(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "unique",
+    "object_name": "contact_grants_invitation_subject_viewer_key",
+    "object_definition": "UNIQUE (invitation_id, subject_user_id, viewer_user_id)"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "primary_key",
+    "object_name": "contact_grants_pkey",
+    "object_definition": "PRIMARY KEY (id)"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "check",
+    "object_name": "contact_grants_policy_version_check",
+    "object_definition": "CHECK ((policy_version > 0))"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "check",
+    "object_name": "contact_grants_revoked_after_granted",
+    "object_definition": "CHECK (((revoked_at IS NULL) OR (revoked_at >= granted_at)))"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "foreign_key",
+    "object_name": "contact_grants_subject_user_id_fkey",
+    "object_definition": "FOREIGN KEY (subject_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "foreign_key",
+    "object_name": "contact_grants_viewer_user_id_fkey",
+    "object_definition": "FOREIGN KEY (viewer_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "independent_index",
+    "object_name": "contact_grants_invitation_id_idx",
+    "object_definition": "CREATE INDEX contact_grants_invitation_id_idx ON public.contact_grants USING btree (invitation_id)"
+  },
+  {
+    "table_name": "contact_grants",
+    "object_type": "independent_index",
+    "object_name": "contact_grants_viewer_expires_live_idx",
+    "object_definition": "CREATE INDEX contact_grants_viewer_expires_live_idx ON public.contact_grants USING btree (viewer_user_id, expires_at) WHERE (revoked_at IS NULL)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "foreign_key",
+    "object_name": "match_requests_demand_post_id_fkey",
+    "object_definition": "FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_distinct_posts",
+    "object_definition": "CHECK ((demand_post_id <> provider_post_id))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "foreign_key",
+    "object_name": "match_requests_invitation_id_fkey",
+    "object_definition": "FOREIGN KEY (invitation_id) REFERENCES match_contact_invitations(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "unique",
+    "object_name": "match_requests_invitation_id_key",
+    "object_definition": "UNIQUE (invitation_id)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_non_response_terminal_null",
+    "object_definition": "CHECK (((status <> ALL (ARRAY['invalidated'::text, 'expired'::text])) OR (responded_at IS NULL)))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "primary_key",
+    "object_name": "match_requests_pkey",
+    "object_definition": "PRIMARY KEY (id)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "foreign_key",
+    "object_name": "match_requests_provider_post_id_fkey",
+    "object_definition": "FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "foreign_key",
+    "object_name": "match_requests_recipient_user_id_fkey",
+    "object_definition": "FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_request_assertion_object_check",
+    "object_definition": "CHECK ((jsonb_typeof(request_assertion) = 'object'::text))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_request_version_check",
+    "object_definition": "CHECK ((request_version > 0))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "unique",
+    "object_name": "match_requests_requester_client_request_id_key",
+    "object_definition": "UNIQUE (requester_user_id, client_request_id)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_requester_ne_recipient",
+    "object_definition": "CHECK ((requester_user_id <> recipient_user_id))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "foreign_key",
+    "object_name": "match_requests_requester_user_id_fkey",
+    "object_definition": "FOREIGN KEY (requester_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_responded_aligns_status",
+    "object_definition": "CHECK (((status = ANY (ARRAY['accepted'::text, 'rejected'::text])) = (responded_at IS NOT NULL)))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "check",
+    "object_name": "match_requests_status_check",
+    "object_definition": "CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'invalidated'::text, 'expired'::text])))"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "independent_index",
+    "object_name": "match_requests_demand_post_id_idx",
+    "object_definition": "CREATE INDEX match_requests_demand_post_id_idx ON public.match_requests USING btree (demand_post_id)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "independent_index",
+    "object_name": "match_requests_one_pending_pair",
+    "object_definition": "CREATE UNIQUE INDEX match_requests_one_pending_pair ON public.match_requests USING btree (demand_post_id, provider_post_id) WHERE (status = 'pending'::text)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "independent_index",
+    "object_name": "match_requests_pending_expires_idx",
+    "object_definition": "CREATE INDEX match_requests_pending_expires_idx ON public.match_requests USING btree (expires_at) WHERE (status = 'pending'::text)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "independent_index",
+    "object_name": "match_requests_provider_post_id_idx",
+    "object_definition": "CREATE INDEX match_requests_provider_post_id_idx ON public.match_requests USING btree (provider_post_id)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "independent_index",
+    "object_name": "match_requests_recipient_status_created_idx",
+    "object_definition": "CREATE INDEX match_requests_recipient_status_created_idx ON public.match_requests USING btree (recipient_user_id, status, created_at DESC)"
+  },
+  {
+    "table_name": "match_requests",
+    "object_type": "independent_index",
+    "object_name": "match_requests_requester_status_created_idx",
+    "object_definition": "CREATE INDEX match_requests_requester_status_created_idx ON public.match_requests USING btree (requester_user_id, status, created_at DESC)"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_agreement_snapshot_object_check",
+    "object_definition": "CHECK ((jsonb_typeof(agreement_snapshot) = 'object'::text))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_category_check",
+    "object_definition": "CHECK ((category = ANY (ARRAY['travel'::text, 'deliver'::text, 'buy'::text, 'onsite'::text, 'errand'::text])))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_demand_ne_provider",
+    "object_definition": "CHECK ((demand_user_id <> provider_user_id))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "foreign_key",
+    "object_name": "match_contracts_demand_post_id_fkey",
+    "object_definition": "FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "unique",
+    "object_name": "match_contracts_demand_post_id_key",
+    "object_definition": "UNIQUE (demand_post_id)"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_demand_snapshot_object_check",
+    "object_definition": "CHECK ((jsonb_typeof(demand_snapshot) = 'object'::text))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "foreign_key",
+    "object_name": "match_contracts_demand_user_id_fkey",
+    "object_definition": "FOREIGN KEY (demand_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_distinct_posts",
+    "object_definition": "CHECK ((demand_post_id <> provider_post_id))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_lifecycle_projection_check",
+    "object_definition": "CHECK ((lifecycle_projection = ANY (ARRAY['formed'::text, 'in_progress'::text, 'pending_completion'::text, 'completed'::text, 'cancelled'::text])))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "primary_key",
+    "object_name": "match_contracts_pkey",
+    "object_definition": "PRIMARY KEY (id)"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "foreign_key",
+    "object_name": "match_contracts_provider_post_id_fkey",
+    "object_definition": "FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_provider_snapshot_object_check",
+    "object_definition": "CHECK ((jsonb_typeof(provider_snapshot) = 'object'::text))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "foreign_key",
+    "object_name": "match_contracts_provider_user_id_fkey",
+    "object_definition": "FOREIGN KEY (provider_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "foreign_key",
+    "object_name": "match_contracts_request_id_fkey",
+    "object_definition": "FOREIGN KEY (request_id) REFERENCES match_requests(id) ON DELETE RESTRICT"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "unique",
+    "object_name": "match_contracts_request_id_key",
+    "object_definition": "UNIQUE (request_id)"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_snapshot_version_check",
+    "object_definition": "CHECK ((snapshot_version > 0))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_terminal_null_unless_closed",
+    "object_definition": "CHECK (((lifecycle_projection = ANY (ARRAY['completed'::text, 'cancelled'::text])) OR (terminal_at IS NULL)))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "check",
+    "object_name": "match_contracts_terminal_required_when_closed",
+    "object_definition": "CHECK (((lifecycle_projection <> ALL (ARRAY['completed'::text, 'cancelled'::text])) OR (terminal_at IS NOT NULL)))"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "independent_index",
+    "object_name": "match_contracts_demand_user_lifecycle_formed_idx",
+    "object_definition": "CREATE INDEX match_contracts_demand_user_lifecycle_formed_idx ON public.match_contracts USING btree (demand_user_id, lifecycle_projection, formed_at DESC)"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "independent_index",
+    "object_name": "match_contracts_provider_lifecycle_formed_idx",
+    "object_definition": "CREATE INDEX match_contracts_provider_lifecycle_formed_idx ON public.match_contracts USING btree (provider_post_id, lifecycle_projection, formed_at)"
+  },
+  {
+    "table_name": "match_contracts",
+    "object_type": "independent_index",
+    "object_name": "match_contracts_provider_user_lifecycle_formed_idx",
+    "object_definition": "CREATE INDEX match_contracts_provider_user_lifecycle_formed_idx ON public.match_contracts USING btree (provider_user_id, lifecycle_projection, formed_at DESC)"
+  }
+];
+
+
+const V93_CONSTRAINT_TYPE: Record<
+  Exclude<V93DeployedCatalogObjectType, "independent_index">,
+  CatalogConstraint["type"]
+> = {
+  primary_key: "p",
+  unique: "u",
+  check: "c",
+  foreign_key: "f",
+};
+
+export function catalogConstraints(
+  table: (typeof V93_TABLES)[number],
+): CatalogConstraint[] {
+  return V93_DEPLOYED_CATALOG_OBJECTS.filter(
+    (row) => row.table_name === table && row.object_type !== "independent_index",
+  ).map((row) => ({
+    name: row.object_name,
+    type: V93_CONSTRAINT_TYPE[
+      row.object_type as Exclude<V93DeployedCatalogObjectType, "independent_index">
+    ],
+    def: row.object_definition,
+  }));
+}
+
+export function catalogIndexes(
+  table: (typeof V93_TABLES)[number],
+): CatalogIndex[] {
+  return V93_DEPLOYED_CATALOG_OBJECTS.filter(
+    (row) =>
+      row.table_name === table && row.object_type === "independent_index",
+  ).map((row) => ({
+    name: row.object_name,
+    def: row.object_definition,
+  }));
+}
+
+export function deployedCatalogObject(
+  table: (typeof V93_TABLES)[number],
+  objectName: string,
+): V93DeployedCatalogObject {
+  const row = V93_DEPLOYED_CATALOG_OBJECTS.find(
+    (item) => item.table_name === table && item.object_name === objectName,
+  );
+  if (!row) {
+    throw new Error("missing deployed catalog object " + table + "." + objectName);
+  }
+  return row;
+}
+
 export const V93_LIVE_INVITATION_FINGERPRINT: TableFingerprint = {
   relkind: "r",
   relrowsecurity: true,
@@ -731,112 +1258,8 @@ export const V93_LIVE_INVITATION_FINGERPRINT: TableFingerprint = {
     tsNotNull("created_at", true),
     tsNotNull("updated_at", true),
   ],
-  constraints: [
-    { name: "match_contact_invitations_pkey", type: "p", def: "PRIMARY KEY (id)" },
-    {
-      name: "match_contact_invitations_demand_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contact_invitations_provider_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contact_invitations_initiator_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (initiator_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contact_invitations_recipient_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contact_invitations_initiator_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (initiator_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contact_invitations_distinct_posts",
-      type: "c",
-      def: "CHECK (demand_post_id <> provider_post_id)",
-    },
-    {
-      name: "match_contact_invitations_distinct_users",
-      type: "c",
-      def: "CHECK (initiator_user_id <> recipient_user_id)",
-    },
-    {
-      name: "match_contact_invitations_initiator_post_belongs",
-      type: "c",
-      def: "CHECK (initiator_post_id IN (demand_post_id, provider_post_id))",
-    },
-    {
-      name: "match_contact_invitations_status_check",
-      type: "c",
-      def: "CHECK (status IN ('open', 'converted', 'invalidated', 'expired', 'blocked'))",
-    },
-    {
-      name: "match_contact_invitations_policy_version_check",
-      type: "c",
-      def: "CHECK (contact_policy_version > 0)",
-    },
-    {
-      name: "match_contact_invitations_disclosure_mode_check",
-      type: "c",
-      def: "CHECK (disclosure_mode IN ('recipient_contacts_initiator', 'mutual_eligible_contact'))",
-    },
-    {
-      name: "match_contact_invitations_contact_code_hash_present",
-      type: "c",
-      def: "CHECK (btrim(contact_code_hash) <> '')",
-    },
-    {
-      name: "match_contact_invitations_expires_after_created",
-      type: "c",
-      def: "CHECK (expires_at > created_at)",
-    },
-    {
-      name: "match_contact_invitations_converted_ts_consistent",
-      type: "c",
-      def: "CHECK ((status = 'converted') = (converted_at IS NOT NULL))",
-    },
-    {
-      name: "match_contact_invitations_invalid_ts_consistent",
-      type: "c",
-      def: "CHECK ((status IN ('invalidated', 'expired', 'blocked')) = (invalidated_at IS NOT NULL))",
-    },
-    {
-      name: "match_contact_invitations_converted_invalid_exclusive",
-      type: "c",
-      def: "CHECK (converted_at IS NULL OR invalidated_at IS NULL)",
-    },
-    {
-      name: "match_contact_invitations_initiator_client_request_id_key",
-      type: "u",
-      def: "UNIQUE (initiator_user_id, client_request_id)",
-    },
-  ],
-  indexes: [
-    {
-      name: "match_contact_invitations_one_open_pair",
-      def: "CREATE UNIQUE INDEX match_contact_invitations_one_open_pair ON match_contact_invitations USING btree (demand_post_id, provider_post_id) WHERE status = 'open'",
-    },
-    {
-      name: "match_contact_invitations_recipient_status_created_idx",
-      def: "CREATE INDEX match_contact_invitations_recipient_status_created_idx ON match_contact_invitations USING btree (recipient_user_id, status, created_at DESC)",
-    },
-    {
-      name: "match_contact_invitations_initiator_status_created_idx",
-      def: "CREATE INDEX match_contact_invitations_initiator_status_created_idx ON match_contact_invitations USING btree (initiator_user_id, status, created_at DESC)",
-    },
-    {
-      name: "match_contact_invitations_open_expires_idx",
-      def: "CREATE INDEX match_contact_invitations_open_expires_idx ON match_contact_invitations USING btree (expires_at) WHERE status = 'open'",
-    },
-  ],
+  constraints: catalogConstraints("match_contact_invitations"),
+  indexes: catalogIndexes("match_contact_invitations"),
 };
 
 export const V93_LIVE_GRANT_FINGERPRINT: TableFingerprint = {
@@ -856,64 +1279,8 @@ export const V93_LIVE_GRANT_FINGERPRINT: TableFingerprint = {
     tsNull("revoked_at"),
     tsNotNull("created_at", true),
   ],
-  constraints: [
-    { name: "contact_grants_pkey", type: "p", def: "PRIMARY KEY (id)" },
-    {
-      name: "contact_grants_invitation_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (invitation_id) REFERENCES match_contact_invitations(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "contact_grants_subject_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (subject_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "contact_grants_viewer_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (viewer_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "contact_grants_distinct_users",
-      type: "c",
-      def: "CHECK (subject_user_id <> viewer_user_id)",
-    },
-    {
-      name: "contact_grants_allowed_channels_contract_check",
-      type: "c",
-      def: "CHECK (array_ndims(allowed_channels) = 1 AND array_lower(allowed_channels, 1) = 1 AND array_length(allowed_channels, 1) = cardinality(allowed_channels) AND cardinality(allowed_channels) BETWEEN 1 AND 3 AND array_position(allowed_channels, NULL) IS NULL AND allowed_channels <@ ARRAY['phone', 'whatsapp', 'viber'] AND CASE cardinality(allowed_channels) WHEN 1 THEN true WHEN 2 THEN allowed_channels[1] <> allowed_channels[2] WHEN 3 THEN allowed_channels[1] <> allowed_channels[2] AND allowed_channels[1] <> allowed_channels[3] AND allowed_channels[2] <> allowed_channels[3] ELSE false END AND preferred_channel = ANY (allowed_channels))",
-    },
-    {
-      name: "contact_grants_policy_version_check",
-      type: "c",
-      def: "CHECK (policy_version > 0)",
-    },
-    {
-      name: "contact_grants_expires_after_granted",
-      type: "c",
-      def: "CHECK (expires_at > granted_at)",
-    },
-    {
-      name: "contact_grants_revoked_after_granted",
-      type: "c",
-      def: "CHECK (revoked_at IS NULL OR revoked_at >= granted_at)",
-    },
-    {
-      name: "contact_grants_invitation_subject_viewer_key",
-      type: "u",
-      def: "UNIQUE (invitation_id, subject_user_id, viewer_user_id)",
-    },
-  ],
-  indexes: [
-    {
-      name: "contact_grants_viewer_expires_live_idx",
-      def: "CREATE INDEX contact_grants_viewer_expires_live_idx ON contact_grants USING btree (viewer_user_id, expires_at) WHERE revoked_at IS NULL",
-    },
-    {
-      name: "contact_grants_invitation_id_idx",
-      def: "CREATE INDEX contact_grants_invitation_id_idx ON contact_grants USING btree (invitation_id)",
-    },
-  ],
+  constraints: catalogConstraints("contact_grants"),
+  indexes: catalogIndexes("contact_grants"),
 };
 
 export const V93_LIVE_REQUEST_FINGERPRINT: TableFingerprint = {
@@ -936,105 +1303,8 @@ export const V93_LIVE_REQUEST_FINGERPRINT: TableFingerprint = {
     col("request_version", "integer", true, "1"),
     col("request_assertion", "jsonb", true, jsonbObject),
   ],
-  constraints: [
-    { name: "match_requests_pkey", type: "p", def: "PRIMARY KEY (id)" },
-    {
-      name: "match_requests_invitation_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (invitation_id) REFERENCES match_contact_invitations(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_requests_demand_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_requests_provider_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_requests_requester_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (requester_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_requests_recipient_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_requests_invitation_id_key",
-      type: "u",
-      def: "UNIQUE (invitation_id)",
-    },
-    {
-      name: "match_requests_requester_client_request_id_key",
-      type: "u",
-      def: "UNIQUE (requester_user_id, client_request_id)",
-    },
-    {
-      name: "match_requests_distinct_posts",
-      type: "c",
-      def: "CHECK (demand_post_id <> provider_post_id)",
-    },
-    {
-      name: "match_requests_requester_ne_recipient",
-      type: "c",
-      def: "CHECK (requester_user_id <> recipient_user_id)",
-    },
-    {
-      name: "match_requests_status_check",
-      type: "c",
-      def: "CHECK (status IN ('pending', 'accepted', 'rejected', 'invalidated', 'expired'))",
-    },
-    {
-      name: "match_requests_request_version_check",
-      type: "c",
-      def: "CHECK (request_version > 0)",
-    },
-    {
-      name: "match_requests_request_assertion_object_check",
-      type: "c",
-      def: "CHECK (jsonb_typeof(request_assertion) = 'object')",
-    },
-    {
-      name: "match_requests_responded_aligns_status",
-      type: "c",
-      def: "CHECK ((status IN ('accepted', 'rejected')) = (responded_at IS NOT NULL))",
-    },
-    {
-      name: "match_requests_non_response_terminal_null",
-      type: "c",
-      def: "CHECK (status NOT IN ('invalidated', 'expired') OR responded_at IS NULL)",
-    },
-  ],
-  indexes: [
-    {
-      name: "match_requests_one_pending_pair",
-      def: "CREATE UNIQUE INDEX match_requests_one_pending_pair ON match_requests USING btree (demand_post_id, provider_post_id) WHERE status = 'pending'",
-    },
-    {
-      name: "match_requests_recipient_status_created_idx",
-      def: "CREATE INDEX match_requests_recipient_status_created_idx ON match_requests USING btree (recipient_user_id, status, created_at DESC)",
-    },
-    {
-      name: "match_requests_requester_status_created_idx",
-      def: "CREATE INDEX match_requests_requester_status_created_idx ON match_requests USING btree (requester_user_id, status, created_at DESC)",
-    },
-    {
-      name: "match_requests_demand_post_id_idx",
-      def: "CREATE INDEX match_requests_demand_post_id_idx ON match_requests USING btree (demand_post_id)",
-    },
-    {
-      name: "match_requests_provider_post_id_idx",
-      def: "CREATE INDEX match_requests_provider_post_id_idx ON match_requests USING btree (provider_post_id)",
-    },
-    {
-      name: "match_requests_pending_expires_idx",
-      def: "CREATE INDEX match_requests_pending_expires_idx ON match_requests USING btree (expires_at) WHERE status = 'pending'",
-    },
-  ],
+  constraints: catalogConstraints("match_requests"),
+  indexes: catalogIndexes("match_requests"),
 };
 
 export const V93_LIVE_CONTRACT_FINGERPRINT: TableFingerprint = {
@@ -1059,108 +1329,8 @@ export const V93_LIVE_CONTRACT_FINGERPRINT: TableFingerprint = {
     tsNotNull("formed_at", true),
     tsNull("terminal_at"),
   ],
-  constraints: [
-    { name: "match_contracts_pkey", type: "p", def: "PRIMARY KEY (id)" },
-    {
-      name: "match_contracts_request_id_key",
-      type: "u",
-      def: "UNIQUE (request_id)",
-    },
-    {
-      name: "match_contracts_request_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (request_id) REFERENCES match_requests(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contracts_demand_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (demand_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contracts_provider_user_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (provider_user_id) REFERENCES profiles(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contracts_snapshot_version_check",
-      type: "c",
-      def: "CHECK (snapshot_version > 0)",
-    },
-    {
-      name: "match_contracts_demand_snapshot_object_check",
-      type: "c",
-      def: "CHECK (jsonb_typeof(demand_snapshot) = 'object')",
-    },
-    {
-      name: "match_contracts_provider_snapshot_object_check",
-      type: "c",
-      def: "CHECK (jsonb_typeof(provider_snapshot) = 'object')",
-    },
-    {
-      name: "match_contracts_agreement_snapshot_object_check",
-      type: "c",
-      def: "CHECK (jsonb_typeof(agreement_snapshot) = 'object')",
-    },
-    {
-      name: "match_contracts_demand_ne_provider",
-      type: "c",
-      def: "CHECK (demand_user_id <> provider_user_id)",
-    },
-    {
-      name: "match_contracts_demand_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contracts_provider_post_id_fkey",
-      type: "f",
-      def: "FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT",
-    },
-    {
-      name: "match_contracts_demand_post_id_key",
-      type: "u",
-      def: "UNIQUE (demand_post_id)",
-    },
-    {
-      name: "match_contracts_distinct_posts",
-      type: "c",
-      def: "CHECK (demand_post_id <> provider_post_id)",
-    },
-    {
-      name: "match_contracts_category_check",
-      type: "c",
-      def: "CHECK (category IN ('travel', 'deliver', 'buy', 'onsite', 'errand'))",
-    },
-    {
-      name: "match_contracts_lifecycle_projection_check",
-      type: "c",
-      def: "CHECK (lifecycle_projection IN ('formed', 'in_progress', 'pending_completion', 'completed', 'cancelled'))",
-    },
-    {
-      name: "match_contracts_terminal_null_unless_closed",
-      type: "c",
-      def: "CHECK (lifecycle_projection IN ('completed', 'cancelled') OR terminal_at IS NULL)",
-    },
-    {
-      name: "match_contracts_terminal_required_when_closed",
-      type: "c",
-      def: "CHECK (lifecycle_projection NOT IN ('completed', 'cancelled') OR terminal_at IS NOT NULL)",
-    },
-  ],
-  indexes: [
-    {
-      name: "match_contracts_provider_lifecycle_formed_idx",
-      def: "CREATE INDEX match_contracts_provider_lifecycle_formed_idx ON match_contracts USING btree (provider_post_id, lifecycle_projection, formed_at)",
-    },
-    {
-      name: "match_contracts_demand_user_lifecycle_formed_idx",
-      def: "CREATE INDEX match_contracts_demand_user_lifecycle_formed_idx ON match_contracts USING btree (demand_user_id, lifecycle_projection, formed_at DESC)",
-    },
-    {
-      name: "match_contracts_provider_user_lifecycle_formed_idx",
-      def: "CREATE INDEX match_contracts_provider_user_lifecycle_formed_idx ON match_contracts USING btree (provider_user_id, lifecycle_projection, formed_at DESC)",
-    },
-  ],
+  constraints: catalogConstraints("match_contracts"),
+  indexes: catalogIndexes("match_contracts"),
 };
 
 export const V93_LIVE_FINGERPRINTS: Record<

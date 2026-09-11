@@ -408,12 +408,17 @@ function validProviderOfferForm() {
 }
 
 {
+  // Freeze only named historical files. A later legitimate forward
+  // migration must not make MatchRequestSheet tests fail.
   const PHASE_67B15_PARENT = "10a0bf2a0f8c4b6f113b209ef236d3e2f8f93a86";
   for (const file of [
-    "supabase/migrations",
-    "supabase/init.sql",
+    "supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql",
+    "supabase/migrations/20260908000004_match_request_contract_foundation_v90.verify.sql",
     "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.sql",
+    "supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.verify.sql",
     "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql",
+    "supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.verify.sql",
+    "supabase/init.sql",
     "src/lib/posts/publicPostSelect.ts",
   ]) {
     const diff = execFileSync("git", ["diff", PHASE_67B15_PARENT, "--", file], {

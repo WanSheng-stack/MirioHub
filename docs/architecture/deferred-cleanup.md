@@ -193,3 +193,24 @@ OWNER against PostGIS.
 - **Preconditions:** Allowlist, size limits, and no open-relay fetch of
   arbitrary URLs.
 - **Risk if built early:** SSRF and quota abuse via an open image proxy.
+
+## 12. Dual-post matching foundation (v93 schema only)
+
+- **Current state:** PHASE 6.7A.2 adds a forward migration that reshapes the
+  empty v90 `match_requests` / `match_contracts` tables and introduces
+  `match_contact_invitations` plus `contact_grants`. v90 is treated as already
+  deployed; the v90 main file and v90 verify stay frozen. Live apply is not
+  part of this phase. No RLS policy, GRANT, RPC, API, or UI writer lands here.
+  `MatchRequestSheet` remains unmounted.
+- **Future replacement:** 6.7A.3+ owns orthogonal fulfillment facts (dispute,
+  custody, cancel-request, completion-confirm). A later server API will re-read
+  posts/profiles and write invitations, grants, and requests. Contract INSERT
+  stays forbidden until a safe-accept transaction exists.
+- **Earliest safe production use:** After the v93 SQL is applied to live
+  catalog, verify.sql is run read-only against that catalog, and a dedicated
+  writer phase ships. Not this phase.
+- **Preconditions:** Empty matching tables at apply time; fail-fast guard
+  still sees v90 columns and no v93 columns; Demand may have many pending
+  requests; one contract per Demand post including terminal rows.
+- **Risk if wired early:** Client code inserting contracts without capacity
+  and accept-time revalidation, or treating invitations as orders.

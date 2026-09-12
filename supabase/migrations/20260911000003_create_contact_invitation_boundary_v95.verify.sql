@@ -33,6 +33,22 @@ overloads AS (
   WHERE n.nspname = 'public'
     AND p.proname = 'create_match_contact_invitation_v95'
 ),
+inspect_fn AS (
+  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.oid = to_regprocedure(
+      'public.inspect_match_contact_invitation_v95(uuid,uuid,uuid)'
+    )
+),
+inspect_overloads AS (
+  SELECT count(*)::int AS all_overload_count
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'inspect_match_contact_invitation_v95'
+),
 roles AS (
   SELECT
     (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'anon') AS anon_oid,
@@ -56,7 +72,9 @@ cfg AS (
   SELECT
     c.matching_contact_mode,
     c.matching_contact_policy_version,
-    c.matching_contact_invitation_ttl_minutes
+    c.matching_contact_invitation_ttl_minutes,
+    c.matching_contact_max_open_per_initiator_post,
+    c.matching_contact_max_created_per_actor_24h
   FROM public.system_configs c
   WHERE c.id = 1
 ),
@@ -167,6 +185,64 @@ all_checks AS (
     END,
     (SELECT matching_contact_invitation_ttl_minutes::text FROM cfg),
     '10..10080'
+  UNION ALL SELECT 123, 'config', 'matching_contact_max_open_per_initiator_post column',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM cols
+      WHERE attname = 'matching_contact_max_open_per_initiator_post'
+        AND typ = 'integer' AND attnotnull
+        AND btrim(coalesce(def, '')) IN ('20', '20::integer')
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT typ FROM cols WHERE attname = 'matching_contact_max_open_per_initiator_post'),
+    'integer not null default 20'
+  UNION ALL SELECT 124, 'config', 'matching_contact_max_created_per_actor_24h column',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM cols
+      WHERE attname = 'matching_contact_max_created_per_actor_24h'
+        AND typ = 'integer' AND attnotnull
+        AND btrim(coalesce(def, '')) IN ('50', '50::integer')
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT typ FROM cols WHERE attname = 'matching_contact_max_created_per_actor_24h'),
+    'integer not null default 50'
+  UNION ALL SELECT 125, 'config', 'matching_contact_max_open_per_initiator_post check',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM checks
+      WHERE conname = 'system_configs_matching_contact_max_open_per_initiator_post_check'
+        AND btrim(regexp_replace(def, '\s+', ' ', 'g'))
+          IN (
+            'CHECK (((matching_contact_max_open_per_initiator_post >= 1) AND (matching_contact_max_open_per_initiator_post <= 100)))',
+            'CHECK ((matching_contact_max_open_per_initiator_post >= 1) AND (matching_contact_max_open_per_initiator_post <= 100))'
+          )
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'constraint-present',
+    'open limit 1..100'
+  UNION ALL SELECT 126, 'config', 'matching_contact_max_created_per_actor_24h check',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM checks
+      WHERE conname = 'system_configs_matching_contact_max_created_per_actor_24h_check'
+        AND btrim(regexp_replace(def, '\s+', ' ', 'g'))
+          IN (
+            'CHECK (((matching_contact_max_created_per_actor_24h >= 1) AND (matching_contact_max_created_per_actor_24h <= 500)))',
+            'CHECK ((matching_contact_max_created_per_actor_24h >= 1) AND (matching_contact_max_created_per_actor_24h <= 500))'
+          )
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'constraint-present',
+    '24h limit 1..500'
+  UNION ALL SELECT 127, 'config', 'singleton open limit legal',
+    CASE
+      WHEN (SELECT matching_contact_max_open_per_initiator_post FROM cfg)
+        BETWEEN 1 AND 100 THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    (SELECT matching_contact_max_open_per_initiator_post::text FROM cfg),
+    '1..100'
+  UNION ALL SELECT 128, 'config', 'singleton 24h limit legal',
+    CASE
+      WHEN (SELECT matching_contact_max_created_per_actor_24h FROM cfg)
+        BETWEEN 1 AND 500 THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    (SELECT matching_contact_max_created_per_actor_24h::text FROM cfg),
+    '1..500'
   UNION ALL SELECT 200, 'function', 'exact function count',
     CASE WHEN (SELECT count(*) FROM exact) = 1 THEN 'PASS' ELSE 'FAIL' END,
     (SELECT count(*)::text FROM exact),
@@ -348,6 +424,128 @@ all_checks AS (
       ELSE 'invitation-only'
     END,
     'invitation-only'
+  UNION ALL SELECT 243, 'function', 'writer reads limit config',
+    CASE
+      WHEN (SELECT count(*) FROM exact) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM exact)
+        ~ 'matching_contact_max_open_per_initiator_post'
+        AND (SELECT prosrc FROM exact)
+          ~ 'matching_contact_max_created_per_actor_24h'
+        THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    'limit-config',
+    'reads both limit columns'
+  UNION ALL SELECT 244, 'function', 'v_now uses timestamptz now',
+    CASE
+      WHEN (SELECT count(*) FROM exact) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM exact) ~ 'timezone\(''utc'', now\(\)\)' THEN 'FAIL'
+      WHEN (SELECT prosrc FROM exact) ~ 'v_now timestamptz := now\(\)' THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    'timestamptz-now',
+    'v_now timestamptz := now()'
+  UNION ALL SELECT 250, 'inspect', 'exact inspect count',
+    CASE WHEN (SELECT count(*) FROM inspect_fn) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT count(*)::text FROM inspect_fn),
+    '1'
+  UNION ALL SELECT 251, 'inspect', 'inspect overload count',
+    CASE WHEN (SELECT all_overload_count FROM inspect_overloads) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT all_overload_count::text FROM inspect_overloads),
+    '1'
+  UNION ALL SELECT 252, 'inspect', 'inspect security definer',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosecdef FROM inspect_fn) IS TRUE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    (SELECT prosecdef::text FROM inspect_fn),
+    'true'
+  UNION ALL SELECT 253, 'inspect', 'inspect search_path',
+    CASE
+      WHEN EXISTS (
+        SELECT 1 FROM inspect_fn e, unnest(e.proconfig) cfg
+        WHERE cfg IN (
+          'search_path=pg_catalog, public',
+          'search_path=pg_catalog,public'
+        )
+      ) THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    'search-path',
+    'search_path=pg_catalog, public'
+  UNION ALL SELECT 254, 'inspect', 'inspect omits hash and channels',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM inspect_fn) ~* '\y(phone|viber|facebook|plate|contact_code_hash)\y'
+        THEN 'FAIL'
+      ELSE 'PASS'
+    END,
+    'absent',
+    'absent'
+  UNION ALL SELECT 255, 'inspect', 'anon inspect execute',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN NULL
+      WHEN (SELECT anon_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT anon_oid FROM roles),
+        (SELECT oid FROM inspect_fn),
+        'EXECUTE'
+      ) IS FALSE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN NULL
+      WHEN (SELECT anon_oid FROM roles) IS NULL THEN NULL
+      ELSE has_function_privilege(
+        (SELECT anon_oid FROM roles),
+        (SELECT oid FROM inspect_fn),
+        'EXECUTE'
+      )::text
+    END,
+    'false'
+  UNION ALL SELECT 256, 'inspect', 'authenticated inspect execute',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN NULL
+      WHEN (SELECT authenticated_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT authenticated_oid FROM roles),
+        (SELECT oid FROM inspect_fn),
+        'EXECUTE'
+      ) IS FALSE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN NULL
+      WHEN (SELECT authenticated_oid FROM roles) IS NULL THEN NULL
+      ELSE has_function_privilege(
+        (SELECT authenticated_oid FROM roles),
+        (SELECT oid FROM inspect_fn),
+        'EXECUTE'
+      )::text
+    END,
+    'false'
+  UNION ALL SELECT 257, 'inspect', 'service_role inspect execute',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN NULL
+      WHEN (SELECT service_role_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT service_role_oid FROM roles),
+        (SELECT oid FROM inspect_fn),
+        'EXECUTE'
+      ) IS TRUE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN NULL
+      WHEN (SELECT service_role_oid FROM roles) IS NULL THEN NULL
+      ELSE has_function_privilege(
+        (SELECT service_role_oid FROM roles),
+        (SELECT oid FROM inspect_fn),
+        'EXECUTE'
+      )::text
+    END,
+    'true'
   UNION ALL SELECT 300, 'empty', 'match_contact_invitations count',
     CASE WHEN (SELECT count(*) FROM public.match_contact_invitations) = 0 THEN 'PASS' ELSE 'FAIL' END,
     (SELECT count(*)::text FROM public.match_contact_invitations),

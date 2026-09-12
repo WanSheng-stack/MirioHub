@@ -273,7 +273,11 @@ OWNER against PostGIS.
   post to one complementary active post. v90–v94 main migrations stay frozen.
   The four-digit contact code is HMAC-derived from
   `MATCH_CONTACT_CODE_PEPPER` and never stored in plaintext. The database
-  stores `contact_code_hash` only. `disclosure_mode` is a
+  stores `contact_code_hash` only. Idempotent retries resolve the existing
+  `(initiator_user_id, client_request_id)` row before re-checking post
+  status. New creates re-run official hall/Stage 1/transport/OSRM
+  eligibility and honor `matching_contact_max_open_per_initiator_post`
+  and `matching_contact_max_created_per_actor_24h`. `disclosure_mode` is a
   `system_configs` snapshot (`cold_start` → `mutual_eligible_contact`,
   `mature` → `recipient_contacts_initiator`) and is not phone-read
   authorization. This phase does not write `contact_grants`, match

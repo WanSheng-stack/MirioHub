@@ -103,6 +103,20 @@ assert.ok(
     "matching_contact_invitation_ttl_minutes integer NOT NULL DEFAULT 1440",
   ),
 );
+assert.ok(
+  migration.includes(
+    "matching_contact_max_open_per_initiator_post integer NOT NULL DEFAULT 20",
+  ),
+);
+assert.ok(
+  migration.includes(
+    "matching_contact_max_created_per_actor_24h integer NOT NULL DEFAULT 50",
+  ),
+);
+assert.ok(migration.includes("v_now timestamptz := now()"));
+assert.equal(migration.includes("timezone('utc', now())"), false);
+assert.ok(migration.includes("CREATE FUNCTION public.inspect_match_contact_invitation_v95"));
+assert.ok(migration.includes("pg_catalog.hashtext('v95_actor:'"));
 assert.ok(migration.includes("SECURITY DEFINER"));
 assert.ok(migration.includes("SET search_path = pg_catalog, public"));
 assert.ok(migration.includes("ORDER BY p.id"));
@@ -190,8 +204,16 @@ function extractFunctionBody(sql: string): string {
 assert.ok(route.includes("create_match_contact_invitation_v95"));
 assert.ok(route.includes("getUser"));
 assert.ok(route.includes("createAdminClient"));
+assert.ok(route.includes("inspect_match_contact_invitation_v95"));
+assert.ok(route.includes("scoreOfficialContactInvitationRoute"));
+assert.ok(route.includes('.from("posts")'));
 assert.equal(route.includes("disclosure_mode"), false);
-assert.equal(route.includes(".from("), false);
+assert.equal(
+  /\.from\(\s*["'](match_requests|match_contracts|match_contact_invitations|contact_grants)["']/.test(
+    route,
+  ),
+  false,
+);
 
 for (const key of CONTACT_INVITATION_ERROR_KEYS) {
   const shortKey = key.replace(/^error\./, "");
@@ -232,6 +254,15 @@ for (const file of runtimeFiles) {
 }
 
 assert.ok(ledger.includes("6.7C.1") || ledger.includes("contact invitation"));
+assert.equal(
+  readdirSync(join(repoRoot, "supabase/migrations")).some(
+    (name) =>
+      name.startsWith("20260911000004") ||
+      name.includes("_v96.") ||
+      name.includes("contact_invitation_boundary_v96"),
+  ),
+  false,
+);
 
 console.log("contactInvitationBoundaryV95.test.ts: ok");
 console.log(

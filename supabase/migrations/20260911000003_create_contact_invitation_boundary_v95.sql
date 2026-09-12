@@ -148,7 +148,9 @@ BEGIN
       AND a.attname IN (
         'matching_contact_mode',
         'matching_contact_policy_version',
-        'matching_contact_invitation_ttl_minutes'
+        'matching_contact_invitation_ttl_minutes',
+        'matching_contact_max_open_per_initiator_post',
+        'matching_contact_max_created_per_actor_24h'
       )
       AND a.attnum > 0
       AND NOT a.attisdropped
@@ -171,6 +173,21 @@ BEGIN
   IF fn_count IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'v95_guard: unexpected function overload exists';
   END IF;
+
+  IF to_regprocedure(
+    'public.inspect_match_contact_invitation_v95(uuid,uuid,uuid)'
+  ) IS NOT NULL THEN
+    RAISE EXCEPTION 'v95_guard: inspect function already exists';
+  END IF;
+  SELECT count(*)::int
+  INTO fn_count
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'inspect_match_contact_invitation_v95';
+  IF fn_count IS DISTINCT FROM 0 THEN
+    RAISE EXCEPTION 'v95_guard: unexpected inspect overload exists';
+  END IF;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -180,7 +197,9 @@ END $$;
 ALTER TABLE public.system_configs
   ADD COLUMN matching_contact_mode text NOT NULL DEFAULT 'cold_start',
   ADD COLUMN matching_contact_policy_version integer NOT NULL DEFAULT 1,
-  ADD COLUMN matching_contact_invitation_ttl_minutes integer NOT NULL DEFAULT 1440;
+  ADD COLUMN matching_contact_invitation_ttl_minutes integer NOT NULL DEFAULT 1440,
+  ADD COLUMN matching_contact_max_open_per_initiator_post integer NOT NULL DEFAULT 20,
+  ADD COLUMN matching_contact_max_created_per_actor_24h integer NOT NULL DEFAULT 50;
 
 ALTER TABLE public.system_configs
   ADD CONSTRAINT system_configs_matching_contact_mode_check
@@ -188,7 +207,11 @@ ALTER TABLE public.system_configs
   ADD CONSTRAINT system_configs_matching_contact_policy_version_check
     CHECK (matching_contact_policy_version > 0),
   ADD CONSTRAINT system_configs_matching_contact_invitation_ttl_minutes_check
-    CHECK (matching_contact_invitation_ttl_minutes BETWEEN 10 AND 10080);
+    CHECK (matching_contact_invitation_ttl_minutes BETWEEN 10 AND 10080),
+  ADD CONSTRAINT system_configs_matching_contact_max_open_per_initiator_post_check
+    CHECK (matching_contact_max_open_per_initiator_post BETWEEN 1 AND 100),
+  ADD CONSTRAINT system_configs_matching_contact_max_created_per_actor_24h_check
+    CHECK (matching_contact_max_created_per_actor_24h BETWEEN 1 AND 500);
 
 COMMENT ON COLUMN public.system_configs.matching_contact_mode IS
   'Runtime snapshot for new contact invitations only. cold_start → mutual_eligible_contact; mature → recipient_contacts_initiator. Not phone-read authorization.';
@@ -217,7 +240,11 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $fn$
 DECLARE
-  v_now timestamptz := timezone('utc', now());
+  v_now timestamptz := now();
+  v_max_open integer;
+  v_max_24h integer;
+  v_open_n integer;
+  v_rate_n integer;
   v_first uuid;
   v_second uuid;
   v_locked int := 0;
@@ -260,9 +287,43 @@ BEGIN
   END IF;
 
   PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext('v95_actor:' || p_actor_user_id::text),
+    1
+  );
+  PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtext('v95_inv:' || p_actor_user_id::text),
     pg_catalog.hashtext(p_client_request_id::text)
   );
+
+  SELECT *
+  INTO v_existing
+  FROM public.match_contact_invitations i
+  WHERE i.initiator_user_id = p_actor_user_id
+    AND i.client_request_id = p_client_request_id
+  FOR UPDATE;
+
+  IF FOUND THEN
+    IF v_existing.initiator_post_id = p_initiator_post_id
+       AND v_existing.contact_code_hash = p_contact_code_hash
+       AND p_counterpart_post_id IS DISTINCT FROM p_initiator_post_id
+       AND (
+         (p_initiator_post_id = v_existing.demand_post_id
+          AND p_counterpart_post_id = v_existing.provider_post_id)
+         OR
+         (p_initiator_post_id = v_existing.provider_post_id
+          AND p_counterpart_post_id = v_existing.demand_post_id)
+       ) THEN
+      invitation_id := v_existing.id;
+      invitation_status := v_existing.status;
+      disclosure_mode := v_existing.disclosure_mode;
+      expires_at := v_existing.expires_at;
+      effective_client_request_id := v_existing.client_request_id;
+      created := false;
+      RETURN NEXT;
+      RETURN;
+    END IF;
+    RAISE EXCEPTION 'error.match_contact_invitation_idempotency_conflict';
+  END IF;
 
   IF p_initiator_post_id < p_counterpart_post_id THEN
     v_first := p_initiator_post_id;
@@ -331,15 +392,22 @@ BEGIN
   SELECT
     c.matching_contact_mode,
     c.matching_contact_policy_version,
-    c.matching_contact_invitation_ttl_minutes
-  INTO v_mode, v_policy, v_ttl
+    c.matching_contact_invitation_ttl_minutes,
+    c.matching_contact_max_open_per_initiator_post,
+    c.matching_contact_max_created_per_actor_24h
+  INTO v_mode, v_policy, v_ttl, v_max_open, v_max_24h
   FROM public.system_configs c
   WHERE c.id = 1;
 
   IF v_mode IS NULL OR v_policy IS NULL OR v_ttl IS NULL
+     OR v_max_open IS NULL OR v_max_24h IS NULL
      OR v_policy <= 0
      OR v_ttl < 10
-     OR v_ttl > 10080 THEN
+     OR v_ttl > 10080
+     OR v_max_open < 1
+     OR v_max_open > 100
+     OR v_max_24h < 1
+     OR v_max_24h > 500 THEN
     RAISE EXCEPTION 'error.server_configuration';
   END IF;
   IF v_mode = 'cold_start' THEN
@@ -348,30 +416,6 @@ BEGIN
     v_disclosure := 'recipient_contacts_initiator';
   ELSE
     RAISE EXCEPTION 'error.server_configuration';
-  END IF;
-
-  SELECT *
-  INTO v_existing
-  FROM public.match_contact_invitations i
-  WHERE i.initiator_user_id = p_actor_user_id
-    AND i.client_request_id = p_client_request_id
-  FOR UPDATE;
-
-  IF FOUND THEN
-    IF v_existing.demand_post_id = v_demand
-       AND v_existing.provider_post_id = v_provider
-       AND v_existing.initiator_post_id = p_initiator_post_id
-       AND v_existing.contact_code_hash = p_contact_code_hash THEN
-      invitation_id := v_existing.id;
-      invitation_status := v_existing.status;
-      disclosure_mode := v_existing.disclosure_mode;
-      expires_at := v_existing.expires_at;
-      effective_client_request_id := v_existing.client_request_id;
-      created := false;
-      RETURN NEXT;
-      RETURN;
-    END IF;
-    RAISE EXCEPTION 'error.match_contact_invitation_idempotency_conflict';
   END IF;
 
   SELECT *
@@ -393,6 +437,25 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'error.match_contact_invitation_already_open';
     END IF;
+  END IF;
+
+  SELECT count(*)::int
+  INTO v_open_n
+  FROM public.match_contact_invitations i
+  WHERE i.initiator_post_id = p_initiator_post_id
+    AND i.status = 'open'
+    AND i.expires_at > v_now;
+  IF v_open_n >= v_max_open THEN
+    RAISE EXCEPTION 'error.match_contact_invitation_open_limit';
+  END IF;
+
+  SELECT count(*)::int
+  INTO v_rate_n
+  FROM public.match_contact_invitations i
+  WHERE i.initiator_user_id = p_actor_user_id
+    AND i.created_at >= v_now - interval '24 hours';
+  IF v_rate_n >= v_max_24h THEN
+    RAISE EXCEPTION 'error.match_contact_invitation_rate_limit';
   END IF;
 
   INSERT INTO public.match_contact_invitations (
@@ -449,5 +512,86 @@ REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uu
 REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM authenticated;
 REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM service_role;
 GRANT EXECUTE ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) TO service_role;
+
+CREATE FUNCTION public.inspect_match_contact_invitation_v95(
+  p_actor_user_id uuid,
+  p_initiator_post_id uuid,
+  p_client_request_id uuid
+)
+RETURNS TABLE (
+  existing_invitation_id uuid,
+  existing_initiator_post_id uuid,
+  existing_demand_post_id uuid,
+  existing_provider_post_id uuid,
+  existing_status text,
+  existing_expires_at timestamptz,
+  existing_disclosure_mode text,
+  open_count integer,
+  created_24h_count integer,
+  max_open integer,
+  max_created_24h integer
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $inspect$
+DECLARE
+  v_now timestamptz := now();
+  v_existing public.match_contact_invitations%ROWTYPE;
+  v_max_open integer;
+  v_max_24h integer;
+BEGIN
+  SELECT
+    c.matching_contact_max_open_per_initiator_post,
+    c.matching_contact_max_created_per_actor_24h
+  INTO v_max_open, v_max_24h
+  FROM public.system_configs c
+  WHERE c.id = 1;
+
+  IF v_max_open IS NULL OR v_max_24h IS NULL THEN
+    RAISE EXCEPTION 'error.server_configuration';
+  END IF;
+
+  SELECT *
+  INTO v_existing
+  FROM public.match_contact_invitations i
+  WHERE i.initiator_user_id = p_actor_user_id
+    AND i.client_request_id = p_client_request_id;
+
+  existing_invitation_id := v_existing.id;
+  existing_initiator_post_id := v_existing.initiator_post_id;
+  existing_demand_post_id := v_existing.demand_post_id;
+  existing_provider_post_id := v_existing.provider_post_id;
+  existing_status := v_existing.status;
+  existing_expires_at := v_existing.expires_at;
+  existing_disclosure_mode := v_existing.disclosure_mode;
+
+  SELECT count(*)::int
+  INTO open_count
+  FROM public.match_contact_invitations i
+  WHERE i.initiator_post_id = p_initiator_post_id
+    AND i.status = 'open'
+    AND i.expires_at > v_now;
+
+  SELECT count(*)::int
+  INTO created_24h_count
+  FROM public.match_contact_invitations i
+  WHERE i.initiator_user_id = p_actor_user_id
+    AND i.created_at >= v_now - interval '24 hours';
+
+  max_open := v_max_open;
+  max_created_24h := v_max_24h;
+  RETURN NEXT;
+END;
+$inspect$;
+
+COMMENT ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) IS
+  'Read-only precheck for contact invitation idempotency and limits. Does not return contact_code_hash, phones, or post bodies.';
+
+REVOKE ALL ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) TO service_role;
 
 COMMIT;

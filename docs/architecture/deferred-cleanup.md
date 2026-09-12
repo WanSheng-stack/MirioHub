@@ -268,20 +268,21 @@ OWNER against PostGIS.
 
 ## 14. Contact invitation creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1 lands an undeployed writer that lets a
-  signed-in user create one open contact invitation from their own active
-  post to one complementary active post. v90–v94 main migrations stay frozen.
-  The four-digit contact code is HMAC-derived from
-  `MATCH_CONTACT_CODE_PEPPER` and never stored in plaintext. The database
-  stores `contact_code_hash` only. Idempotent retries resolve the existing
-  `(initiator_user_id, client_request_id)` row before re-checking post
-  status. New creates re-run official hall/Stage 1/transport/OSRM
-  eligibility and honor `matching_contact_max_open_per_initiator_post`
-  and `matching_contact_max_created_per_actor_24h`. `disclosure_mode` is a
-  `system_configs` snapshot (`cold_start` → `mutual_eligible_contact`,
-  `mature` → `recipient_contacts_initiator`) and is not phone-read
-  authorization. This phase does not write `contact_grants`, match
-  requests, contracts, allocations, or Fraud tables, and does not mount UI.
+- **Current state:** PHASE 6.7C.1A.1 keeps the undeployed v95 writer as the
+  only success authority. `inspect_match_contact_invitation_v95` is a
+  non-atomic cost hint and never authorizes HTTP 200 or fabricates a writer
+  row. Exact idempotent retries still resolve
+  `(initiator_user_id, client_request_id)` first, then compare the recovered
+  `contact_code_hash` inside the writer. Hall, contact invitation, and
+  evaluate-route-match share `src/lib/matching/matchAdmissionPolicy.ts`.
+  Route admission is not `calculateRouteMatchScore.ok`; it also applies
+  `matching_route_max_extra_detour_km` (default 30) and
+  `matching_route_max_extra_detour_ratio` (default 0.5). Active posts can
+  still refresh GPS / fill null `transport_mode` via complete-contact, so
+  new creates bind a server admission digest after the writer locks posts.
+  Limits stay writer-atomic. This phase does not write `contact_grants`,
+  match requests, contracts, allocations, or Fraud tables, and does not
+  mount UI.
 - **Still unresolved / later phases:** invitation list, notifications,
   contact-grant writer, MatchRequestSheet mount, formal match request,
   accept/reject, and 6.7C.3 contract+allocation transaction.

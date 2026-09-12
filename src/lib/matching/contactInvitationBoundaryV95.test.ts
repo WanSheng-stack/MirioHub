@@ -116,6 +116,14 @@ assert.ok(
 assert.ok(migration.includes("v_now timestamptz := now()"));
 assert.equal(migration.includes("timezone('utc', now())"), false);
 assert.ok(migration.includes("CREATE FUNCTION public.inspect_match_contact_invitation_v95"));
+assert.ok(migration.includes("existing_for_client_request boolean"));
+assert.ok(migration.includes("matching_route_max_extra_detour_km numeric(6, 2) NOT NULL DEFAULT 30"));
+assert.ok(migration.includes("matching_route_max_extra_detour_ratio numeric(4, 3) NOT NULL DEFAULT 0.5"));
+assert.ok(migration.includes("p_admission_digest text"));
+assert.equal(migration.includes("existing_invitation_id"), false);
+assert.equal(extractInspectBody(migration).includes("INSERT"), false);
+assert.equal(extractInspectBody(migration).includes("UPDATE"), false);
+assert.equal(extractInspectBody(migration).includes("DELETE"), false);
 assert.ok(migration.includes("pg_catalog.hashtext('v95_actor:'"));
 assert.ok(migration.includes("SECURITY DEFINER"));
 assert.ok(migration.includes("SET search_path = pg_catalog, public"));
@@ -146,22 +154,22 @@ assert.equal(/\bplate\b/i.test(extractFunctionBody(migration)), false);
 
 assert.ok(
   migration.includes(
-    "REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM PUBLIC",
+    "REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM PUBLIC",
   ),
 );
 assert.ok(
   migration.includes(
-    "REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM anon",
+    "REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM anon",
   ),
 );
 assert.ok(
   migration.includes(
-    "REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM authenticated",
+    "REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM authenticated",
   ),
 );
 assert.ok(
   migration.includes(
-    "GRANT EXECUTE ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) TO service_role",
+    "GRANT EXECUTE ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) TO service_role",
   ),
 );
 
@@ -174,6 +182,11 @@ assert.equal(
     sqlBody(verifySql).includes("bank_reference"),
   false,
 );
+assert.ok(verifySql.includes("matching_route_max_extra_detour_km"));
+assert.ok(verifySql.includes("matching_route_max_extra_detour_ratio"));
+assert.ok(verifySql.includes("existing_for_client_request"));
+assert.ok(verifySql.includes("inspect does not write") || verifySql.includes("inspect does not write"));
+assert.ok(verifySql.includes("idempotency before post status"));
 assert.ok(verifySql.includes("has_function_privilege"));
 assert.ok(verifySql.includes("service_role_oid"));
 assert.ok(verifySql.includes("WHEN (SELECT anon_oid FROM roles) IS NULL THEN NULL"));
@@ -201,11 +214,20 @@ function extractFunctionBody(sql: string): string {
   return start >= 0 && end > start ? sql.slice(start, end) : "";
 }
 
+function extractInspectBody(sql: string): string {
+  const start = sql.indexOf("AS $inspect$");
+  const end = sql.indexOf("$inspect$;", start + 1);
+  return start >= 0 && end > start ? sql.slice(start, end) : "";
+}
+
 assert.ok(route.includes("create_match_contact_invitation_v95"));
 assert.ok(route.includes("getUser"));
 assert.ok(route.includes("createAdminClient"));
 assert.ok(route.includes("inspect_match_contact_invitation_v95"));
 assert.ok(route.includes("scoreOfficialContactInvitationRoute"));
+assert.ok(route.includes("p_admission_digest"));
+assert.ok(route.includes("loadMatchAdmissionThresholds"));
+assert.equal(route.includes("existing_invitation_id"), false);
 assert.ok(route.includes('.from("posts")'));
 assert.equal(route.includes("disclosure_mode"), false);
 assert.equal(

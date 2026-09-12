@@ -12,7 +12,10 @@ import {
   type ContactInvitationWriterRow,
 } from "@/lib/matching/contactInvitationCreate";
 import type { ContactInvitationEligibilityPost } from "@/lib/matching/contactInvitationEligibilityCore";
-import { scoreOfficialContactInvitationRoute } from "@/lib/matching/contactInvitationEligibility";
+import {
+  loadMatchAdmissionThresholds,
+  scoreOfficialContactInvitationRoute,
+} from "@/lib/matching/contactInvitationEligibility";
 
 const ELIGIBILITY_POST_SELECT = [
   "id",
@@ -85,6 +88,7 @@ export async function POST(request: Request) {
     },
     scoreRoute: (initiator, counterpart) =>
       scoreOfficialContactInvitationRoute({ initiator, counterpart }),
+    loadThresholds: (admin) => loadMatchAdmissionThresholds(admin),
     callWriter: async (admin, args) => {
       const client = admin as SupabaseClient;
       const { data, error } = await client.rpc(
@@ -95,6 +99,7 @@ export async function POST(request: Request) {
           p_counterpart_post_id: args.counterpartPostId,
           p_client_request_id: args.clientRequestId,
           p_contact_code_hash: args.contactCodeHash,
+          p_admission_digest: args.admissionDigest,
         },
       );
       if (error) {

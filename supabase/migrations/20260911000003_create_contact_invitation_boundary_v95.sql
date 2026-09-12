@@ -150,7 +150,9 @@ BEGIN
         'matching_contact_policy_version',
         'matching_contact_invitation_ttl_minutes',
         'matching_contact_max_open_per_initiator_post',
-        'matching_contact_max_created_per_actor_24h'
+        'matching_contact_max_created_per_actor_24h',
+        'matching_route_max_extra_detour_km',
+        'matching_route_max_extra_detour_ratio'
       )
       AND a.attnum > 0
       AND NOT a.attisdropped
@@ -159,10 +161,15 @@ BEGIN
   END IF;
 
   fn_oid := to_regprocedure(
-    'public.create_match_contact_invitation_v95(uuid,uuid,uuid,uuid,text)'
+    'public.create_match_contact_invitation_v95(uuid,uuid,uuid,uuid,text,text)'
   );
   IF fn_oid IS NOT NULL THEN
     RAISE EXCEPTION 'v95_guard: target function already exists';
+  END IF;
+  IF to_regprocedure(
+    'public.create_match_contact_invitation_v95(uuid,uuid,uuid,uuid,text)'
+  ) IS NOT NULL THEN
+    RAISE EXCEPTION 'v95_guard: leftover 5-arg writer exists';
   END IF;
   SELECT count(*)::int
   INTO fn_count
@@ -199,7 +206,9 @@ ALTER TABLE public.system_configs
   ADD COLUMN matching_contact_policy_version integer NOT NULL DEFAULT 1,
   ADD COLUMN matching_contact_invitation_ttl_minutes integer NOT NULL DEFAULT 1440,
   ADD COLUMN matching_contact_max_open_per_initiator_post integer NOT NULL DEFAULT 20,
-  ADD COLUMN matching_contact_max_created_per_actor_24h integer NOT NULL DEFAULT 50;
+  ADD COLUMN matching_contact_max_created_per_actor_24h integer NOT NULL DEFAULT 50,
+  ADD COLUMN matching_route_max_extra_detour_km numeric(6, 2) NOT NULL DEFAULT 30,
+  ADD COLUMN matching_route_max_extra_detour_ratio numeric(4, 3) NOT NULL DEFAULT 0.5;
 
 ALTER TABLE public.system_configs
   ADD CONSTRAINT system_configs_matching_contact_mode_check
@@ -211,7 +220,17 @@ ALTER TABLE public.system_configs
   ADD CONSTRAINT system_configs_matching_contact_max_open_per_initiator_post_check
     CHECK (matching_contact_max_open_per_initiator_post BETWEEN 1 AND 100),
   ADD CONSTRAINT system_configs_matching_contact_max_created_per_actor_24h_check
-    CHECK (matching_contact_max_created_per_actor_24h BETWEEN 1 AND 500);
+    CHECK (matching_contact_max_created_per_actor_24h BETWEEN 1 AND 500),
+  ADD CONSTRAINT system_configs_matching_route_max_extra_detour_km_check
+    CHECK (
+      matching_route_max_extra_detour_km > 0
+      AND matching_route_max_extra_detour_km <= 500
+    ),
+  ADD CONSTRAINT system_configs_matching_route_max_extra_detour_ratio_check
+    CHECK (
+      matching_route_max_extra_detour_ratio >= 0
+      AND matching_route_max_extra_detour_ratio <= 5
+    );
 
 COMMENT ON COLUMN public.system_configs.matching_contact_mode IS
   'Runtime snapshot for new contact invitations only. cold_start → mutual_eligible_contact; mature → recipient_contacts_initiator. Not phone-read authorization.';
@@ -225,7 +244,8 @@ CREATE FUNCTION public.create_match_contact_invitation_v95(
   p_initiator_post_id uuid,
   p_counterpart_post_id uuid,
   p_client_request_id uuid,
-  p_contact_code_hash text
+  p_contact_code_hash text,
+  p_admission_digest text
 )
 RETURNS TABLE (
   invitation_id uuid,
@@ -253,11 +273,27 @@ DECLARE
   v_init_type text;
   v_init_cat text;
   v_init_status text;
+  v_init_date date;
+  v_init_window text;
+  v_init_service_window text;
+  v_init_transport text;
+  v_init_origin text;
+  v_init_dest text;
+  v_init_wp jsonb;
   v_ctr_id uuid;
   v_ctr_user uuid;
   v_ctr_type text;
   v_ctr_cat text;
   v_ctr_status text;
+  v_ctr_date date;
+  v_ctr_window text;
+  v_ctr_service_window text;
+  v_ctr_transport text;
+  v_ctr_origin text;
+  v_ctr_dest text;
+  v_ctr_wp jsonb;
+  v_digest text;
+  v_payload text;
   v_rec record;
   v_demand uuid;
   v_provider uuid;
@@ -325,6 +361,10 @@ BEGIN
     RAISE EXCEPTION 'error.match_contact_invitation_idempotency_conflict';
   END IF;
 
+  IF p_admission_digest IS NULL OR p_admission_digest !~ '^[0-9a-f]{32}$' THEN
+    RAISE EXCEPTION 'error.match_contact_not_eligible';
+  END IF;
+
   IF p_initiator_post_id < p_counterpart_post_id THEN
     v_first := p_initiator_post_id;
     v_second := p_counterpart_post_id;
@@ -334,7 +374,19 @@ BEGIN
   END IF;
 
   FOR v_rec IN
-    SELECT p.id, p.user_id, p.post_type, p.category, p.status
+    SELECT
+      p.id,
+      p.user_id,
+      p.post_type,
+      p.category,
+      p.status,
+      p.departure_date,
+      p.departure_time_window,
+      p.service_time_window,
+      p.transport_mode,
+      p.origin_address,
+      p.destination_address,
+      p.waypoints
     FROM public.posts p
     WHERE p.id IN (v_first, v_second)
     ORDER BY p.id
@@ -347,12 +399,26 @@ BEGIN
       v_init_type := v_rec.post_type;
       v_init_cat := v_rec.category;
       v_init_status := v_rec.status;
+      v_init_date := v_rec.departure_date;
+      v_init_window := v_rec.departure_time_window;
+      v_init_service_window := v_rec.service_time_window;
+      v_init_transport := v_rec.transport_mode;
+      v_init_origin := v_rec.origin_address;
+      v_init_dest := v_rec.destination_address;
+      v_init_wp := v_rec.waypoints;
     ELSE
       v_ctr_id := v_rec.id;
       v_ctr_user := v_rec.user_id;
       v_ctr_type := v_rec.post_type;
       v_ctr_cat := v_rec.category;
       v_ctr_status := v_rec.status;
+      v_ctr_date := v_rec.departure_date;
+      v_ctr_window := v_rec.departure_time_window;
+      v_ctr_service_window := v_rec.service_time_window;
+      v_ctr_transport := v_rec.transport_mode;
+      v_ctr_origin := v_rec.origin_address;
+      v_ctr_dest := v_rec.destination_address;
+      v_ctr_wp := v_rec.waypoints;
     END IF;
   END LOOP;
 
@@ -379,6 +445,56 @@ BEGIN
   END IF;
   IF v_init_cat IS DISTINCT FROM v_ctr_cat THEN
     RAISE EXCEPTION 'error.match_contact_category_mismatch';
+  END IF;
+
+  SELECT string_agg(facts, E'\n' ORDER BY pid)
+  INTO v_payload
+  FROM (
+    SELECT
+      v_init_id AS pid,
+      (
+        v_init_id::text || '|' ||
+        v_init_user::text || '|' ||
+        coalesce(v_init_type, '') || '|' ||
+        coalesce(v_init_cat, '') || '|' ||
+        coalesce(v_init_status, '') || '|' ||
+        coalesce(v_init_date::text, '') || '|' ||
+        coalesce(v_init_window, '') || '|' ||
+        coalesce(v_init_service_window, '') || '|' ||
+        coalesce(v_init_transport, '') || '|' ||
+        coalesce(v_init_origin, '') || '|' ||
+        coalesce(v_init_dest, '') || '|' ||
+        coalesce((
+          SELECT string_agg(elem, E'\x1f' ORDER BY ord)
+          FROM jsonb_array_elements_text(coalesce(v_init_wp, '[]'::jsonb))
+            WITH ORDINALITY AS t(elem, ord)
+        ), '')
+      ) AS facts
+    UNION ALL
+    SELECT
+      v_ctr_id,
+      (
+        v_ctr_id::text || '|' ||
+        v_ctr_user::text || '|' ||
+        coalesce(v_ctr_type, '') || '|' ||
+        coalesce(v_ctr_cat, '') || '|' ||
+        coalesce(v_ctr_status, '') || '|' ||
+        coalesce(v_ctr_date::text, '') || '|' ||
+        coalesce(v_ctr_window, '') || '|' ||
+        coalesce(v_ctr_service_window, '') || '|' ||
+        coalesce(v_ctr_transport, '') || '|' ||
+        coalesce(v_ctr_origin, '') || '|' ||
+        coalesce(v_ctr_dest, '') || '|' ||
+        coalesce((
+          SELECT string_agg(elem, E'\x1f' ORDER BY ord)
+          FROM jsonb_array_elements_text(coalesce(v_ctr_wp, '[]'::jsonb))
+            WITH ORDINALITY AS t(elem, ord)
+        ), '')
+      )
+  ) s;
+  v_digest := md5(v_payload);
+  IF v_digest IS DISTINCT FROM p_admission_digest THEN
+    RAISE EXCEPTION 'error.match_contact_not_eligible';
   END IF;
 
   IF v_init_type = 'demand' THEN
@@ -504,14 +620,14 @@ BEGIN
 END;
 $fn$;
 
-COMMENT ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) IS
-  'Atomic contact invitation writer. Re-reads posts and system_configs. Stores contact_code_hash only. Does not write contact_grants, match_requests, contracts, allocations, or Fraud tables. Does not change posts.status.';
+COMMENT ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) IS
+  'Atomic contact invitation writer. Re-reads posts and system_configs. Stores contact_code_hash only. Exact idempotent retry is the only success authority and runs before post status. New creates bind a server admission digest after locking posts. Does not write contact_grants, match_requests, contracts, allocations, or Fraud tables. Does not change posts.status.';
 
-REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM anon;
-REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM authenticated;
-REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text) TO service_role;
+REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM anon;
+REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM authenticated;
+REVOKE ALL ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.create_match_contact_invitation_v95(uuid, uuid, uuid, uuid, text, text) TO service_role;
 
 CREATE FUNCTION public.inspect_match_contact_invitation_v95(
   p_actor_user_id uuid,
@@ -519,13 +635,7 @@ CREATE FUNCTION public.inspect_match_contact_invitation_v95(
   p_client_request_id uuid
 )
 RETURNS TABLE (
-  existing_invitation_id uuid,
-  existing_initiator_post_id uuid,
-  existing_demand_post_id uuid,
-  existing_provider_post_id uuid,
-  existing_status text,
-  existing_expires_at timestamptz,
-  existing_disclosure_mode text,
+  existing_for_client_request boolean,
   open_count integer,
   created_24h_count integer,
   max_open integer,
@@ -537,10 +647,10 @@ SET search_path = pg_catalog, public
 AS $inspect$
 DECLARE
   v_now timestamptz := now();
-  v_existing public.match_contact_invitations%ROWTYPE;
   v_max_open integer;
   v_max_24h integer;
 BEGIN
+  -- Non-atomic cost hint only. Not authorization and not a limiter.
   SELECT
     c.matching_contact_max_open_per_initiator_post,
     c.matching_contact_max_created_per_actor_24h
@@ -552,19 +662,12 @@ BEGIN
     RAISE EXCEPTION 'error.server_configuration';
   END IF;
 
-  SELECT *
-  INTO v_existing
-  FROM public.match_contact_invitations i
-  WHERE i.initiator_user_id = p_actor_user_id
-    AND i.client_request_id = p_client_request_id;
-
-  existing_invitation_id := v_existing.id;
-  existing_initiator_post_id := v_existing.initiator_post_id;
-  existing_demand_post_id := v_existing.demand_post_id;
-  existing_provider_post_id := v_existing.provider_post_id;
-  existing_status := v_existing.status;
-  existing_expires_at := v_existing.expires_at;
-  existing_disclosure_mode := v_existing.disclosure_mode;
+  existing_for_client_request := EXISTS (
+    SELECT 1
+    FROM public.match_contact_invitations i
+    WHERE i.initiator_user_id = p_actor_user_id
+      AND i.client_request_id = p_client_request_id
+  );
 
   SELECT count(*)::int
   INTO open_count
@@ -586,7 +689,7 @@ END;
 $inspect$;
 
 COMMENT ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) IS
-  'Read-only precheck for contact invitation idempotency and limits. Does not return contact_code_hash, phones, or post bodies.';
+  'Read-only non-atomic hint for skipping expensive scoring or cheap-prechecking limits. Never authorizes a success response. Does not return invitation ids, hashes, phones, or post bodies.';
 
 REVOKE ALL ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.inspect_match_contact_invitation_v95(uuid, uuid, uuid) FROM anon;

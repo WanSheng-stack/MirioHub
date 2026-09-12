@@ -23,7 +23,7 @@ exact AS (
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
     AND p.oid = to_regprocedure(
-      'public.create_match_contact_invitation_v95(uuid,uuid,uuid,uuid,text)'
+      'public.create_match_contact_invitation_v95(uuid,uuid,uuid,uuid,text,text)'
     )
 ),
 overloads AS (
@@ -34,7 +34,8 @@ overloads AS (
     AND p.proname = 'create_match_contact_invitation_v95'
 ),
 inspect_fn AS (
-  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc
+  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc,
+         p.proallargtypes, p.proargmodes, p.proargnames
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
@@ -74,7 +75,9 @@ cfg AS (
     c.matching_contact_policy_version,
     c.matching_contact_invitation_ttl_minutes,
     c.matching_contact_max_open_per_initiator_post,
-    c.matching_contact_max_created_per_actor_24h
+    c.matching_contact_max_created_per_actor_24h,
+    c.matching_route_max_extra_detour_km,
+    c.matching_route_max_extra_detour_ratio
   FROM public.system_configs c
   WHERE c.id = 1
 ),
@@ -100,6 +103,15 @@ out_cols AS (
     e.proargnames[x.ord] AS col_name,
     format_type(e.proallargtypes[x.ord], NULL) AS col_type
   FROM exact e
+  JOIN LATERAL unnest(e.proargmodes) WITH ORDINALITY AS x(mode, ord) ON true
+  WHERE e.proargmodes[x.ord] IN ('t', 'o', 'b')
+),
+inspect_out AS (
+  SELECT
+    x.ord,
+    e.proargnames[x.ord] AS col_name,
+    format_type(e.proallargtypes[x.ord], NULL) AS col_type
+  FROM inspect_fn e
   JOIN LATERAL unnest(e.proargmodes) WITH ORDINALITY AS x(mode, ord) ON true
   WHERE e.proargmodes[x.ord] IN ('t', 'o', 'b')
 ),
@@ -243,6 +255,61 @@ all_checks AS (
     END,
     (SELECT matching_contact_max_created_per_actor_24h::text FROM cfg),
     '1..500'
+  UNION ALL SELECT 129, 'config', 'matching_route_max_extra_detour_km column',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM cols
+      WHERE attname = 'matching_route_max_extra_detour_km'
+        AND typ IN ('numeric', 'numeric(6,2)') AND attnotnull
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT typ FROM cols WHERE attname = 'matching_route_max_extra_detour_km'),
+    'numeric not null default 30'
+  UNION ALL SELECT 130, 'config', 'matching_route_max_extra_detour_ratio column',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM cols
+      WHERE attname = 'matching_route_max_extra_detour_ratio'
+        AND typ IN ('numeric', 'numeric(4,3)') AND attnotnull
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT typ FROM cols WHERE attname = 'matching_route_max_extra_detour_ratio'),
+    'numeric not null default 0.5'
+  UNION ALL SELECT 131, 'config', 'matching_route_max_extra_detour_km check',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM checks
+      WHERE conname = 'system_configs_matching_route_max_extra_detour_km_check'
+        AND btrim(regexp_replace(def, '\s+', ' ', 'g'))
+          LIKE '%matching_route_max_extra_detour_km%'
+        AND def LIKE '%>%'
+        AND def LIKE '%500%'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'constraint-present',
+    'km > 0 and <= 500'
+  UNION ALL SELECT 132, 'config', 'matching_route_max_extra_detour_ratio check',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM checks
+      WHERE conname = 'system_configs_matching_route_max_extra_detour_ratio_check'
+        AND btrim(regexp_replace(def, '\s+', ' ', 'g'))
+          LIKE '%matching_route_max_extra_detour_ratio%'
+        AND def LIKE '%5%'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'constraint-present',
+    'ratio >= 0 and <= 5'
+  UNION ALL SELECT 133, 'config', 'singleton route km legal',
+    CASE
+      WHEN (SELECT matching_route_max_extra_detour_km FROM cfg) > 0
+       AND (SELECT matching_route_max_extra_detour_km FROM cfg) <= 500
+        THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    (SELECT matching_route_max_extra_detour_km::text FROM cfg),
+    '0 < km <= 500'
+  UNION ALL SELECT 134, 'config', 'singleton route ratio legal',
+    CASE
+      WHEN (SELECT matching_route_max_extra_detour_ratio FROM cfg) >= 0
+       AND (SELECT matching_route_max_extra_detour_ratio FROM cfg) <= 5
+        THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    (SELECT matching_route_max_extra_detour_ratio::text FROM cfg),
+    '0 <= ratio <= 5'
   UNION ALL SELECT 200, 'function', 'exact function count',
     CASE WHEN (SELECT count(*) FROM exact) = 1 THEN 'PASS' ELSE 'FAIL' END,
     (SELECT count(*)::text FROM exact),
@@ -252,37 +319,37 @@ all_checks AS (
     (SELECT all_overload_count::text FROM overloads),
     '1'
   UNION ALL SELECT 210, 'function', 'returns invitation_id uuid',
-    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE ord = 6 AND col_name = 'invitation_id' AND col_type = 'uuid')
+    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE col_name = 'invitation_id' AND col_type = 'uuid')
       THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT col_name || ' ' || col_type FROM out_cols WHERE ord = 6),
+    (SELECT col_name || ' ' || col_type FROM out_cols WHERE col_name = 'invitation_id'),
     'invitation_id uuid'
   UNION ALL SELECT 211, 'function', 'returns invitation_status text',
-    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE ord = 7 AND col_name = 'invitation_status' AND col_type = 'text')
+    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE col_name = 'invitation_status' AND col_type = 'text')
       THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT col_name || ' ' || col_type FROM out_cols WHERE ord = 7),
+    (SELECT col_name || ' ' || col_type FROM out_cols WHERE col_name = 'invitation_status'),
     'invitation_status text'
   UNION ALL SELECT 212, 'function', 'returns disclosure_mode text',
-    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE ord = 8 AND col_name = 'disclosure_mode' AND col_type = 'text')
+    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE col_name = 'disclosure_mode' AND col_type = 'text')
       THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT col_name || ' ' || col_type FROM out_cols WHERE ord = 8),
+    (SELECT col_name || ' ' || col_type FROM out_cols WHERE col_name = 'disclosure_mode'),
     'disclosure_mode text'
   UNION ALL SELECT 213, 'function', 'returns expires_at timestamptz',
     CASE WHEN EXISTS (
       SELECT 1 FROM out_cols
-      WHERE ord = 9 AND col_name = 'expires_at'
+      WHERE col_name = 'expires_at'
         AND col_type IN ('timestamp with time zone', 'timestamptz')
     ) THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT col_name || ' ' || col_type FROM out_cols WHERE ord = 9),
+    (SELECT col_name || ' ' || col_type FROM out_cols WHERE col_name = 'expires_at'),
     'expires_at timestamptz'
   UNION ALL SELECT 214, 'function', 'returns effective_client_request_id uuid',
-    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE ord = 10 AND col_name = 'effective_client_request_id' AND col_type = 'uuid')
+    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE col_name = 'effective_client_request_id' AND col_type = 'uuid')
       THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT col_name || ' ' || col_type FROM out_cols WHERE ord = 10),
+    (SELECT col_name || ' ' || col_type FROM out_cols WHERE col_name = 'effective_client_request_id'),
     'effective_client_request_id uuid'
   UNION ALL SELECT 215, 'function', 'returns created boolean',
-    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE ord = 11 AND col_name = 'created' AND col_type = 'boolean')
+    CASE WHEN EXISTS (SELECT 1 FROM out_cols WHERE col_name = 'created' AND col_type = 'boolean')
       THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT col_name || ' ' || col_type FROM out_cols WHERE ord = 11),
+    (SELECT col_name || ' ' || col_type FROM out_cols WHERE col_name = 'created'),
     'created boolean'
   UNION ALL SELECT 216, 'function', 'table result column count',
     CASE WHEN (SELECT count(*) FROM out_cols) = 6 THEN 'PASS' ELSE 'FAIL' END,
@@ -445,6 +512,28 @@ all_checks AS (
     END,
     'timestamptz-now',
     'v_now timestamptz := now()'
+  UNION ALL SELECT 245, 'function', 'idempotency before post status',
+    CASE
+      WHEN (SELECT count(*) FROM exact) <> 1 THEN 'FAIL'
+      WHEN strpos((SELECT prosrc FROM exact), 'created := false') > 0
+       AND strpos((SELECT prosrc FROM exact), 'error.match_contact_post_unavailable')
+         > strpos((SELECT prosrc FROM exact), 'created := false')
+        THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    'order-only',
+    'idempotent return before post-status raise'
+  UNION ALL SELECT 246, 'function', 'new create binds admission digest',
+    CASE
+      WHEN (SELECT count(*) FROM exact) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM exact) ~ 'p_admission_digest'
+       AND strpos((SELECT prosrc FROM exact), 'md5(')
+         > strpos((SELECT prosrc FROM exact), 'created := false')
+        THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    'digest-after-idempotent',
+    'digest required only after idempotent miss'
   UNION ALL SELECT 250, 'inspect', 'exact inspect count',
     CASE WHEN (SELECT count(*) FROM inspect_fn) = 1 THEN 'PASS' ELSE 'FAIL' END,
     (SELECT count(*)::text FROM inspect_fn),
@@ -546,6 +635,49 @@ all_checks AS (
       )::text
     END,
     'true'
+  UNION ALL SELECT 258, 'inspect', 'inspect table column count',
+    CASE WHEN (SELECT count(*) FROM inspect_out) = 5 THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT count(*)::text FROM inspect_out),
+    '5'
+  UNION ALL SELECT 259, 'inspect', 'inspect existing_for_client_request boolean',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM inspect_out
+      WHERE col_name = 'existing_for_client_request' AND col_type = 'boolean'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'column-present',
+    'existing_for_client_request boolean'
+  UNION ALL SELECT 260, 'inspect', 'inspect omits invitation details',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN 'FAIL'
+      WHEN EXISTS (
+        SELECT 1 FROM inspect_out
+        WHERE col_name IN (
+          'existing_invitation_id',
+          'existing_initiator_post_id',
+          'existing_demand_post_id',
+          'existing_provider_post_id',
+          'existing_status',
+          'existing_expires_at',
+          'existing_disclosure_mode',
+          'contact_code_hash',
+          'recipient_user_id'
+        )
+      ) THEN 'FAIL'
+      WHEN (SELECT prosrc FROM inspect_fn)
+        ~ 'existing_invitation_id|existing_initiator_post_id|existing_demand_post_id|existing_provider_post_id|existing_status|existing_expires_at|existing_disclosure_mode'
+        THEN 'FAIL'
+      ELSE 'PASS'
+    END,
+    'absent',
+    'no invitation detail columns'
+  UNION ALL SELECT 261, 'inspect', 'inspect does not write',
+    CASE
+      WHEN (SELECT count(*) FROM inspect_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM inspect_fn) ~* '\y(insert|update|delete)\y' THEN 'FAIL'
+      ELSE 'PASS'
+    END,
+    'read-only',
+    'no insert/update/delete'
   UNION ALL SELECT 300, 'empty', 'match_contact_invitations count',
     CASE WHEN (SELECT count(*) FROM public.match_contact_invitations) = 0 THEN 'PASS' ELSE 'FAIL' END,
     (SELECT count(*)::text FROM public.match_contact_invitations),

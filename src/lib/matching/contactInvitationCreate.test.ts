@@ -5,6 +5,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   CONTACT_INVITATION_ERROR,
   CONTACT_INVITATION_SAFE_LOGS,
@@ -156,6 +157,25 @@ function writerErrorKey(result: SimulatedWriterResult): string | undefined {
         contactCodeHash: pair.codeHash,
       },
     );
+    const rotated = generateCodeWithPepper(
+      ACTOR,
+      CLIENT,
+      "other-contact-code-pepper-32chars!!!",
+    );
+    const pepperChanged = evaluateContactInvitationWriter(created.state, {
+      actorUserId: ACTOR,
+      initiatorPostId: DEMAND,
+      counterpartPostId: PROVIDER,
+      clientRequestId: CLIENT,
+      contactCodeHash: rotated.codeHash,
+    });
+    assert.equal(pepperChanged.ok, false);
+    if (!pepperChanged.ok) {
+      assert.equal(
+        pepperChanged.errorKey,
+        CONTACT_INVITATION_ERROR.idempotencyConflict,
+      );
+    }
     assert.equal(retryInactiveInitiator.ok, true);
     if (retryInactiveInitiator.ok) {
       assert.equal(retryInactiveInitiator.row.created, false);
@@ -601,12 +621,15 @@ assert.equal(
 {
   const initiator = eligiblePost(DEMAND, ACTOR, "demand");
   const counterpart = eligiblePost(PROVIDER, OTHER, "provider");
+  const route = okRoute();
+  const thresholds = { maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 };
   assert.equal(
     evaluateContactInvitationEligibility({
       actorUserId: ACTOR,
       initiator,
       counterpart,
-      routeOk: true,
+      route,
+      thresholds,
     }).ok,
     true,
   );
@@ -615,7 +638,8 @@ assert.equal(
       actorUserId: ACTOR,
       initiator: { ...initiator, category: "travel" },
       counterpart: { ...counterpart, category: "deliver" },
-      routeOk: true,
+      route,
+      thresholds,
     }).ok,
     false,
   );
@@ -624,7 +648,8 @@ assert.equal(
       actorUserId: ACTOR,
       initiator: { ...initiator, departure_date: "" },
       counterpart,
-      routeOk: true,
+      route,
+      thresholds,
     }).ok,
     false,
   );
@@ -633,7 +658,8 @@ assert.equal(
       actorUserId: ACTOR,
       initiator: { ...initiator, departure_time_window: "14:00-18:00" },
       counterpart,
-      routeOk: true,
+      route,
+      thresholds,
     }).ok,
     false,
   );
@@ -642,7 +668,8 @@ assert.equal(
       actorUserId: ACTOR,
       initiator: { ...initiator, transport_mode: "cargo_van" },
       counterpart,
-      routeOk: true,
+      route,
+      thresholds,
     }).ok,
     false,
   );
@@ -651,7 +678,8 @@ assert.equal(
       actorUserId: ACTOR,
       initiator,
       counterpart,
-      routeOk: false,
+      route: { ok: false },
+      thresholds,
     }).ok,
     false,
   );
@@ -659,7 +687,8 @@ assert.equal(
     actorUserId: ACTOR,
     initiator,
     counterpart: { ...counterpart, user_id: ACTOR },
-    routeOk: true,
+    route,
+    thresholds,
   });
   assert.equal(self.ok, false);
   if (!self.ok) {
@@ -671,19 +700,17 @@ function emptyInspect(
   overrides: Partial<ContactInvitationInspectRow> = {},
 ): ContactInvitationInspectRow {
   return {
-    existing_invitation_id: null,
-    existing_initiator_post_id: null,
-    existing_demand_post_id: null,
-    existing_provider_post_id: null,
-    existing_status: null,
-    existing_expires_at: null,
-    existing_disclosure_mode: null,
+    existing_for_client_request: false,
     open_count: 0,
     created_24h_count: 0,
     max_open: 20,
     max_created_24h: 50,
     ...overrides,
   };
+}
+
+function okRoute() {
+  return { ok: true as const, score: 0.9, extraDetourKms: 2, baselineKms: 12 };
 }
 
 function eligiblePost(
@@ -749,7 +776,10 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
         initiator: eligiblePost(DEMAND, ACTOR, "demand"),
         counterpart: eligiblePost(PROVIDER, OTHER, "provider"),
       })),
-    scoreRoute: overrides.scoreRoute ?? (async () => true),
+    scoreRoute: overrides.scoreRoute ?? (async () => okRoute()),
+    loadThresholds:
+      overrides.loadThresholds ??
+      (async () => ({ maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 })),
     callWriter:
       overrides.callWriter ??
       (async () => writerRow(true)),
@@ -768,6 +798,8 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
       matched: true,
       score: 1,
       routeCompatible: true,
+      threshold: 30,
+      extraDetourKms: 1,
       category: "travel",
     },
   });
@@ -782,7 +814,7 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
 }
 {
   const result = await run({
-    scoreRoute: async () => false,
+    scoreRoute: async () => ({ ok: false }),
   });
   assert.equal(result.status, 409);
   if (!result.json.ok) {
@@ -833,28 +865,50 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
   assert.equal(result.codeGenerated, false);
 }
 {
+  let writerCalls = 0;
   const result = await run({
     inspect: async () =>
       emptyInspect({
-        existing_invitation_id: "88888888-8888-4888-8888-888888888888",
-        existing_initiator_post_id: DEMAND,
-        existing_demand_post_id: DEMAND,
-        existing_provider_post_id: PROVIDER,
-        existing_status: "open",
-        existing_expires_at: "2026-09-13T00:00:00.000Z",
-        existing_disclosure_mode: "mutual_eligible_contact",
+        existing_for_client_request: true,
         open_count: 20,
         created_24h_count: 50,
       }),
+    callWriter: async (_admin, args) => {
+      writerCalls += 1;
+      assert.equal(args.contactCodeHash, pair.codeHash);
+      assert.equal(args.admissionDigest, "");
+      return writerRow(false);
+    },
   });
+  assert.equal(writerCalls, 1);
   assert.equal(result.status, 200);
-  assert.equal(result.writerCalled, false);
+  assert.equal(result.writerCalled, true);
   assert.equal(result.routeScored, false);
   assert.equal(result.codeGenerated, true);
   if (result.json.ok) {
     assert.equal(result.json.invitation.created, false);
     assert.equal(result.json.invitation.contactCode, pair.code);
   }
+}
+{
+  const result = await run({
+    inspect: async () =>
+      emptyInspect({ existing_for_client_request: true }),
+    callWriter: async () => {
+      throw new Error("error.match_contact_invitation_idempotency_conflict");
+    },
+  });
+  assert.equal(result.status, 409);
+  assert.equal(result.writerCalled, true);
+  assert.equal(result.routeScored, false);
+  if (!result.json.ok) {
+    assert.equal(
+      result.json.errorKey,
+      CONTACT_INVITATION_ERROR.idempotencyConflict,
+    );
+  }
+  assert.equal(JSON.stringify(result.json).includes("contactCode"), false);
+  assert.equal(JSON.stringify(result.json).includes(pair.code), false);
 }
 {
   const result = await run({
@@ -921,6 +975,8 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
 {
   const created = await run({});
   assert.equal(created.status, 201);
+  assert.equal(created.writerCalled, true);
+  assert.equal(created.routeScored, true);
   assert.equal(created.json.ok, true);
   if (created.json.ok) {
     assert.equal(created.json.invitation.created, true);
@@ -930,9 +986,13 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
     assert.equal("contactCodeHash" in created.json.invitation, false);
   }
   const replay = await run({
+    inspect: async () =>
+      emptyInspect({ existing_for_client_request: true }),
     callWriter: async () => writerRow(false),
   });
   assert.equal(replay.status, 200);
+  assert.equal(replay.writerCalled, true);
+  assert.equal(replay.routeScored, false);
   assert.equal(replay.json.ok, true);
   if (replay.json.ok) {
     assert.equal(replay.json.invitation.created, false);
@@ -975,6 +1035,18 @@ async function run(overrides: Partial<ContactInvitationRouteDeps> & {
   assert.equal(dumped.includes(pair.code), false);
   assert.equal(dumped.includes(pair.codeHash), false);
   assert.equal(dumped.includes(ACTOR), false);
+}
+
+{
+  const createSrc = readFileSync(
+    new URL("./contactInvitationCreate.ts", import.meta.url),
+    "utf8",
+  );
+  assert.equal(createSrc.includes("existing_invitation_id"), false);
+  assert.equal(createSrc.includes("existing_initiator_post_id"), false);
+  assert.equal(createSrc.includes("ContactInvitationWriterRow"), true);
+  assert.ok(createSrc.includes("existing_for_client_request"));
+  assert.ok(createSrc.includes("finishWithWriter"));
 }
 
 console.log("contactInvitationCreate.test.ts: ok");

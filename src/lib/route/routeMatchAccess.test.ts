@@ -112,6 +112,8 @@ assert.equal(
 
 const apiSrc = read("src/app/api/posts/evaluate-route-match/route.ts");
 assert.ok(apiSrc.includes("evaluateRouteMatchAccess"));
+assert.ok(apiSrc.includes("evaluateMatchAdmission"));
+assert.ok(apiSrc.includes("NOT pair admission"));
 assert.ok(apiSrc.includes("toRouteMatchApiPayload"));
 assert.equal(apiSrc.includes("origin_gps"), true); // admin read
 assert.equal(apiSrc.includes("toRouteMatchApiPayload(result)"), true);

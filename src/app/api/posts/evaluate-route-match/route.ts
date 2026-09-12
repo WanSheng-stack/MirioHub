@@ -7,16 +7,68 @@ import {
   evaluateRouteMatchAccess,
   toRouteMatchApiPayload,
 } from "@/lib/route/routeMatchAccess";
+import { evaluateMatchAdmission } from "@/lib/matching/matchAdmissionPolicy";
+import { loadMatchAdmissionThresholds } from "@/lib/matching/matchAdmissionServer";
 
 type Body = {
   demandPostId?: string;
   providerPostId?: string;
 };
 
-const SCORE_SELECT =
-  "id, user_id, post_type, status, origin_address, destination_address, waypoints, origin_gps, destination_gps";
+/**
+ * evaluateRouteMatchAccess is session ownership / public-active access only.
+ * It is NOT pair admission. After access succeeds, this route uses the same
+ * evaluateMatchAdmission contract as the hall and contact invitation.
+ * Denied responses keep error.route_not_compatible and never leak invitation
+ * reasons (date, time, detour, OSRM).
+ */
+const SCORE_SELECT = [
+  "id",
+  "user_id",
+  "post_type",
+  "status",
+  "category",
+  "departure_date",
+  "departure_time_window",
+  "service_time_window",
+  "transport_mode",
+  "escort_seats",
+  "max_companions",
+  "count_small",
+  "count_medium",
+  "count_large",
+  "count_xlarge",
+  "origin_address",
+  "destination_address",
+  "waypoints",
+  "origin_gps",
+  "destination_gps",
+].join(", ");
 
 const DENIED = { ok: false as const, errorKey: "error.route_not_compatible" };
+
+type AdmissionRow = {
+  id: string;
+  user_id: string;
+  post_type: string;
+  status: string;
+  category: string;
+  departure_date?: string | null;
+  departure_time_window?: string | null;
+  service_time_window?: string | null;
+  transport_mode?: string | null;
+  escort_seats?: number | null;
+  max_companions?: number | null;
+  count_small?: number | null;
+  count_medium?: number | null;
+  count_large?: number | null;
+  count_xlarge?: number | null;
+  origin_address?: string | null;
+  destination_address?: string | null;
+  waypoints?: string[] | null;
+  origin_gps?: unknown;
+  destination_gps?: unknown;
+};
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -56,11 +108,27 @@ export async function POST(request: Request) {
     return NextResponse.json(DENIED);
   }
 
+  const demandRow = demand as unknown as AdmissionRow;
+  const providerRow = provider as unknown as AdmissionRow;
   const result = await calculateRouteMatchScore({
-    demand: demand as RouteScorePost,
-    provider: provider as RouteScorePost,
+    demand: demandRow as RouteScorePost,
+    provider: providerRow as RouteScorePost,
   });
-  if (!result.ok) {
+  const thresholds = await loadMatchAdmissionThresholds(admin);
+  const admission = evaluateMatchAdmission({
+    left: demandRow,
+    right: providerRow,
+    route: result.ok
+      ? {
+          ok: true,
+          score: result.score,
+          extraDetourKms: result.extraDetourKms,
+          baselineKms: result.baselineKms,
+        }
+      : { ok: false },
+    thresholds,
+  });
+  if (!admission.eligible || !result.ok) {
     return NextResponse.json(DENIED);
   }
   return NextResponse.json(toRouteMatchApiPayload(result));

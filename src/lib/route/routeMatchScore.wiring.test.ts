@@ -50,6 +50,7 @@ assert.ok(providerMatchSrc.includes("/api/posts/evaluate-route-match"));
 assert.ok(providerMatchSrc.includes("evaluateCapacityOnly"));
 assert.ok(providerMatchSrc.includes("providerPostId"));
 assert.ok(apiSrc.includes("evaluateRouteMatchAccess"));
+assert.ok(apiSrc.includes("evaluateMatchAdmission"));
 assert.ok(insertionSrc.includes("pickupBeforeProviderOrigin"));
 
 assert.ok(apiSrc.includes("calculateRouteMatchScore"));

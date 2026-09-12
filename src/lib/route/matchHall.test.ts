@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { evaluateMatchAdmission } from "@/lib/matching/matchAdmissionPolicy";
 import {
   canOfferMatchAction,
   compareMatchHallRows,
@@ -195,5 +196,48 @@ assert.ok(pageSrc.includes("dynamic = \"force-dynamic\""));
 const loaderSrc2 = read("src/lib/route/buildMatchHall.ts");
 assert.equal(loaderSrc2.includes(".limit("), false);
 assert.equal(loaderSrc2.includes("HALL_LIMIT"), false);
+assert.ok(loaderSrc2.includes("evaluateMatchAdmission"));
+assert.ok(loaderSrc2.includes("evaluatePairCompatibility"));
+assert.ok(loaderSrc2.includes("Admission decides presence"));
+
+assert.equal(canOfferMatchAction("active"), true);
+assert.equal(canOfferMatchAction("matched"), false);
+assert.equal(canOfferMatchAction("completed"), false);
+
+{
+  const left = {
+    id: "33333333-3333-4333-8333-333333333333",
+    user_id: "11111111-1111-4111-8111-111111111111",
+    post_type: "demand",
+    category: "travel",
+    status: "active",
+    departure_date: "2026-09-12",
+    departure_time_window: "14:00-14:15",
+    transport_mode: "car",
+    max_companions: 1,
+    origin_address: "Belgrade",
+    destination_address: "Novi Sad",
+  };
+  const right = {
+    ...left,
+    id: "44444444-4444-4444-8444-444444444444",
+    user_id: "22222222-2222-4222-8222-222222222222",
+    post_type: "provider",
+  };
+  const same = evaluateMatchAdmission({
+    left,
+    right,
+    route: { ok: true, score: 0.9, extraDetourKms: 2, baselineKms: 10 },
+    thresholds: { maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 },
+  });
+  assert.equal(same.eligible, true);
+  const otherDay = evaluateMatchAdmission({
+    left,
+    right: { ...right, departure_date: "2026-09-13" },
+    route: { ok: true, score: 0.99, extraDetourKms: 1, baselineKms: 10 },
+    thresholds: { maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 },
+  });
+  assert.equal(otherDay.eligible, false);
+}
 
 console.log("matchHall.test.ts: ok");

@@ -15,9 +15,13 @@ import {
 import {
   evaluateContactInvitationBaseEligibility,
   evaluateContactInvitationEligibility,
-  invitationPairMatchesRequest,
   type ContactInvitationEligibilityPost,
 } from "@/lib/matching/contactInvitationEligibilityCore";
+import {
+  matchAdmissionDigestHex,
+  type MatchAdmissionRouteScore,
+  type MatchAdmissionRouteThresholds,
+} from "@/lib/matching/matchAdmissionPolicy";
 
 export const CONTACT_INVITATION_BODY_KEYS = [
   "initiatorPostId",
@@ -108,18 +112,34 @@ export type ContactInvitationRouteResult = {
 };
 
 export type ContactInvitationInspectRow = {
-  existing_invitation_id: string | null;
-  existing_initiator_post_id: string | null;
-  existing_demand_post_id: string | null;
-  existing_provider_post_id: string | null;
-  existing_status: string | null;
-  existing_expires_at: string | null;
-  existing_disclosure_mode: string | null;
+  existing_for_client_request: boolean;
   open_count: number;
   created_24h_count: number;
   max_open: number;
   max_created_24h: number;
 };
+
+/**
+ * inspect is a non-atomic cost hint only.
+ * It must never authorize a success response or fabricate a writer row.
+ * create_match_contact_invitation_v95 is the only success authority.
+ */
+
+export function invitationPairMatchesRequest(input: {
+  initiatorPostId: string;
+  counterpartPostId: string;
+  existingInitiatorPostId: string;
+  existingDemandPostId: string;
+  existingProviderPostId: string;
+}): boolean {
+  if (input.existingInitiatorPostId !== input.initiatorPostId) return false;
+  return (
+    (input.initiatorPostId === input.existingDemandPostId &&
+      input.counterpartPostId === input.existingProviderPostId) ||
+    (input.initiatorPostId === input.existingProviderPostId &&
+      input.counterpartPostId === input.existingDemandPostId)
+  );
+}
 
 export type ContactInvitationWriterRow = {
   invitation_id: string;
@@ -295,7 +315,10 @@ export type ContactInvitationRouteDeps = {
   scoreRoute: (
     initiator: ContactInvitationEligibilityPost,
     counterpart: ContactInvitationEligibilityPost,
-  ) => Promise<boolean>;
+  ) => Promise<MatchAdmissionRouteScore>;
+  loadThresholds: (
+    admin: unknown,
+  ) => Promise<MatchAdmissionRouteThresholds | null>;
   callWriter: (
     admin: unknown,
     args: {
@@ -304,6 +327,7 @@ export type ContactInvitationRouteDeps = {
       counterpartPostId: string;
       clientRequestId: string;
       contactCodeHash: string;
+      admissionDigest: string;
     },
   ) => Promise<ContactInvitationWriterRow>;
   nowIso?: () => string;
@@ -412,72 +436,14 @@ export async function runContactInvitationCreate(
     );
   }
 
-  if (inspected.existing_invitation_id) {
-    const samePair = invitationPairMatchesRequest({
-      initiatorPostId: parsed.value.initiatorPostId,
-      counterpartPostId: parsed.value.counterpartPostId,
-      existingInitiatorPostId: inspected.existing_initiator_post_id,
-      existingDemandPostId: inspected.existing_demand_post_id,
-      existingProviderPostId: inspected.existing_provider_post_id,
-    });
-    if (!samePair) {
-      return fail(
-        409,
-        CONTACT_INVITATION_ERROR.idempotencyConflict,
-        [],
-        { adminCreated: true },
-      );
-    }
-    const recovered = recoverCode(deps, userId, parsed.value.clientRequestId);
-    if (!recovered.ok) {
-      return fail(
-        500,
-        recovered.reason === "pepper"
-          ? CONTACT_INVITATION_ERROR.serverConfiguration
-          : CONTACT_INVITATION_ERROR.submitFailed,
-        [
-          recovered.reason === "pepper"
-            ? CONTACT_INVITATION_SAFE_LOGS.serverConfigurationMissing
-            : CONTACT_INVITATION_SAFE_LOGS.codeGenerationFailed,
-        ],
-        { adminCreated: true },
-      );
-    }
-    const pair = recovered.pair;
-    const interpreted = interpretContactInvitationWriterRow(
-      {
-        invitation_id: inspected.existing_invitation_id,
-        invitation_status: inspected.existing_status ?? "",
-        disclosure_mode: inspected.existing_disclosure_mode ?? "",
-        expires_at: inspected.existing_expires_at ?? "",
-        effective_client_request_id: parsed.value.clientRequestId,
-        created: false,
-      },
-      parsed.value.clientRequestId,
-    );
-    if (!interpreted.ok) {
-      return fail(500, CONTACT_INVITATION_ERROR.submitFailed, [
-        CONTACT_INVITATION_SAFE_LOGS.writerResponseInvalid,
-      ], { adminCreated: true, codeGenerated: true });
-    }
-    return {
-      status: 200,
-      json: {
-        ok: true,
-        invitation: {
-          id: interpreted.row.invitation_id,
-          status: interpreted.row.invitation_status,
-          contactCode: pair.code,
-          expiresAt: interpreted.row.expires_at,
-          created: false,
-        },
-      },
-      logs: [],
-      adminCreated: true,
-      writerCalled: false,
+  if (inspected.existing_for_client_request) {
+    return finishWithWriter(deps, {
+      admin,
+      userId,
+      parsed: parsed.value,
       routeScored: false,
-      codeGenerated: true,
-    };
+      admissionDigest: "",
+    });
   }
 
   let loaded: {
@@ -550,9 +516,21 @@ export async function runContactInvitationCreate(
     return fail(404, CONTACT_INVITATION_ERROR.postNotFound, [], { adminCreated: true });
   }
 
-  let routeOk = false;
+  let thresholds: MatchAdmissionRouteThresholds | null;
   try {
-    routeOk = await deps.scoreRoute(loaded.initiator, loaded.counterpart);
+    thresholds = await deps.loadThresholds(admin);
+  } catch {
+    return fail(
+      409,
+      CONTACT_INVITATION_ERROR.notEligible,
+      [CONTACT_INVITATION_SAFE_LOGS.eligibilityFailed],
+      { adminCreated: true },
+    );
+  }
+
+  let route: MatchAdmissionRouteScore;
+  try {
+    route = await deps.scoreRoute(loaded.initiator, loaded.counterpart);
   } catch {
     return fail(
       409,
@@ -565,7 +543,8 @@ export async function runContactInvitationCreate(
     actorUserId: userId,
     initiator: loaded.initiator,
     counterpart: loaded.counterpart,
-    routeOk,
+    route,
+    thresholds,
   });
   if (!eligible.ok) {
     return fail(
@@ -576,7 +555,26 @@ export async function runContactInvitationCreate(
     );
   }
 
-  const recovered = recoverCode(deps, userId, parsed.value.clientRequestId);
+  return finishWithWriter(deps, {
+    admin,
+    userId,
+    parsed: parsed.value,
+    routeScored: true,
+    admissionDigest: matchAdmissionDigestHex(loaded.initiator, loaded.counterpart),
+  });
+}
+
+async function finishWithWriter(
+  deps: ContactInvitationRouteDeps,
+  input: {
+    admin: unknown;
+    userId: string;
+    parsed: ContactInvitationCreateInput;
+    routeScored: boolean;
+    admissionDigest: string;
+  },
+): Promise<ContactInvitationRouteResult> {
+  const recovered = recoverCode(deps, input.userId, input.parsed.clientRequestId);
   if (!recovered.ok) {
     return fail(
       500,
@@ -588,19 +586,19 @@ export async function runContactInvitationCreate(
           ? CONTACT_INVITATION_SAFE_LOGS.serverConfigurationMissing
           : CONTACT_INVITATION_SAFE_LOGS.codeGenerationFailed,
       ],
-      { adminCreated: true, routeScored: true },
+      { adminCreated: true, routeScored: input.routeScored },
     );
   }
-  const pair = recovered.pair;
 
   let writerRow: ContactInvitationWriterRow;
   try {
-    writerRow = await deps.callWriter(admin, {
-      actorUserId: userId,
-      initiatorPostId: parsed.value.initiatorPostId,
-      counterpartPostId: parsed.value.counterpartPostId,
-      clientRequestId: parsed.value.clientRequestId,
-      contactCodeHash: pair.codeHash,
+    writerRow = await deps.callWriter(input.admin, {
+      actorUserId: input.userId,
+      initiatorPostId: input.parsed.initiatorPostId,
+      counterpartPostId: input.parsed.counterpartPostId,
+      clientRequestId: input.parsed.clientRequestId,
+      contactCodeHash: recovered.pair.codeHash,
+      admissionDigest: input.admissionDigest,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -616,7 +614,7 @@ export async function runContactInvitationCreate(
       return fail(httpStatusForContactInvitationError(mapped), mapped, logs, {
         adminCreated: true,
         writerCalled: true,
-        routeScored: true,
+        routeScored: input.routeScored,
         codeGenerated: true,
       });
     }
@@ -627,7 +625,7 @@ export async function runContactInvitationCreate(
       {
         adminCreated: true,
         writerCalled: true,
-        routeScored: true,
+        routeScored: input.routeScored,
         codeGenerated: true,
       },
     );
@@ -635,7 +633,7 @@ export async function runContactInvitationCreate(
 
   const interpreted = interpretContactInvitationWriterRow(
     writerRow,
-    parsed.value.clientRequestId,
+    input.parsed.clientRequestId,
   );
   if (!interpreted.ok) {
     return fail(
@@ -647,7 +645,7 @@ export async function runContactInvitationCreate(
       {
         adminCreated: true,
         writerCalled: true,
-        routeScored: true,
+        routeScored: input.routeScored,
         codeGenerated: true,
       },
     );
@@ -660,7 +658,7 @@ export async function runContactInvitationCreate(
       invitation: {
         id: interpreted.row.invitation_id,
         status: interpreted.row.invitation_status,
-        contactCode: pair.code,
+        contactCode: recovered.pair.code,
         expiresAt: interpreted.row.expires_at,
         created: interpreted.row.created,
       },
@@ -668,7 +666,7 @@ export async function runContactInvitationCreate(
     logs: [],
     adminCreated: true,
     writerCalled: true,
-    routeScored: true,
+    routeScored: input.routeScored,
     codeGenerated: true,
   };
 }
@@ -691,6 +689,13 @@ export type SimulatedPost = {
   post_type: "demand" | "provider" | string;
   category: string;
   status: string;
+  departure_date?: string | null;
+  departure_time_window?: string | null;
+  service_time_window?: string | null;
+  transport_mode?: string | null;
+  origin_address?: string | null;
+  destination_address?: string | null;
+  waypoints?: string[] | null;
 };
 
 export type SimulatedInvitation = {
@@ -741,6 +746,7 @@ export function evaluateContactInvitationWriter(
     counterpartPostId: string;
     clientRequestId: string;
     contactCodeHash: string;
+    admissionDigest?: string;
   },
 ): SimulatedWriterResult {
   const next: SimulatedWriterState = {
@@ -841,6 +847,16 @@ export function evaluateContactInvitationWriter(
     return {
       ok: false,
       errorKey: CONTACT_INVITATION_ERROR.categoryMismatch,
+      state: next,
+    };
+  }
+  if (
+    input.admissionDigest != null &&
+    input.admissionDigest !== matchAdmissionDigestHex(initiator, counterpart)
+  ) {
+    return {
+      ok: false,
+      errorKey: CONTACT_INVITATION_ERROR.notEligible,
       state: next,
     };
   }

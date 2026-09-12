@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1A — official eligibility helper runtime tests.
+ * PHASE 6.7C.1A.1 — invitation wrapper over canonical admission.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/contactInvitationEligibility.test.ts
  */
 
@@ -37,6 +37,8 @@ const ACTOR = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
 const DEMAND = "33333333-3333-4333-8333-333333333333";
 const PROVIDER = "44444444-4444-4444-8444-444444444444";
+const ROUTE = { ok: true as const, score: 0.9, extraDetourKms: 2, baselineKms: 12 };
+const THRESHOLDS = { maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 };
 
 const initiator = post({ id: DEMAND, user_id: ACTOR, post_type: "demand" });
 const counterpart = post({ id: PROVIDER, user_id: OTHER, post_type: "provider" });
@@ -46,7 +48,8 @@ assert.equal(
     actorUserId: ACTOR,
     initiator,
     counterpart,
-    routeOk: true,
+    route: ROUTE,
+    thresholds: THRESHOLDS,
   }).ok,
   true,
 );
@@ -55,7 +58,8 @@ assert.equal(
     actorUserId: ACTOR,
     initiator,
     counterpart,
-    routeOk: false,
+    route: { ok: false },
+    thresholds: THRESHOLDS,
   }).ok,
   false,
 );
@@ -63,6 +67,13 @@ assert.equal(
   pairHasOfficialSchedule(initiator, {
     ...counterpart,
     departure_time_window: "08:00-20:00",
+  }),
+  false,
+);
+assert.equal(
+  pairHasOfficialSchedule(initiator, {
+    ...counterpart,
+    departure_date: "2026-09-13",
   }),
   false,
 );
@@ -84,7 +95,8 @@ assert.equal(
     actorUserId: ACTOR,
     initiator: { ...initiator, category: "travel" },
     counterpart: { ...counterpart, category: "deliver", transport_mode: "van" },
-    routeOk: true,
+    route: ROUTE,
+    thresholds: THRESHOLDS,
   });
   assert.equal(result.ok, false);
   if (!result.ok) {

@@ -6,6 +6,12 @@ import {
   PUBLIC_AUTHOR_NAME_SELECT,
   interpretPublicAuthorNameRows,
 } from "@/lib/posts/publicProfileCards";
+import {
+  evaluateMatchAdmission,
+  evaluatePairCompatibility,
+  type MatchAdmissionPost,
+} from "@/lib/matching/matchAdmissionPolicy";
+import { loadMatchAdmissionThresholds } from "@/lib/matching/matchAdmissionServer";
 import { calculateRouteMatchScore } from "@/lib/route/calculateRouteMatchScore";
 import type { RouteScorePost } from "@/lib/route/calculateRouteMatchScore";
 import {
@@ -21,7 +27,11 @@ import type { Post, PostType } from "@/lib/types";
 
 const SCORE_SELECT = `${PUBLIC_SAFE_POST_SELECT}, origin_gps, destination_gps`;
 
-type ScoreRow = Post & { origin_gps?: unknown; destination_gps?: unknown };
+type ScoreRow = Post & {
+  origin_gps?: unknown;
+  destination_gps?: unknown;
+  service_time_window?: string | null;
+};
 
 function toDto(
   row: ScoreRow,
@@ -120,6 +130,8 @@ export async function buildMatchHall(input: {
     }
   }
 
+  const thresholds = await loadMatchAdmissionThresholds(admin);
+  const sourceAdmission = toAdmissionPost(input.source);
   const geocodeCache = new Map<string, { lat: number; lon: number } | null>();
   const sourceScore: RouteScorePost = {
     post_type: input.source.post_type,
@@ -133,6 +145,11 @@ export async function buildMatchHall(input: {
   const scored: MatchHallCardDto[] = [];
   for (const candidate of candidates) {
     if (!shouldComputeRealRouteScore(candidate.status)) continue;
+    const candidateAdmission = toAdmissionPost(candidate);
+    // Admission decides presence. Score only ranks already-eligible rows.
+    if (!evaluatePairCompatibility(sourceAdmission, candidateAdmission).ok) {
+      continue;
+    }
     const result = await calculateRouteMatchScore({
       source: sourceScore,
       candidate: {
@@ -145,12 +162,25 @@ export async function buildMatchHall(input: {
       },
       geocodeCache,
     });
-    if (!result.ok) continue;
+    const admission = evaluateMatchAdmission({
+      left: sourceAdmission,
+      right: candidateAdmission,
+      route: result.ok
+        ? {
+            ok: true,
+            score: result.score,
+            extraDetourKms: result.extraDetourKms,
+            baselineKms: result.baselineKms,
+          }
+        : { ok: false },
+      thresholds,
+    });
+    if (!admission.eligible || !result.ok) continue;
     scored.push(
       toDto(
         candidate,
         {
-          score: result.score,
+          score: admission.routeScore,
           extraDetourKm: result.extraDetourKms,
           providerBaselineKm: result.baselineKms,
           routeWithDemandKm: result.bestRouteKms,
@@ -167,4 +197,27 @@ export async function buildMatchHall(input: {
   }
 
   return sortMatchHallRows(scored, (input.source.departure_date as string | null) ?? null);
+}
+
+function toAdmissionPost(row: ScoreRow): MatchAdmissionPost {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    post_type: row.post_type,
+    category: row.category,
+    status: row.status,
+    departure_date: (row.departure_date as string | null) ?? null,
+    departure_time_window: row.departure_time_window ?? null,
+    service_time_window: row.service_time_window ?? null,
+    transport_mode: row.transport_mode ?? null,
+    escort_seats: row.escort_seats ?? null,
+    max_companions: row.max_companions ?? null,
+    count_small: row.count_small ?? null,
+    count_medium: row.count_medium ?? null,
+    count_large: row.count_large ?? null,
+    count_xlarge: row.count_xlarge ?? null,
+    origin_address: row.origin_address,
+    destination_address: row.destination_address,
+    waypoints: row.waypoints ?? null,
+  };
 }

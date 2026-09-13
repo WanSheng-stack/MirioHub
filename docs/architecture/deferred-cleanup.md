@@ -268,7 +268,7 @@ OWNER against PostGIS.
 
 ## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1B.2 keeps v95 unexecuted and fail-closed.
+- **Current state:** PHASE 6.7C.1B.2A keeps v95 unexecuted and fail-closed.
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading
@@ -277,9 +277,12 @@ OWNER against PostGIS.
   now covers columns/defaults/identity, constraint deferrability,
   indexes, RLS policies, table ACL, non-internal triggers, owned
   sequences, the empty v93/v94 function set, and pgcrypto/PostGIS
-  prerequisites. No live PostgreSQL/MVCC run was performed. v95 still
-  cannot apply until that inventory CSV is imported. Creation stays
-  false. MatchRequestSheet stays unmounted.
+  prerequisites. PUBLIC table ACL is direct-only via
+  `aclexplode`/`grantee = 0`; named roles use real OIDs or
+  `role_missing`. Policy `polroles` OID 0 is `PUBLIC`; unknown OIDs
+  are `missing_oid:<oid>`. No live PostgreSQL/MVCC run was performed.
+  v95 still cannot apply until that inventory CSV is imported.
+  Creation stays false. MatchRequestSheet stays unmounted.
 - **Still unresolved / later phases:** live catalog CSV import, v95 apply,
   request list, resend, accept/reject, contact DTO, MatchRequestSheet
   mount, country pricing, trusted location resolver, and contract

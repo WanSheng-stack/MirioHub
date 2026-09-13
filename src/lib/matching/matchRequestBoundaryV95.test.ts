@@ -1,6 +1,7 @@
 /**
- * PHASE 6.7C.1B.1 — v95 SQL / verify / freeze.
- * Static catalog checks. Not a live RPC apply.
+ * PHASE 6.7C.1B.2A — v95 SQL / verify / freeze / PUBLIC ACL inventory.
+ * Static catalog checks and pure ACL/policy-role helpers.
+ * Inventory SQL has not been executed against PostgreSQL or Supabase.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
 
@@ -21,7 +22,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "fce1106831bf79df750860328e0688a699a425ca";
+const PHASE_BASELINE = "c75a857f81b777f7849c6a4dc8554cbbe0207e09";
 const V95_REL =
   "supabase/migrations/20260911000003_create_contact_invitation_boundary_v95.sql";
 const V95_VERIFY_REL =
@@ -58,6 +59,50 @@ function gitDiff(path: string): string {
     cwd: repoRoot,
     encoding: "utf8",
   });
+}
+
+type DirectAclAce = {
+  grantee: number;
+  privilege_type: string;
+};
+
+/** Mirrors inventory PUBLIC ACL: aclexplode + grantee = 0 only. */
+function publicDirectAclGranted(
+  relacl: DirectAclAce[] | null,
+  aclDefaultPublic: DirectAclAce[],
+  privilege: string,
+): boolean {
+  const entries = relacl ?? aclDefaultPublic;
+  return entries.some(
+    (ace) => ace.grantee === 0 && ace.privilege_type === privilege,
+  );
+}
+
+/** Named roles: missing OID is role_missing, never false. */
+function namedRolePrivilegeStatus(
+  roleOid: number | null,
+  hasPrivilege: boolean,
+): "true" | "false" | "role_missing" {
+  if (roleOid == null) return "role_missing";
+  return hasPrivilege ? "true" : "false";
+}
+
+function policyRoleLabel(
+  roleOid: number,
+  rolname: string | null | undefined,
+): string {
+  if (roleOid === 0) return "PUBLIC";
+  if (rolname != null && rolname !== "") return rolname;
+  return `missing_oid:${roleOid}`;
+}
+
+function policyRolesFingerprint(
+  roles: { oid: number; rolname: string | null | undefined }[],
+): string {
+  return roles
+    .map((role) => policyRoleLabel(role.oid, role.rolname))
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+    .join(",");
 }
 
 assert.deepEqual(transactionControls(migration), ["BEGIN;", "COMMIT;"]);
@@ -149,6 +194,21 @@ const inventoryStatements = sqlBody(inventorySql)
   .map((part) => part.trim())
   .filter((part) => part.length > 0);
 assert.equal(inventoryStatements.length, 1);
+assert.equal(/has_table_privilege\s*\(\s*0\b/.test(inventorySql), false);
+assert.equal(/has_table_privilege\s*\(\s*'PUBLIC'/i.test(inventorySql), false);
+assert.equal(/has_table_privilege\s*\(\s*"PUBLIC"/i.test(inventorySql), false);
+assert.ok(inventorySql.includes("aclexplode("));
+assert.ok(inventorySql.includes("a.grantee = 0"));
+assert.ok(inventorySql.includes('acldefault(\'r\'::"char", cls.relowner)'));
+assert.ok(inventorySql.includes("c.relowner"));
+assert.ok(inventorySql.includes("c.relacl"));
+assert.ok(inventorySql.includes("WHEN role_oid = 0 THEN 'PUBLIC'"));
+assert.ok(inventorySql.includes("'missing_oid:' || role_oid::text"));
+assert.ok(
+  inventorySql.includes(
+    "string_agg(labeled.role_label, ',' ORDER BY labeled.role_label COLLATE \"C\")",
+  ),
+);
 assert.ok(inventorySql.includes("pg_get_constraintdef(c.oid, false)"));
 assert.ok(inventorySql.includes("pg_get_expr(ad.adbin, ad.adrelid)"));
 assert.ok(inventorySql.includes("attidentity"));
@@ -169,6 +229,11 @@ assert.ok(inventorySql.includes("expected function set empty"));
 assert.ok(inventorySql.includes("pgcrypto"));
 assert.ok(inventorySql.includes("postgis"));
 assert.ok(inventorySql.includes("object_identity"));
+assert.ok(inventorySql.includes("'column'"));
+assert.ok(inventorySql.includes("'constraint'"));
+assert.ok(inventorySql.includes("'independent_index'"));
+assert.ok(inventorySql.includes("'trigger'"));
+assert.ok(inventorySql.includes("'function_boundary'"));
 assert.equal(/prosrc/i.test(inventorySql), false);
 assert.equal(/posts\.origin_address|profiles\.phone/i.test(inventorySql), false);
 assert.ok(inventorySql.includes("fail-closed"));
@@ -177,6 +242,77 @@ assert.ok(existsSync(join(repoRoot, INVENTORY_REL)));
 assert.ok(verifySql.includes("snapshot single posts read"));
 assert.ok(verifySql.includes("hash helper does not read posts"));
 assert.ok(verifySql.includes("writer reuses facts helper after lock"));
+
+assert.equal(
+  publicDirectAclGranted(
+    [{ grantee: 0, privilege_type: "SELECT" }],
+    [],
+    "SELECT",
+  ),
+  true,
+);
+assert.equal(
+  publicDirectAclGranted(
+    [{ grantee: 0, privilege_type: "INSERT" }],
+    [],
+    "SELECT",
+  ),
+  false,
+);
+assert.equal(
+  publicDirectAclGranted(
+    [{ grantee: 10, privilege_type: "SELECT" }],
+    [],
+    "SELECT",
+  ),
+  false,
+);
+assert.equal(
+  publicDirectAclGranted(
+    [{ grantee: 16384, privilege_type: "SELECT" }],
+    [],
+    "SELECT",
+  ),
+  false,
+);
+assert.equal(
+  publicDirectAclGranted(null, [{ grantee: 0, privilege_type: "SELECT" }], "SELECT"),
+  true,
+);
+assert.equal(publicDirectAclGranted(null, [], "SELECT"), false);
+assert.equal(namedRolePrivilegeStatus(16384, true), "true");
+assert.equal(namedRolePrivilegeStatus(16384, false), "false");
+assert.equal(namedRolePrivilegeStatus(null, true), "role_missing");
+assert.equal(namedRolePrivilegeStatus(null, false), "role_missing");
+assert.notEqual(namedRolePrivilegeStatus(null, false), "false");
+assert.equal(policyRoleLabel(0, null), "PUBLIC");
+assert.equal(policyRoleLabel(0, "authenticated"), "PUBLIC");
+assert.equal(policyRoleLabel(2200, "anon"), "anon");
+assert.equal(policyRoleLabel(999001, null), "missing_oid:999001");
+assert.equal(policyRoleLabel(999001, ""), "missing_oid:999001");
+assert.equal(
+  policyRolesFingerprint([
+    { oid: 2200, rolname: "anon" },
+    { oid: 0, rolname: null },
+    { oid: 16384, rolname: "authenticated" },
+  ]),
+  "PUBLIC,anon,authenticated",
+);
+assert.equal(
+  policyRolesFingerprint([
+    { oid: 16384, rolname: "authenticated" },
+    { oid: 2200, rolname: "anon" },
+    { oid: 0, rolname: null },
+  ]),
+  policyRolesFingerprint([
+    { oid: 0, rolname: null },
+    { oid: 16384, rolname: "authenticated" },
+    { oid: 2200, rolname: "anon" },
+  ]),
+);
+assert.notEqual(policyRolesFingerprint([{ oid: 4242, rolname: null }]), "");
+assert.equal(policyRolesFingerprint([{ oid: 4242, rolname: null }]), "missing_oid:4242");
+assert.equal(policyRolesFingerprint([{ oid: 4242, rolname: undefined }]), "missing_oid:4242");
 
 assert.ok(route.includes("create_match_request_v95"));
 assert.ok(route.includes("read_match_request_candidate_snapshot_v95"));
@@ -202,6 +338,7 @@ assert.equal(freezeLegacyDirectMatchIntercept().status, 409);
 for (const path of FROZEN_PATHS) {
   assert.equal(gitDiff(path), "", path);
 }
+assert.equal(gitDiff(V95_REL), "", V95_REL);
 
 assert.equal(
   readdirSync(join(repoRoot, "supabase/migrations")).some(
@@ -243,7 +380,9 @@ assert.equal(
   existsSync(join(repoRoot, "src/lib/matching/contactInvitationCreate.ts")),
   false,
 );
-assert.ok(ledger.includes("6.7C.1B"));
+assert.ok(ledger.includes("6.7C.1B.2A"));
+assert.ok(ledger.includes("aclexplode"));
+assert.ok(ledger.includes("missing_oid:<oid>"));
 
 console.log("matchRequestBoundaryV95.test.ts: ok");
 console.log("v95 SQL helper checks passed; migration is not applied remotely.");

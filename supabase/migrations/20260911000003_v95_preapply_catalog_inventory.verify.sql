@@ -1,5 +1,7 @@
--- PHASE 6.7C.1B.2 — read-only pre-apply catalog inventory for v95
+-- PHASE 6.7C.1B.2A — read-only pre-apply catalog inventory for v95
 -- MANUAL. Not a migration. Do not apply v95 from this file.
+-- PUBLIC table ACL is direct-only via aclexplode(grantee = 0).
+-- Never call has_table_privilege with OID 0 or the name PUBLIC.
 -- One statement. One result set.
 -- Does not read business row contents. Does not output phones, addresses,
 -- GPS values, post bodies, hashes, codes, or user data.
@@ -33,6 +35,7 @@ cls AS (
     c.relkind,
     c.relrowsecurity,
     c.relforcerowsecurity,
+    c.relowner,
     c.relacl
   FROM target t
   JOIN pg_catalog.pg_class c
@@ -74,7 +77,7 @@ privs AS (
 grantees AS (
   SELECT * FROM (
     VALUES
-      (1, 'PUBLIC', 0::oid),
+      (1, 'PUBLIC', NULL::oid),
       (2, 'anon', (SELECT anon_oid FROM roles)),
       (3, 'authenticated', (SELECT authenticated_oid FROM roles)),
       (4, 'service_role', (SELECT service_role_oid FROM roles))
@@ -234,9 +237,17 @@ inventory AS (
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     CASE WHEN p.polpermissive THEN 'permissive' ELSE 'restrictive' END,
     (
-      SELECT coalesce(string_agg(r.rolname, ',' ORDER BY r.rolname), '')
-      FROM unnest(p.polroles) AS role_oid
-      LEFT JOIN pg_catalog.pg_roles r ON r.oid = role_oid
+      SELECT string_agg(labeled.role_label, ',' ORDER BY labeled.role_label COLLATE "C")
+      FROM (
+        SELECT
+          CASE
+            WHEN role_oid = 0 THEN 'PUBLIC'
+            WHEN r.rolname IS NOT NULL THEN r.rolname
+            ELSE 'missing_oid:' || role_oid::text
+          END AS role_label
+        FROM unnest(p.polroles) AS role_oid
+        LEFT JOIN pg_catalog.pg_roles r ON r.oid = role_oid
+      ) labeled
     ),
     p.polcmd::text,
     pg_get_expr(p.polqual, p.polrelid),
@@ -261,22 +272,38 @@ inventory AS (
     NULL, NULL, NULL, NULL, NULL,
     g.grantee_name, priv.privilege,
     CASE
-      WHEN g.grantee_name <> 'PUBLIC' AND g.grantee_oid IS NULL THEN 'role_missing'
-      WHEN has_table_privilege(
-        CASE WHEN g.grantee_name = 'PUBLIC' THEN 0 ELSE g.grantee_oid END,
-        cls.relid,
-        priv.privilege
-      ) THEN 'true'
+      WHEN g.grantee_name = 'PUBLIC' THEN
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM aclexplode(
+              COALESCE(cls.relacl, acldefault('r'::"char", cls.relowner))
+            ) a
+            WHERE a.grantee = 0
+              AND a.privilege_type = priv.privilege
+          ) THEN 'true'
+          ELSE 'false'
+        END
+      WHEN g.grantee_oid IS NULL THEN 'role_missing'
+      WHEN has_table_privilege(g.grantee_oid, cls.relid, priv.privilege) THEN 'true'
       ELSE 'false'
     END,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     CASE
-      WHEN g.grantee_name <> 'PUBLIC' AND g.grantee_oid IS NULL THEN 'role_missing'
-      WHEN has_table_privilege(
-        CASE WHEN g.grantee_name = 'PUBLIC' THEN 0 ELSE g.grantee_oid END,
-        cls.relid,
-        priv.privilege
-      ) THEN 'true'
+      WHEN g.grantee_name = 'PUBLIC' THEN
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM aclexplode(
+              COALESCE(cls.relacl, acldefault('r'::"char", cls.relowner))
+            ) a
+            WHERE a.grantee = 0
+              AND a.privilege_type = priv.privilege
+          ) THEN 'direct_acl=true'
+          ELSE 'direct_acl=false'
+        END
+      WHEN g.grantee_oid IS NULL THEN 'role_missing'
+      WHEN has_table_privilege(g.grantee_oid, cls.relid, priv.privilege) THEN 'true'
       ELSE 'false'
     END
   FROM cls

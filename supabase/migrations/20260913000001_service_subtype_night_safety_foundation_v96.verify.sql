@@ -332,7 +332,7 @@ all_checks AS (
     END,
     CASE
       WHEN (SELECT oid FROM pol_cls) IS NULL THEN NULL
-      ELSE (SELECT relkind FROM pol_cls)
+      ELSE (SELECT relkind::text FROM pol_cls)
     END,
     'r'
 

@@ -281,6 +281,25 @@ assert.ok(verifySql.includes("night_service_policies_country_default_version_uid
 assert.ok(verifySql.includes("night_service_policies_region_version_uidx"));
 assert.ok(verifySql.includes("aclexplode"));
 assert.ok(verifySql.includes("grantee = 0"));
+function uncastRelkindObserved(sql: string): boolean {
+  return /ELSE\s+\(\s*SELECT\s+relkind\s+FROM\s+pol_cls\s*\)/.test(sql);
+}
+
+assert.equal(
+  uncastRelkindObserved("ELSE (SELECT relkind FROM pol_cls)"),
+  true,
+  "uncast relkind output is dangerous",
+);
+assert.equal(uncastRelkindObserved(verifySql), false);
+assert.ok(verifySql.includes("relkind::text"));
+assert.equal(verifySql.includes("ELSE (SELECT relkind FROM pol_cls)"), false);
+assert.ok(verifySql.includes("a.attidentity::text"));
+assert.ok(verifySql.includes("a.attgenerated::text"));
+assert.equal(/\bcontype::text\b/.test(verifySql), false);
+assert.equal(/\bdeptype::text\b/.test(verifySql), false);
+assert.equal(/\btgenabled\b/.test(verifySql), false);
+assert.equal(/\bpolcmd\b/.test(verifySql), false);
+
 assert.ok(verifySql.includes("NULL::oid"));
 assert.ok(verifySql.includes("'PUBLIC'::text"));
 assert.ok(verifySql.includes("anon_oid, 'anon'::text"));

@@ -291,7 +291,8 @@ OWNER against PostGIS.
   table errors at parse/plan time and fail-closes; a present table with
   drifted inner objects returns FAIL/NULL. Neither path can overall PASS.
   v96 verify VALUES aliases must not use reserved identifiers such as
-  `notnull` (PostgreSQL 42601).
+  `notnull` (PostgreSQL 42601). Catalog `"char"` values such as
+  `relkind` must be `::text` before they enter the verify UNION.
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading

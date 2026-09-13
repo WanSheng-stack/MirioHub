@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.3 — live post-v94 catalog fingerprint.
+ * PHASE 6.7C.1B.3A — collision-free catalog fingerprint encoding v2.
  * Recomputes digests from frozen typed rows. Does not copy hashes
  * out of the migration and compare them to themselves.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/v95PostV94Catalog.test.ts
@@ -24,23 +24,29 @@ import {
   cloneInventoryRows,
   decodeInventoryRows,
   digestRows,
+  ENCODING_VERSION,
   encodeCanonicalField,
   encodeCanonicalRow,
+  encodeHexTextFields,
+  encodeLegacyRawTextFields,
   type InventoryRow,
   parseCsvRecords,
   sortInventoryRows,
+  sqlCanonicalLineExpr,
+  utf8Hex,
   validateInventoryRows,
 } from "@/lib/matching/v95PostV94Catalog";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "afb9960b7a94ac53e214f379ce5564f385f0220b";
+const PHASE_BASELINE = "24c46f693ae5dca3bcc54a9ff4430aa736e26115";
 
 const fixture = JSON.parse(
   read("src/lib/matching/v95PostV94Catalog.fixture.json"),
 ) as {
   source: string;
+  encoding_version: number;
   row_count: number;
   regions: Record<string, { count: number; digest: string }>;
   overall: { count: number; digest: string };
@@ -138,14 +144,80 @@ assert.equal(decodedMini[0]!.relrowsecurity, true);
 assert.equal(decodedMini[0]!.relforcerowsecurity, false);
 assert.equal(decodedMini[0]!.object_definition, "relkind=r");
 assert.equal(encodeCanonicalField("attnum", null), "n");
-assert.equal(encodeCanonicalField("acl_status", "false"), "t:false");
+assert.equal(encodeCanonicalField("acl_status", "false"), `t:${utf8Hex("false")}`);
 assert.equal(encodeCanonicalField("relforcerowsecurity", false), "b:false");
 assert.notEqual(
   encodeCanonicalField("acl_status", "false"),
   encodeCanonicalField("relforcerowsecurity", false),
 );
 assert.notEqual(encodeCanonicalField("object_name", "null"), "n");
-assert.equal(encodeCanonicalField("object_name", "null"), "t:null");
+assert.equal(encodeCanonicalField("object_name", "null"), `t:${utf8Hex("null")}`);
+assert.equal(encodeCanonicalField("object_name", ""), "t:");
+assert.equal(utf8Hex("hello"), "68656c6c6f");
+assert.equal(utf8Hex(""), "");
+assert.equal(utf8Hex("null"), "6e756c6c");
+assert.match(utf8Hex("Hello"), /^[0-9a-f]*$/);
+assert.equal(utf8Hex("Hello"), utf8Hex("Hello").toLowerCase());
+assert.equal(utf8Hex("你好"), Buffer.from("你好", "utf8").toString("hex"));
+assert.equal(utf8Hex("Привет"), Buffer.from("Привет", "utf8").toString("hex"));
+assert.equal(utf8Hex("café"), Buffer.from("café", "utf8").toString("hex"));
+
+assert.equal(encodeCanonicalField("object_name", "a\u001fb").includes("\u001f"), false);
+assert.equal(encodeCanonicalField("object_name", "a\nb").includes("\n"), false);
+assert.equal(encodeCanonicalField("object_name", "a\r\nb").includes("\r"), false);
+for (const token of ["n", "t:", "b:true", "i:1"]) {
+  assert.notEqual(encodeCanonicalField("object_name", token), token);
+  assert.equal(encodeCanonicalField("object_name", token), `t:${utf8Hex(token)}`);
+}
+
+const legacyCollisionLeft = encodeLegacyRawTextFields(["hello\u001ft:world"]);
+const legacyCollisionRight = encodeLegacyRawTextFields(["hello", "world"]);
+assert.equal(legacyCollisionLeft, legacyCollisionRight);
+assert.notEqual(
+  encodeHexTextFields(["hello\u001ft:world"]),
+  encodeHexTextFields(["hello", "world"]),
+);
+const legacyRows = ["t:a", "t:b"].join("\n");
+assert.equal(encodeLegacyRawTextFields(["a\nt:b"]), legacyRows);
+assert.notEqual(`t:${utf8Hex("a\nt:b")}`, ["a", "b"].map((v) => `t:${utf8Hex(v)}`).join("\n"));
+
+assert.equal(fixture.encoding_version, ENCODING_VERSION);
+assert.equal(recomputed.encoding_version, ENCODING_VERSION);
+assert.deepEqual(
+  buildCatalogFingerprint(fixture.rows, fixture.source),
+  recomputed,
+);
+
+const baselineFixture = JSON.parse(
+  execFileSync(
+    "git",
+    ["show", `${PHASE_BASELINE}:src/lib/matching/v95PostV94Catalog.fixture.json`],
+    { cwd: repoRoot, encoding: "utf8" },
+  ),
+) as { rows: InventoryRow[] };
+assert.equal(baselineFixture.rows.length, 590);
+assert.deepEqual(fixture.rows, baselineFixture.rows);
+
+const sqlLine = sqlCanonicalLineExpr();
+const sqlFields = sqlLine.split(/\n\s*\|\| chr\(31\) \|\| /);
+assert.equal(sqlFields.length, INVENTORY_COLUMNS.length);
+for (let i = 0; i < INVENTORY_COLUMNS.length; i += 1) {
+  const column = INVENTORY_COLUMNS[i]!;
+  assert.ok(sqlFields[i]!.includes(column), column);
+}
+assert.ok(sqlLine.includes("encode(convert_to("));
+assert.ok(sqlLine.includes("encode(convert_to(btrim(regexp_replace(object_definition"));
+assert.ok(sqlLine.includes("encode(convert_to(btrim(regexp_replace(default_expr"));
+assert.ok(sqlLine.includes("encode(convert_to(btrim(regexp_replace(policy_using"));
+assert.ok(sqlLine.includes("encode(convert_to(btrim(regexp_replace(policy_with_check"));
+assert.equal(/'t:' \|\| [a-z_]+(?:\s|$)/.test(sqlLine), false);
+assert.equal(sqlLine.includes("'t:' || object_definition"), false);
+assert.equal(
+  gitDiff(
+    "supabase/migrations/20260911000003_v95_preapply_catalog_inventory.verify.sql",
+  ),
+  "",
+);
 
 const quotedNullCsv = `${INVENTORY_COLUMNS.join(",")}\n${INVENTORY_COLUMNS.map(
   (column) => {
@@ -475,6 +547,11 @@ assert.ok(guardEnd > guardStart);
 assert.ok(firstDdl > guardEnd);
 
 assert.equal(guard.includes("post-v94 live catalog fixture missing"), false);
+assert.ok(guard.includes("encoding_version"));
+assert.ok(guard.includes("encode(convert_to("));
+assert.ok(guard.includes("encode(convert_to(btrim(regexp_replace(object_definition"));
+assert.equal(/'t:' \|\| object_definition\b/.test(guard), false);
+assert.equal(/'t:' \|\| [a-z_]+ END/.test(guard), false);
 for (const region of [...FINGERPRINT_REGIONS, "overall"]) {
   assert.ok(guard.includes(`"${region}"`), region);
 }
@@ -502,7 +579,11 @@ assert.ok(guard.includes("'missing_oid:' || role_oid::text"));
 assert.ok(guard.includes("d.deptype::text"));
 assert.equal(transactionControls(migration)[0], "BEGIN;");
 assert.ok(verifySql.includes("creation enabled default false"));
-assert.ok(verifySql.includes("catalog fingerprint bound") || verifySql.includes("post-v94 catalog fingerprint"));
+assert.ok(
+  verifySql.includes("encoding-v2") &&
+    verifySql.includes("post-v94 catalog") &&
+    verifySql.includes("UTF-8 lowercase hex"),
+);
 assert.ok(inventorySql.includes("aclexplode("));
 assert.equal(inventorySql.includes("has_table_privilege(0"), false);
 
@@ -524,6 +605,18 @@ for (const privilege of ACL_PRIVILEGES) {
   );
 }
 
+assert.equal(
+  gitDiff("supabase/migrations/20260908000004_match_request_contract_foundation_v90.sql"),
+  "",
+);
+assert.equal(
+  gitDiff("supabase/migrations/20260909000001_stage1_transport_mode_boundary_v91.sql"),
+  "",
+);
+assert.equal(
+  gitDiff("supabase/migrations/20260909000002_security_advisor_immediate_boundary_v92.sql"),
+  "",
+);
 assert.equal(
   gitDiff("supabase/migrations/20260911000001_matching_dual_post_foundation_v93.sql"),
   "",

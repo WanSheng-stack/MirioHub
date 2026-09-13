@@ -1,6 +1,7 @@
 /**
- * Dev-only generator. Reads the live inventory CSV, validates it, and
- * writes the frozen catalog fixture. Does not connect to a database.
+ * Dev-only generator. Recomputes encoding-v2 digests from the committed
+ * typed fixture rows (no CSV required). Optionally accepts a CSV path.
+ * Does not connect to a database.
  *
  * npx tsx --tsconfig tsconfig.json scripts/generate-v95-post-v94-catalog.ts
  */
@@ -9,38 +10,40 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildCatalogFingerprint,
+  ENCODING_VERSION,
   loadValidatedCatalog,
   renderV95CatalogGuardDoBlock,
   type CatalogFixture,
+  type InventoryRow,
 } from "../src/lib/matching/v95PostV94Catalog";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
-const csvPath =
-  process.argv[2] ??
-  "C:\\Users\\Administrator\\Downloads\\Supabase Snippet Untitled query (25).csv";
 const outPath = join(
   repoRoot,
   "src/lib/matching/v95PostV94Catalog.fixture.json",
 );
+const csvPath = process.argv[2];
 
-const csv = readFileSync(csvPath, "utf8");
-const { rows, fingerprint } = loadValidatedCatalog(
-  csv,
-  "Supabase Snippet Untitled query (25).csv",
-);
-const fixture: CatalogFixture = {
-  ...fingerprint,
-  rows,
-};
-const first = JSON.stringify(fixture);
-const second = JSON.stringify({
-  ...loadValidatedCatalog(csv, fingerprint.source).fingerprint,
-  rows,
-});
-if (first !== second) {
+const existing = JSON.parse(readFileSync(outPath, "utf8")) as CatalogFixture;
+const rows: InventoryRow[] = csvPath
+  ? loadValidatedCatalog(readFileSync(csvPath, "utf8"), existing.source).rows
+  : existing.rows;
+
+const first = buildCatalogFingerprint(rows, existing.source);
+const second = buildCatalogFingerprint(rows, existing.source);
+if (JSON.stringify(first) !== JSON.stringify(second)) {
   throw new Error("generator is not deterministic");
 }
+if (first.encoding_version !== ENCODING_VERSION) {
+  throw new Error("encoding version mismatch");
+}
+
+const fixture: CatalogFixture = {
+  ...first,
+  rows,
+};
 writeFileSync(outPath, `${JSON.stringify(fixture, null, 2)}\n`, "utf8");
 
 const migrationPath = join(
@@ -53,7 +56,7 @@ const inventoryPath = join(
 );
 const migration = readFileSync(migrationPath, "utf8");
 const inventorySql = readFileSync(inventoryPath, "utf8");
-const guard = renderV95CatalogGuardDoBlock(inventorySql, fingerprint);
+const guard = renderV95CatalogGuardDoBlock(inventorySql, first);
 const start = migration.search(/\bDO\s+\$\$/i);
 const end = migration.indexOf("END $$;", start);
 if (start < 0 || end < 0) {
@@ -64,6 +67,7 @@ writeFileSync(migrationPath, next, "utf8");
 
 console.log(`wrote ${outPath}`);
 console.log(`updated ${migrationPath}`);
-console.log(`rows=${fingerprint.row_count}`);
-console.log(JSON.stringify(fingerprint.regions, null, 2));
-console.log("overall", fingerprint.overall);
+console.log(`encoding_version=${first.encoding_version}`);
+console.log(`rows=${first.row_count}`);
+console.log(JSON.stringify(first.regions, null, 2));
+console.log("overall", first.overall);

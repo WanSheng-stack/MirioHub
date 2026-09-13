@@ -268,12 +268,13 @@ OWNER against PostGIS.
 
 ## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1B.3 keeps v95 unexecuted. The pre-apply
-  guard now rebuilds the live 38-column inventory and compares regional
-  SHA-256 digests from the exported post-v94 catalog CSV. The old
-  fixture-missing raise is gone, so v95 is structurally executable
-  when the live catalog matches that fingerprint, but it has not been
-  applied.
+- **Current state:** PHASE 6.7C.1B.3A keeps v95 unexecuted. The pre-apply
+  guard rebuilds the live 38-column inventory and compares encoding-v2
+  regional SHA-256 digests. Catalog text is UTF-8 lowercase hex before
+  joining, so field/row separators cannot be impersonated by control
+  characters. The old fixture-missing raise is gone, so v95 is
+  structurally executable when the live catalog matches that
+  fingerprint, but it has not been applied.
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading

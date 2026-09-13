@@ -1,7 +1,7 @@
--- PHASE 6.7C.1B.3 — live post-v94 catalog fingerprint guard
+-- PHASE 6.7C.1B.3A — live post-v94 catalog fingerprint guard
 -- Structurally executable, not applied. No v96. Guard compares live
--- inventory rows to frozen regional SHA-256 digests from the exported
--- inventory CSV. Repeat apply still fail-fast. Do not auto-apply.
+-- inventory rows to encoding-v2 regional SHA-256 digests. Text fields
+-- are UTF-8 lowercase hex before joining. Repeat apply still fail-fast.
 -- One user action: send a match request. The writer atomically creates
 -- the internal contact envelope, request thread, first current revision,
 -- and one-way contact grant. match_contact_invitations is storage only.
@@ -13,22 +13,30 @@ BEGIN;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 0. Fail-fast live catalog guard
--- Rebuilds the same 38-column inventory, canonicalizes whitespace-only
--- on expressions, and compares regional count + SHA-256. Ten matching
--- tables must stay empty. v95 objects must not already exist.
+-- Rebuilds the same 38-column inventory, hex-encodes text after
+-- whitespace-only normalize on expressions, and compares regional
+-- count + SHA-256 (encoding_version 2). Ten matching tables must stay
+-- empty. v95 objects must not already exist.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 DO $$
+-- encoding_version 2. Text fields are UTF-8 lowercase hex
+-- before joining. chr(31) field separators and E'\n' row separators are
+-- safe because hex text cannot emit those bytes; this does not assume
+-- catalog values lack control characters.
 DECLARE
   t text;
   live_n bigint;
   r record;
-  expected jsonb := $v95_fp${"tables":{"count":10,"digest":"011a909e6c37e3c33906e17ba6a1b3a46f109f29869f0e96f8c9b9847e095a7b"},"columns":{"count":125,"digest":"8aee44ca89b115045be93447fab2308625c37018715f802f2204e356a81c5b50"},"constraints":{"count":120,"digest":"33aaca4ede53dbd90ebb67c2f56a43248f7de62a6b955f253b6cb1d2b117534d"},"indexes":{"count":22,"digest":"efb88375ff1f63361886ac00d50fa108f79f82c641e10496a783a0ab3a9b3080"},"policies":{"count":10,"digest":"63f41e1b1dd328f9d3e4a2eb551b3d966ae1ab34e4ce88186c7c961b0b72a1ba"},"acl":{"count":280,"digest":"63e96110171cbbe555ab6ec71acd40d4d920c0cb1e1e7f3459625efa5e40d144"},"triggers":{"count":10,"digest":"536aad59418b9c47c5c17abf17fd2494296b54572c60222355d1b8af441eed57"},"sequences":{"count":10,"digest":"df8c966b7f60d10f60b94bcdbd1aa7247f308011674c5bd48d0eeea49472eea9"},"functions":{"count":1,"digest":"8d055c5609791f8ae27bb1c674660d8a6281873bbe5194ef2c85e94f237c07d9"},"prerequisites":{"count":2,"digest":"3e4a81e7fe65f4a22bd97fdc88afef0ee6d1f61cf83c54c03c62e50f99d0e8a6"},"overall":{"count":590,"digest":"7a130bab8845465936a38828d8c6021d1c0c1c811151e5ab44873672ba385cbc"}}$v95_fp$::jsonb;
+  expected jsonb := $v95_fp${"encoding_version":2,"tables":{"count":10,"digest":"bf37bc0cfc96567e257e626746f8b6a2f491cff00b9cd963b3535339d1247150"},"columns":{"count":125,"digest":"478a41ed720765d9d770e964462848c89a29b43d9168574ebbc0e3d8bd86aa2c"},"constraints":{"count":120,"digest":"cd899194aedbe7a910c8e5f398327efb18b2420f96f83c7c65c4020e2598b0a6"},"indexes":{"count":22,"digest":"becbe9c835ac708b5421b721562485c57c8a78924f719b11b67acc4602a6f6d0"},"policies":{"count":10,"digest":"cdb4b2427bf05483b0128ea90f042a154f7ad5c4142cca91cf755cf49f55e92b"},"acl":{"count":280,"digest":"e52c57a915d5afaf340b80baf79b96be8d4d66b02b821c75b20a97c61f4d7d74"},"triggers":{"count":10,"digest":"cff75d96a3bd9ba9f5a5247925a6a7c67d947e900964b4768726aa68ef93c1a6"},"sequences":{"count":10,"digest":"d9fd938c44309e567b90e059be84766ce853d80b8e5d5e900102049ebac12aaf"},"functions":{"count":1,"digest":"46e863a263d2478e3d8cd76dc2133dafb411052c7734a424d38c73029f9e9fab"},"prerequisites":{"count":2,"digest":"b037c3de7dd10631a36d1065d74e35e98e7549f62541cfd3f896cfe6fee64c7c"},"overall":{"count":590,"digest":"0a1ff6c3bc3a2ff35b96e4adaf385def2795947a8a2d5dab3528dd123b9345f5"}}$v95_fp$::jsonb;
   exp jsonb;
   seen text[] := ARRAY[]::text[];
   want text;
   fn_count int;
 BEGIN
+  IF (expected->>'encoding_version')::int IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'v95_guard: % mismatch', 'encoding';
+  END IF;
   FOREACH t IN ARRAY ARRAY[
     'match_contact_invitations',
     'contact_grants',
@@ -609,44 +617,44 @@ inventory AS (
         object_order,
         object_identity,
         (
-          CASE WHEN scope IS NULL THEN 'n' ELSE 't:' || scope END
-      || chr(31) || CASE WHEN object_kind IS NULL THEN 'n' ELSE 't:' || object_kind END
-      || chr(31) || CASE WHEN schema_name IS NULL THEN 'n' ELSE 't:' || schema_name END
-      || chr(31) || CASE WHEN table_name IS NULL THEN 'n' ELSE 't:' || table_name END
-      || chr(31) || CASE WHEN object_name IS NULL THEN 'n' ELSE 't:' || object_name END
+          CASE WHEN scope IS NULL THEN 'n' ELSE 't:' || encode(convert_to(scope, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN object_kind IS NULL THEN 'n' ELSE 't:' || encode(convert_to(object_kind, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN schema_name IS NULL THEN 'n' ELSE 't:' || encode(convert_to(schema_name, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN table_name IS NULL THEN 'n' ELSE 't:' || encode(convert_to(table_name, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN object_name IS NULL THEN 'n' ELSE 't:' || encode(convert_to(object_name, 'UTF8'), 'hex') END
       || chr(31) || CASE WHEN object_order IS NULL THEN 'n' ELSE 'i:' || object_order::text END
-      || chr(31) || CASE WHEN object_identity IS NULL THEN 'n' ELSE 't:' || object_identity END
-      || chr(31) || CASE WHEN object_type IS NULL THEN 'n' ELSE 't:' || object_type END
+      || chr(31) || CASE WHEN object_identity IS NULL THEN 'n' ELSE 't:' || encode(convert_to(object_identity, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN object_type IS NULL THEN 'n' ELSE 't:' || encode(convert_to(object_type, 'UTF8'), 'hex') END
       || chr(31) || CASE WHEN attnum IS NULL THEN 'n' ELSE 'i:' || attnum::text END
-      || chr(31) || CASE WHEN format_type IS NULL THEN 'n' ELSE 't:' || format_type END
+      || chr(31) || CASE WHEN format_type IS NULL THEN 'n' ELSE 't:' || encode(convert_to(format_type, 'UTF8'), 'hex') END
       || chr(31) || CASE WHEN not_null IS NULL THEN 'n' WHEN not_null THEN 'b:true' ELSE 'b:false' END
-      || chr(31) || CASE WHEN default_expr IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(default_expr, '\s+', ' ', 'g')) END
-      || chr(31) || CASE WHEN attidentity IS NULL THEN 'n' ELSE 't:' || attidentity END
-      || chr(31) || CASE WHEN attgenerated IS NULL THEN 'n' ELSE 't:' || attgenerated END
+      || chr(31) || CASE WHEN default_expr IS NULL THEN 'n' ELSE 't:' || encode(convert_to(btrim(regexp_replace(default_expr, '\s+', ' ', 'g')), 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN attidentity IS NULL THEN 'n' ELSE 't:' || encode(convert_to(attidentity, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN attgenerated IS NULL THEN 'n' ELSE 't:' || encode(convert_to(attgenerated, 'UTF8'), 'hex') END
       || chr(31) || CASE WHEN condeferrable IS NULL THEN 'n' WHEN condeferrable THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN condeferred IS NULL THEN 'n' WHEN condeferred THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN convalidated IS NULL THEN 'n' WHEN convalidated THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN index_unique IS NULL THEN 'n' WHEN index_unique THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN index_valid IS NULL THEN 'n' WHEN index_valid THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN index_ready IS NULL THEN 'n' WHEN index_ready THEN 'b:true' ELSE 'b:false' END
-      || chr(31) || CASE WHEN policy_permissive IS NULL THEN 'n' ELSE 't:' || policy_permissive END
-      || chr(31) || CASE WHEN policy_roles IS NULL THEN 'n' ELSE 't:' || policy_roles END
-      || chr(31) || CASE WHEN policy_cmd IS NULL THEN 'n' ELSE 't:' || policy_cmd END
-      || chr(31) || CASE WHEN policy_using IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(policy_using, '\s+', ' ', 'g')) END
-      || chr(31) || CASE WHEN policy_with_check IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(policy_with_check, '\s+', ' ', 'g')) END
-      || chr(31) || CASE WHEN acl_grantee IS NULL THEN 'n' ELSE 't:' || acl_grantee END
-      || chr(31) || CASE WHEN acl_privilege IS NULL THEN 'n' ELSE 't:' || acl_privilege END
-      || chr(31) || CASE WHEN acl_status IS NULL THEN 'n' ELSE 't:' || acl_status END
-      || chr(31) || CASE WHEN trigger_enabled IS NULL THEN 'n' ELSE 't:' || trigger_enabled END
-      || chr(31) || CASE WHEN depend_type IS NULL THEN 'n' ELSE 't:' || depend_type END
-      || chr(31) || CASE WHEN language_name IS NULL THEN 'n' ELSE 't:' || language_name END
-      || chr(31) || CASE WHEN volatility IS NULL THEN 'n' ELSE 't:' || volatility END
+      || chr(31) || CASE WHEN policy_permissive IS NULL THEN 'n' ELSE 't:' || encode(convert_to(policy_permissive, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN policy_roles IS NULL THEN 'n' ELSE 't:' || encode(convert_to(policy_roles, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN policy_cmd IS NULL THEN 'n' ELSE 't:' || encode(convert_to(policy_cmd, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN policy_using IS NULL THEN 'n' ELSE 't:' || encode(convert_to(btrim(regexp_replace(policy_using, '\s+', ' ', 'g')), 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN policy_with_check IS NULL THEN 'n' ELSE 't:' || encode(convert_to(btrim(regexp_replace(policy_with_check, '\s+', ' ', 'g')), 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN acl_grantee IS NULL THEN 'n' ELSE 't:' || encode(convert_to(acl_grantee, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN acl_privilege IS NULL THEN 'n' ELSE 't:' || encode(convert_to(acl_privilege, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN acl_status IS NULL THEN 'n' ELSE 't:' || encode(convert_to(acl_status, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN trigger_enabled IS NULL THEN 'n' ELSE 't:' || encode(convert_to(trigger_enabled, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN depend_type IS NULL THEN 'n' ELSE 't:' || encode(convert_to(depend_type, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN language_name IS NULL THEN 'n' ELSE 't:' || encode(convert_to(language_name, 'UTF8'), 'hex') END
+      || chr(31) || CASE WHEN volatility IS NULL THEN 'n' ELSE 't:' || encode(convert_to(volatility, 'UTF8'), 'hex') END
       || chr(31) || CASE WHEN security_definer IS NULL THEN 'n' WHEN security_definer THEN 'b:true' ELSE 'b:false' END
-      || chr(31) || CASE WHEN proconfig IS NULL THEN 'n' ELSE 't:' || proconfig END
+      || chr(31) || CASE WHEN proconfig IS NULL THEN 'n' ELSE 't:' || encode(convert_to(proconfig, 'UTF8'), 'hex') END
       || chr(31) || CASE WHEN relrowsecurity IS NULL THEN 'n' WHEN relrowsecurity THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN relforcerowsecurity IS NULL THEN 'n' WHEN relforcerowsecurity THEN 'b:true' ELSE 'b:false' END
       || chr(31) || CASE WHEN row_count IS NULL THEN 'n' ELSE 'i:' || row_count::text END
-      || chr(31) || CASE WHEN object_definition IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(object_definition, '\s+', ' ', 'g')) END
+      || chr(31) || CASE WHEN object_definition IS NULL THEN 'n' ELSE 't:' || encode(convert_to(btrim(regexp_replace(object_definition, '\s+', ' ', 'g')), 'UTF8'), 'hex') END
         ) AS line
       FROM inventory
     ),

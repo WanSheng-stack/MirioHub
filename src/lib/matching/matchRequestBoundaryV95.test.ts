@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.3 — v95 boundary + live catalog fingerprint.
+ * PHASE 6.7C.1B.3A — v95 boundary + encoding-v2 catalog fingerprint.
  * Static catalog checks. Inventory SQL has not been executed against PostgreSQL.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
@@ -21,7 +21,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "afb9960b7a94ac53e214f379ce5564f385f0220b";
+const PHASE_BASELINE = "24c46f693ae5dca3bcc54a9ff4430aa736e26115";
 const INVENTORY_RESULT_COLUMNS = 38;
 const INVENTORY_UNION_BRANCHES = 13;
 const V95_REL =
@@ -392,6 +392,9 @@ assert.ok(migration.includes("DEFERRABLE INITIALLY DEFERRED"));
 assert.equal(migration.includes("timezone('utc', now())"), false);
 assert.equal(guard.includes("post-v94 live catalog fixture missing"), false);
 assert.ok(guard.includes("$v95_fp$"));
+assert.ok(guard.includes('"encoding_version":2'));
+assert.ok(guard.includes("encode(convert_to("));
+assert.equal(/'t:' \|\| object_definition\b/.test(guard), false);
 assert.ok(guard.includes("v95_guard: % mismatch"));
 assert.ok(guard.includes("extensions.digest"));
 assert.ok(guard.includes("must still be empty"));
@@ -721,7 +724,7 @@ assert.equal(
   existsSync(join(repoRoot, "src/lib/matching/contactInvitationCreate.ts")),
   false,
 );
-assert.ok(ledger.includes("6.7C.1B.3"));
+assert.ok(ledger.includes("6.7C.1B.3A"));
 assert.ok(ledger.includes("aclexplode"));
 assert.ok(ledger.includes("missing_oid:<oid>"));
 

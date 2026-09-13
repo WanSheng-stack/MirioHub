@@ -10,8 +10,9 @@
 >
 > 目的：在不执行 SQL、不修改代码的前提下，确定 v95 重写边界和后续实施顺序
 >
-> 实施更新（PHASE 6.7C.1B.3）：v95 仍未执行。guard 已绑定真实 post-v94
-> catalog fingerprint，结构上可执行，但必须先经审核再由用户决定是否 apply。
+> 实施更新（PHASE 6.7C.1B.3A）：v95 仍未执行。guard 已绑定 encoding-v2
+> post-v94 catalog fingerprint（text 先转 UTF-8 lowercase hex）。结构上
+> 可执行，但必须先经审核再由用户决定是否 apply。
 
 ---
 

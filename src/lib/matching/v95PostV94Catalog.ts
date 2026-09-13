@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.3 — post-v94 catalog fingerprint helpers.
+ * PHASE 6.7C.1B.3A — post-v94 catalog fingerprint helpers (encoding v2).
  * Dev/test only. Do not import from production API, writer, or UI.
  * Does not connect to PostgreSQL or Supabase.
  */
@@ -189,8 +189,11 @@ export type RegionDigest = {
   digest: string;
 };
 
+export const ENCODING_VERSION = 2 as const;
+
 export type CatalogFingerprint = {
   source: string;
+  encoding_version: typeof ENCODING_VERSION;
   row_count: number;
   regions: Record<FingerprintRegion, RegionDigest>;
   overall: RegionDigest;
@@ -353,6 +356,17 @@ export function compareInventoryRows(a: InventoryRow, b: InventoryRow): number {
   return 0;
 }
 
+/** UTF-8 lowercase hex. Matches encode(convert_to(value, 'UTF8'), 'hex'). */
+export function utf8Hex(value: string): string {
+  return Buffer.from(value, "utf8").toString("hex");
+}
+
+/**
+ * Encoding v2 field codec.
+ * Text is hex-encoded after optional whitespace normalize, so field
+ * bodies cannot emit chr(31) or newlines. Separators are therefore
+ * unambiguous even if catalog text contains control characters.
+ */
 export function encodeCanonicalField(
   column: InventoryColumn,
   value: InventoryValue,
@@ -376,7 +390,20 @@ export function encodeCanonicalField(
   const text = NORMALIZE_COLUMNS.has(column)
     ? canonicalizeCatalogDef(value)
     : value;
-  return `t:${text}`;
+  return `t:${utf8Hex(text)}`;
+}
+
+/** Legacy v1 raw-text codec. Kept only to prove delimiter collisions. */
+export function encodeLegacyRawTextField(value: string): string {
+  return `t:${value}`;
+}
+
+export function encodeLegacyRawTextFields(values: string[]): string {
+  return values.map(encodeLegacyRawTextField).join("\u001f");
+}
+
+export function encodeHexTextFields(values: string[]): string {
+  return values.map((value) => `t:${utf8Hex(value)}`).join("\u001f");
 }
 
 export function encodeCanonicalRow(row: InventoryRow): string {
@@ -414,6 +441,7 @@ export function buildCatalogFingerprint(
   }
   return {
     source,
+    encoding_version: ENCODING_VERSION,
     row_count: rows.length,
     regions,
     overall: digestRows(rows),
@@ -576,6 +604,7 @@ export function loadValidatedCatalog(
 export function fingerprintJson(fp: CatalogFingerprint): string {
   return JSON.stringify({
     source: fp.source,
+    encoding_version: fp.encoding_version,
     row_count: fp.row_count,
     regions: fp.regions,
     overall: fp.overall,
@@ -603,10 +632,10 @@ export function extractInventoryCteChain(inventorySql: string): string {
 }
 
 function sqlText(column: InventoryColumn, normalize: boolean): string {
-  const expr = normalize
-    ? `CASE WHEN ${column} IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(${column}, '\\s+', ' ', 'g')) END`
-    : `CASE WHEN ${column} IS NULL THEN 'n' ELSE 't:' || ${column} END`;
-  return expr;
+  const body = normalize
+    ? `btrim(regexp_replace(${column}, '\\s+', ' ', 'g'))`
+    : column;
+  return `CASE WHEN ${column} IS NULL THEN 'n' ELSE 't:' || encode(convert_to(${body}, 'UTF8'), 'hex') END`;
 }
 
 function sqlBool(column: InventoryColumn): string {
@@ -626,11 +655,11 @@ export function sqlCanonicalLineExpr(): string {
 }
 
 export function renderExpectedFingerprintSql(fp: CatalogFingerprint): string {
-  const body: Record<string, RegionDigest> = {
+  return JSON.stringify({
+    encoding_version: fp.encoding_version,
     ...fp.regions,
     overall: fp.overall,
-  };
-  return JSON.stringify(body);
+  });
 }
 
 export function renderV95CatalogGuardDoBlock(
@@ -642,6 +671,10 @@ export function renderV95CatalogGuardDoBlock(
   const line = sqlCanonicalLineExpr();
   const tables = TARGET_TABLES.map((name) => `    '${name}'`).join(",\n");
   return `DO $$
+-- encoding_version ${ENCODING_VERSION}. Text fields are UTF-8 lowercase hex
+-- before joining. chr(31) field separators and E'\\n' row separators are
+-- safe because hex text cannot emit those bytes; this does not assume
+-- catalog values lack control characters.
 DECLARE
   t text;
   live_n bigint;
@@ -652,6 +685,9 @@ DECLARE
   want text;
   fn_count int;
 BEGIN
+  IF (expected->>'encoding_version')::int IS DISTINCT FROM ${ENCODING_VERSION} THEN
+    RAISE EXCEPTION 'v95_guard: % mismatch', 'encoding';
+  END IF;
   FOREACH t IN ARRAY ARRAY[
 ${tables}
   ] LOOP

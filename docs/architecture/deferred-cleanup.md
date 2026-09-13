@@ -268,19 +268,23 @@ OWNER against PostGIS.
 
 ## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1B rewrites undeployed v95 into the first-send
-  match-request boundary. One user action creates the internal
-  `match_contact_invitations` envelope, `match_requests` thread, first
-  `match_request_revisions` current row, and a one-way `contact_grants`
-  row in a single writer transaction. `matching_request_creation_enabled`
-  defaults to false and production pricing is fail-closed, so this API is
-  not open to real users. `disclosure_mode` is the fixed v93 legacy value
-  `recipient_contacts_initiator`. Hall and request creation share
-  `matchAdmissionPolicy.ts`: dates are hard; time windows are advisory.
-  Inspect is a hint; `create_match_request_v95` is the only success
-  authority. MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** request list, resend, accept/reject,
-  contact DTO, MatchRequestSheet mount, country pricing, and contract
+- **Current state:** PHASE 6.7C.1B.1 hardens the still-unexecuted v95
+  first-send writer. Exact retry uses `idempotency_payload_hash` (SHA-256
+  of stable request facts) and does not reload posts, OSRM, or quote.
+  Request revisions store sparse Demand-default location choices
+  (`mode=demand_post_default`); production overrides fail closed. Request
+  and revision use composite FKs. Expired same-pair rows sync request,
+  current revision, invitation, and grant. Admission facts come from one
+  snapshot RPC plus a SQL hash recomputed after lock. Phone must be
+  canonical stored digits, not any nonempty string. Profiles still have
+  no strong verified-phone flag; that remains an open-gate precondition.
+  `matching_request_creation_enabled` stays false. v95 cannot apply until
+  a live post-v94 catalog CSV is imported. MatchRequestSheet stays
+  unmounted. Cargo V2 / Travel subtypes that are not persisted on `posts`
+  are creation-enable blockers and are not covered by the admission hash.
+- **Still unresolved / later phases:** live catalog CSV import, v95 apply,
+  request list, resend, accept/reject, contact DTO, MatchRequestSheet
+  mount, country pricing, trusted location resolver, and contract
   capacity/fulfillment.
 - **Future replacement:** A later grant writer must re-check recipient
   settings and confirmed channels before any contact DTO.

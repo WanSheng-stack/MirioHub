@@ -17,11 +17,10 @@
  * fill transport_mode when it is currently null. It does not rewrite
  * origin_address, destination_address, departure_date, or
  * departure_time_window. Eligibility is therefore not fully atomic.
- * The server binds a digest of persisted matching facts; the writer
- * recomputes that digest after locking posts. The browser never submits
- * the digest, score, or thresholds. GPS is omitted from the digest because
- * PostGIS vs JS formatting is unstable; addresses + schedule + transport
- * are bound instead.
+ * The server binds a digest of persisted matching facts from one SQL
+ * snapshot RPC; the writer recomputes that hash after locking posts with
+ * the same SQL helper. The browser never submits the hash, score, or
+ * thresholds. GPS uses PostgreSQL EWKB hex, not JavaScript PostGIS text.
  */
 
 import { createHash } from "node:crypto";
@@ -65,7 +64,35 @@ export type MatchAdmissionPost = {
   origin_address?: string | null;
   destination_address?: string | null;
   waypoints?: string[] | null;
+  /** Snapshot EWKB hex or parsed point. Production hash uses SQL EWKB only. */
+  origin_gps?: unknown;
+  destination_gps?: unknown;
+  origin_gps_ewkb?: string | null;
+  destination_gps_ewkb?: string | null;
 };
+
+export const ADMISSION_FACTS_FIELDS = [
+  "id",
+  "user_id",
+  "post_type",
+  "category",
+  "status",
+  "departure_date",
+  "departure_time_window",
+  "service_time_window",
+  "transport_mode",
+  "escort_seats",
+  "max_companions",
+  "count_small",
+  "count_medium",
+  "count_large",
+  "count_xlarge",
+  "origin_address",
+  "destination_address",
+  "waypoints",
+  "origin_gps_ewkb",
+  "destination_gps_ewkb",
+] as const;
 
 export type MatchAdmissionRouteScore =
   | { ok: false }
@@ -367,7 +394,7 @@ export function evaluateMatchAdmission(input: {
 }
 
 export function hashMatchAdmissionDigest(payload: string): string {
-  return createHash("md5").update(payload, "utf8").digest("hex");
+  return createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
 export function matchAdmissionDigestHex(
@@ -378,45 +405,15 @@ export function matchAdmissionDigestHex(
 }
 
 export function computeMatchAdmissionDigest(
-  left: Pick<
-    MatchAdmissionPost,
-    | "id"
-    | "user_id"
-    | "post_type"
-    | "category"
-    | "status"
-    | "departure_date"
-    | "departure_time_window"
-    | "service_time_window"
-    | "transport_mode"
-    | "origin_address"
-    | "destination_address"
-    | "waypoints"
-  >,
-  right: typeof left,
+  left: MatchAdmissionPost,
+  right: MatchAdmissionPost,
 ): string {
   const ordered = [left, right].sort((a, b) => a.id.localeCompare(b.id));
   const payload = ordered.map(canonicalAdmissionFacts).join("\n");
   return payload;
 }
 
-export function canonicalAdmissionFacts(
-  post: Pick<
-    MatchAdmissionPost,
-    | "id"
-    | "user_id"
-    | "post_type"
-    | "category"
-    | "status"
-    | "departure_date"
-    | "departure_time_window"
-    | "service_time_window"
-    | "transport_mode"
-    | "origin_address"
-    | "destination_address"
-    | "waypoints"
-  >,
-): string {
+export function canonicalAdmissionFacts(post: MatchAdmissionPost): string {
   return [
     post.id,
     post.user_id,
@@ -427,9 +424,17 @@ export function canonicalAdmissionFacts(
     post.departure_time_window ?? "",
     post.service_time_window ?? "",
     post.transport_mode ?? "",
+    post.escort_seats == null ? "" : String(post.escort_seats),
+    post.max_companions == null ? "" : String(post.max_companions),
+    post.count_small == null ? "" : String(post.count_small),
+    post.count_medium == null ? "" : String(post.count_medium),
+    post.count_large == null ? "" : String(post.count_large),
+    post.count_xlarge == null ? "" : String(post.count_xlarge),
     post.origin_address ?? "",
     post.destination_address ?? "",
     canonicalWaypoints(post.waypoints),
+    post.origin_gps_ewkb ?? "",
+    post.destination_gps_ewkb ?? "",
   ].join("|");
 }
 

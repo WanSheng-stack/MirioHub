@@ -1,6 +1,7 @@
 /**
- * PHASE 6.7C.1B — match-request create orchestration.
- * inspect is a non-atomic hint. create_match_request_v95 is the only success authority.
+ * PHASE 6.7C.1B.1 — match-request create orchestration.
+ * Exact retry uses only the stable idempotency payload hash.
+ * create_match_request_v95 is the only success authority.
  */
 
 import {
@@ -10,9 +11,8 @@ import {
 } from "@/lib/matching/contactInvitationCodeCore";
 import {
   buildProductionServerQuote,
-  canonicalizeProposal,
-  digestCanonicalProposal,
-  digestServerQuote,
+  canonicalizeBrowserProposal,
+  computeIdempotencyPayloadHash,
   evaluateMatchRequestEligibility,
   extractWriterErrorKey,
   httpStatusForMatchRequestError,
@@ -20,17 +20,18 @@ import {
   MATCH_REQUEST_ERROR,
   MATCH_REQUEST_SAFE_LOGS,
   parseMatchRequestCreateBody,
+  proposalHasOverride,
   quoteIsLegal,
+  type CanonicalProposal,
   type MatchRequestCreateInput,
   type MatchRequestInspectRow,
   type MatchRequestWriterRow,
   type ServerMatchRequestQuote,
 } from "@/lib/matching/matchRequestCreateCore";
-import {
-  matchAdmissionDigestHex,
-  type MatchAdmissionPost,
-  type MatchAdmissionRouteScore,
-  type MatchAdmissionRouteThresholds,
+import type {
+  MatchAdmissionPost,
+  MatchAdmissionRouteScore,
+  MatchAdmissionRouteThresholds,
 } from "@/lib/matching/matchAdmissionPolicy";
 
 export type MatchRequestRouteResult = {
@@ -52,6 +53,8 @@ export type MatchRequestRouteResult = {
   adminCreated: boolean;
   writerCalled: boolean;
   routeScored: boolean;
+  postsLoaded: boolean;
+  quoteLoaded: boolean;
   codeGenerated: boolean;
 };
 
@@ -71,11 +74,15 @@ export type MatchRequestRouteDeps = {
     admin: unknown,
     args: { actorUserId: string; initiatorPostId: string; clientRequestId: string },
   ) => Promise<MatchRequestInspectRow>;
-  loadPosts: (
+  loadSnapshot: (
     admin: unknown,
     ids: { initiatorPostId: string; counterpartPostId: string },
-  ) => Promise<{ initiator: MatchAdmissionPost | null; counterpart: MatchAdmissionPost | null }>;
-  loadActorPhonePresent: (admin: unknown, actorUserId: string) => Promise<boolean>;
+  ) => Promise<{
+    initiator: MatchAdmissionPost | null;
+    counterpart: MatchAdmissionPost | null;
+    admissionFactsHash: string;
+  }>;
+  loadActorPhoneCanonical: (admin: unknown, actorUserId: string) => Promise<boolean>;
   scoreRoute: (
     initiator: MatchAdmissionPost,
     counterpart: MatchAdmissionPost,
@@ -91,10 +98,9 @@ export type MatchRequestRouteDeps = {
       clientRequestId: string;
       clientRevisionId: string;
       contactCodeHash: string;
-      admissionDigest: string;
-      proposalDigest: string;
-      quoteDigest: string;
-      proposalPayload: unknown;
+      idempotencyPayloadHash: string;
+      admissionFactsHash: string;
+      proposalPayload: CanonicalProposal;
       quote: ServerMatchRequestQuote;
       contactPreference: string;
       whatsappAvailable: boolean;
@@ -111,6 +117,8 @@ function fail(
     adminCreated?: boolean;
     writerCalled?: boolean;
     routeScored?: boolean;
+    postsLoaded?: boolean;
+    quoteLoaded?: boolean;
     codeGenerated?: boolean;
   } = {},
 ): MatchRequestRouteResult {
@@ -121,6 +129,8 @@ function fail(
     adminCreated: flags.adminCreated ?? false,
     writerCalled: flags.writerCalled ?? false,
     routeScored: flags.routeScored ?? false,
+    postsLoaded: flags.postsLoaded ?? false,
+    quoteLoaded: flags.quoteLoaded ?? false,
     codeGenerated: flags.codeGenerated ?? false,
   };
 }
@@ -148,6 +158,19 @@ function recoverCode(
     return { ok: false, reason: "code" };
   }
 }
+
+const PLACEHOLDER_QUOTE: ServerMatchRequestQuote = {
+  pricingVersion: 1,
+  pricingCountryCode: "XX",
+  pricingCurrency: "XXX",
+  baseAmountMinor: 0,
+  bumpTierId: null,
+  bumpAmountMinor: 0,
+  totalAmountMinor: 0,
+  matchPercentBasisPoints: 0,
+  extraDetourM: 0,
+  extraDurationSeconds: 0,
+};
 
 export async function runMatchRequestCreate(
   deps: MatchRequestRouteDeps,
@@ -200,57 +223,59 @@ export async function runMatchRequestCreate(
     ], { adminCreated: true });
   }
 
+  const canonical = canonicalizeBrowserProposal(parsed.value.proposal);
+  const recovered = recoverCode(deps, parsed.value, userId);
+  if (!recovered.ok) {
+    return fail(
+      500,
+      recovered.reason === "pepper"
+        ? MATCH_REQUEST_ERROR.serverConfiguration
+        : MATCH_REQUEST_ERROR.submitFailed,
+      [
+        recovered.reason === "pepper"
+          ? MATCH_REQUEST_SAFE_LOGS.serverConfigurationMissing
+          : MATCH_REQUEST_SAFE_LOGS.codeGenerationFailed,
+      ],
+      { adminCreated: true },
+    );
+  }
+  const idempotencyPayloadHash = computeIdempotencyPayloadHash({
+    actorUserId: userId,
+    initiatorPostId: parsed.value.initiatorPostId,
+    counterpartPostId: parsed.value.counterpartPostId,
+    clientRequestId: parsed.value.clientRequestId,
+    clientRevisionId: parsed.value.clientRevisionId,
+    proposal: canonical,
+    contactPreference: parsed.value.contactPreference,
+    whatsappAvailable: parsed.value.whatsappAvailable,
+    viberAvailable: parsed.value.viberAvailable,
+    contactCodeHash: recovered.pair.codeHash,
+  });
+
   if (inspected.existing_for_client_request) {
-    let proposal: Parameters<typeof digestCanonicalProposal>[0] = {
-      category: parsed.value.proposal.category,
-      proposedDate: parsed.value.proposal.proposedDate,
-      proposedTimeWindow: parsed.value.proposal.proposedTimeWindow,
-      pickupLocation: { locationVersion: 1, displayAddress: "" },
-      dropoffLocation: { locationVersion: 1, displayAddress: "" },
-      bumpTierId: parsed.value.proposal.bumpTierId ?? null,
-      note: parsed.value.proposal.note ?? null,
-    };
-    try {
-      const loaded = await deps.loadPosts(admin, {
-        initiatorPostId: parsed.value.initiatorPostId,
-        counterpartPostId: parsed.value.counterpartPostId,
-      });
-      if (loaded.initiator && loaded.counterpart) {
-        const canonical = canonicalizeProposal({
-          proposal: parsed.value.proposal,
-          initiator: loaded.initiator,
-          counterpart: loaded.counterpart,
-        });
-        if (canonical.ok) proposal = canonical.value;
-      }
-    } catch {
-      // Writer remains the exact-retry authority.
-    }
     return finishWithWriter(deps, {
       admin,
       userId,
       parsed: parsed.value,
+      pair: recovered.pair,
+      idempotencyPayloadHash,
+      admissionFactsHash: "",
+      proposal: canonical,
+      quote: PLACEHOLDER_QUOTE,
       routeScored: false,
-      admissionDigest: "",
-      proposal,
-      quote: (await deps.loadQuote()) ?? {
-        pricingVersion: 0,
-        pricingCountryCode: "",
-        pricingCurrency: "",
-        baseAmountMinor: 0,
-        bumpTierId: null,
-        bumpAmountMinor: 0,
-        totalAmountMinor: 0,
-        matchPercentBasisPoints: 0,
-        extraDetourM: 0,
-        extraDurationSeconds: 0,
-      },
+      postsLoaded: false,
+      quoteLoaded: false,
     });
   }
 
   if (inspected.creation_enabled === false) {
     return fail(409, MATCH_REQUEST_ERROR.creationDisabled, [
       MATCH_REQUEST_SAFE_LOGS.creationDisabled,
+    ], { adminCreated: true });
+  }
+  if (proposalHasOverride(canonical)) {
+    return fail(409, MATCH_REQUEST_ERROR.locationOverrideNotReady, [
+      MATCH_REQUEST_SAFE_LOGS.locationOverrideNotReady,
     ], { adminCreated: true });
   }
   if (
@@ -272,12 +297,13 @@ export async function runMatchRequestCreate(
     ], { adminCreated: true });
   }
 
-  let loaded: {
+  let snapshot: {
     initiator: MatchAdmissionPost | null;
     counterpart: MatchAdmissionPost | null;
+    admissionFactsHash: string;
   };
   try {
-    loaded = await deps.loadPosts(admin, {
+    snapshot = await deps.loadSnapshot(admin, {
       initiatorPostId: parsed.value.initiatorPostId,
       counterpartPostId: parsed.value.counterpartPostId,
     });
@@ -286,20 +312,26 @@ export async function runMatchRequestCreate(
       MATCH_REQUEST_SAFE_LOGS.writerFailed,
     ], { adminCreated: true });
   }
-  if (!loaded.initiator || !loaded.counterpart) {
-    return fail(404, MATCH_REQUEST_ERROR.postNotFound, [], { adminCreated: true });
+  if (!snapshot.initiator || !snapshot.counterpart || !/^[0-9a-f]{64}$/.test(snapshot.admissionFactsHash)) {
+    return fail(404, MATCH_REQUEST_ERROR.postNotFound, [], {
+      adminCreated: true,
+      postsLoaded: true,
+    });
   }
 
-  let phonePresent = false;
+  let phoneCanonical = false;
   try {
-    phonePresent = await deps.loadActorPhonePresent(admin, userId);
+    phoneCanonical = await deps.loadActorPhoneCanonical(admin, userId);
   } catch {
     return fail(500, MATCH_REQUEST_ERROR.submitFailed, [
       MATCH_REQUEST_SAFE_LOGS.writerFailed,
-    ], { adminCreated: true });
+    ], { adminCreated: true, postsLoaded: true });
   }
-  if (!phonePresent) {
-    return fail(409, MATCH_REQUEST_ERROR.phoneRequired, [], { adminCreated: true });
+  if (!phoneCanonical) {
+    return fail(409, MATCH_REQUEST_ERROR.phoneRequired, [], {
+      adminCreated: true,
+      postsLoaded: true,
+    });
   }
 
   let thresholds: MatchAdmissionRouteThresholds | null = null;
@@ -308,22 +340,22 @@ export async function runMatchRequestCreate(
   } catch {
     return fail(409, MATCH_REQUEST_ERROR.notEligible, [
       MATCH_REQUEST_SAFE_LOGS.eligibilityFailed,
-    ], { adminCreated: true });
+    ], { adminCreated: true, postsLoaded: true });
   }
 
   let route: MatchAdmissionRouteScore;
   try {
-    route = await deps.scoreRoute(loaded.initiator, loaded.counterpart);
+    route = await deps.scoreRoute(snapshot.initiator, snapshot.counterpart);
   } catch {
     return fail(409, MATCH_REQUEST_ERROR.notEligible, [
       MATCH_REQUEST_SAFE_LOGS.eligibilityFailed,
-    ], { adminCreated: true, routeScored: true });
+    ], { adminCreated: true, routeScored: true, postsLoaded: true });
   }
 
   const eligible = evaluateMatchRequestEligibility({
     actorUserId: userId,
-    initiator: loaded.initiator,
-    counterpart: loaded.counterpart,
+    initiator: snapshot.initiator,
+    counterpart: snapshot.counterpart,
     route,
     thresholds,
     proposal: parsed.value.proposal,
@@ -333,36 +365,29 @@ export async function runMatchRequestCreate(
       httpStatusForMatchRequestError(eligible.errorKey),
       eligible.errorKey,
       [MATCH_REQUEST_SAFE_LOGS.eligibilityFailed],
-      { adminCreated: true, routeScored: true },
+      { adminCreated: true, routeScored: true, postsLoaded: true },
     );
-  }
-
-  const canonical = canonicalizeProposal({
-    proposal: parsed.value.proposal,
-    initiator: loaded.initiator,
-    counterpart: loaded.counterpart,
-  });
-  if (!canonical.ok) {
-    return fail(409, canonical.errorKey, [
-      MATCH_REQUEST_SAFE_LOGS.eligibilityFailed,
-    ], { adminCreated: true, routeScored: true });
   }
 
   const quote = await deps.loadQuote();
   if (!quoteIsLegal(quote)) {
     return fail(409, MATCH_REQUEST_ERROR.pricingNotReady, [
       MATCH_REQUEST_SAFE_LOGS.pricingNotReady,
-    ], { adminCreated: true, routeScored: true });
+    ], { adminCreated: true, routeScored: true, postsLoaded: true, quoteLoaded: true });
   }
 
   return finishWithWriter(deps, {
     admin,
     userId,
     parsed: parsed.value,
-    routeScored: true,
-    admissionDigest: matchAdmissionDigestHex(loaded.initiator, loaded.counterpart),
-    proposal: canonical.value,
+    pair: recovered.pair,
+    idempotencyPayloadHash,
+    admissionFactsHash: snapshot.admissionFactsHash,
+    proposal: canonical,
     quote,
+    routeScored: true,
+    postsLoaded: true,
+    quoteLoaded: true,
   });
 }
 
@@ -372,28 +397,16 @@ async function finishWithWriter(
     admin: unknown;
     userId: string;
     parsed: MatchRequestCreateInput;
-    routeScored: boolean;
-    admissionDigest: string;
-    proposal: Parameters<typeof digestCanonicalProposal>[0];
+    pair: ContactInvitationCodePair;
+    idempotencyPayloadHash: string;
+    admissionFactsHash: string;
+    proposal: CanonicalProposal;
     quote: ServerMatchRequestQuote;
+    routeScored: boolean;
+    postsLoaded: boolean;
+    quoteLoaded: boolean;
   },
 ): Promise<MatchRequestRouteResult> {
-  const recovered = recoverCode(deps, input.parsed, input.userId);
-  if (!recovered.ok) {
-    return fail(
-      500,
-      recovered.reason === "pepper"
-        ? MATCH_REQUEST_ERROR.serverConfiguration
-        : MATCH_REQUEST_ERROR.submitFailed,
-      [
-        recovered.reason === "pepper"
-          ? MATCH_REQUEST_SAFE_LOGS.serverConfigurationMissing
-          : MATCH_REQUEST_SAFE_LOGS.codeGenerationFailed,
-      ],
-      { adminCreated: true, routeScored: input.routeScored },
-    );
-  }
-
   let writerRow: MatchRequestWriterRow;
   try {
     writerRow = await deps.callWriter(input.admin, {
@@ -402,10 +415,9 @@ async function finishWithWriter(
       counterpartPostId: input.parsed.counterpartPostId,
       clientRequestId: input.parsed.clientRequestId,
       clientRevisionId: input.parsed.clientRevisionId,
-      contactCodeHash: recovered.pair.codeHash,
-      admissionDigest: input.admissionDigest,
-      proposalDigest: digestCanonicalProposal(input.proposal),
-      quoteDigest: quoteIsLegal(input.quote) ? digestServerQuote(input.quote) : "",
+      contactCodeHash: input.pair.codeHash,
+      idempotencyPayloadHash: input.idempotencyPayloadHash,
+      admissionFactsHash: input.admissionFactsHash,
       proposalPayload: input.proposal,
       quote: input.quote,
       contactPreference: input.parsed.contactPreference,
@@ -422,13 +434,17 @@ async function finishWithWriter(
             ? [MATCH_REQUEST_SAFE_LOGS.creationDisabled]
             : mapped === MATCH_REQUEST_ERROR.pricingNotReady
               ? [MATCH_REQUEST_SAFE_LOGS.pricingNotReady]
-              : mapped === MATCH_REQUEST_ERROR.notEligible
-                ? [MATCH_REQUEST_SAFE_LOGS.eligibilityFailed]
-                : [];
+              : mapped === MATCH_REQUEST_ERROR.locationOverrideNotReady
+                ? [MATCH_REQUEST_SAFE_LOGS.locationOverrideNotReady]
+                : mapped === MATCH_REQUEST_ERROR.notEligible
+                  ? [MATCH_REQUEST_SAFE_LOGS.eligibilityFailed]
+                  : [];
       return fail(httpStatusForMatchRequestError(mapped), mapped, logs, {
         adminCreated: true,
         writerCalled: true,
         routeScored: input.routeScored,
+        postsLoaded: input.postsLoaded,
+        quoteLoaded: input.quoteLoaded,
         codeGenerated: true,
       });
     }
@@ -438,6 +454,8 @@ async function finishWithWriter(
       adminCreated: true,
       writerCalled: true,
       routeScored: input.routeScored,
+      postsLoaded: input.postsLoaded,
+      quoteLoaded: input.quoteLoaded,
       codeGenerated: true,
     });
   }
@@ -454,6 +472,8 @@ async function finishWithWriter(
       adminCreated: true,
       writerCalled: true,
       routeScored: input.routeScored,
+      postsLoaded: input.postsLoaded,
+      quoteLoaded: input.quoteLoaded,
       codeGenerated: true,
     });
   }
@@ -466,7 +486,7 @@ async function finishWithWriter(
         id: interpreted.row.request_id,
         revisionId: interpreted.row.revision_id,
         status: interpreted.row.request_status,
-        contactCode: recovered.pair.code,
+        contactCode: input.pair.code,
         expiresAt: interpreted.row.expires_at,
         created: interpreted.row.created,
       },
@@ -475,6 +495,8 @@ async function finishWithWriter(
     adminCreated: true,
     writerCalled: true,
     routeScored: input.routeScored,
+    postsLoaded: input.postsLoaded,
+    quoteLoaded: input.quoteLoaded,
     codeGenerated: true,
   };
 }

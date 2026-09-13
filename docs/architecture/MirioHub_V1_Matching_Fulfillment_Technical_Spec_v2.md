@@ -475,6 +475,16 @@ V1 不提供单独“撤回请求”按钮。申请方若关闭自己的帖子�
 - `provider_snapshot`：接受时 Provider 原帖；
 - `agreement_snapshot`：目标方接受的 current revision，包括最终日期、时间、地点、容量、服务条件、系统参考金额、补贴、币种、规则版本和必要的计算摘要。
 
+请求阶段只保存稀疏地点选择：默认合作地点引用 Demand 原帖对应端点，不复制地址正文；覆盖尚未开放。接受事务（尚未实现）解析最终地点：
+
+```text
+finalLocation =
+  request override
+  ?? Demand 原帖对应地点
+```
+
+然后把完整最终地点写入 `match_contracts.agreement_snapshot`。请求阶段保存稀疏差异；合同阶段保存完整最终结果。Provider 原帖的 origin / waypoints / destination 只用于路线、顺路度和绕行，不是默认合作上下车或交接地点。
+
 快照的作用不是允许帖子随意修改，而是：
 
 - 一张 Provider 母行程可对应多个条件不同的子订单；

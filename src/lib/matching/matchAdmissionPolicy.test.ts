@@ -5,6 +5,8 @@
 
 import assert from "node:assert/strict";
 import {
+  ADMISSION_FACTS_FIELDS,
+  canonicalAdmissionFacts,
   describePairTimeDifference,
   evaluateMatchAdmission,
   evaluateRouteAdmission,
@@ -284,7 +286,7 @@ assert.equal(evaluateRouteAdmission(OK_ROUTE, null).ok, false);
   assert.equal(hall.eligible, false);
 }
 
-assert.equal(hashMatchAdmissionDigest("a").length, 32);
+assert.equal(hashMatchAdmissionDigest("a").length, 64);
 assert.notEqual(
   hashMatchAdmissionDigest("a"),
   hashMatchAdmissionDigest("b"),
@@ -316,6 +318,57 @@ assert.notEqual(
       departure_date: "2026-09-13",
     }),
     false,
+  );
+}
+
+assert.deepEqual(
+  [...ADMISSION_FACTS_FIELDS],
+  [
+    "id",
+    "user_id",
+    "post_type",
+    "category",
+    "status",
+    "departure_date",
+    "departure_time_window",
+    "service_time_window",
+    "transport_mode",
+    "escort_seats",
+    "max_companions",
+    "count_small",
+    "count_medium",
+    "count_large",
+    "count_xlarge",
+    "origin_address",
+    "destination_address",
+    "waypoints",
+    "origin_gps_ewkb",
+    "destination_gps_ewkb",
+  ],
+);
+{
+  const base = canonicalAdmissionFacts(demand);
+  assert.notEqual(
+    canonicalAdmissionFacts({ ...demand, escort_seats: 1 }),
+    base,
+  );
+  assert.notEqual(
+    canonicalAdmissionFacts({ ...demand, max_companions: 4 }),
+    base,
+  );
+  assert.notEqual(
+    canonicalAdmissionFacts({ ...demand, count_small: 2 }),
+    base,
+  );
+  assert.notEqual(
+    canonicalAdmissionFacts({ ...demand, origin_gps_ewkb: "01010000" }),
+    base,
+  );
+  assert.notEqual(
+    hashMatchAdmissionDigest(canonicalAdmissionFacts(demand)),
+    hashMatchAdmissionDigest(
+      canonicalAdmissionFacts({ ...demand, destination_gps_ewkb: "02020000" }),
+    ),
   );
 }
 

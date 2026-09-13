@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B — match-request parse, quote, and writer simulation.
+ * PHASE 6.7C.1B.1 — match-request parse, sparse locations, stable idempotency.
  * Pure helpers. Not a live PostgreSQL run.
  */
 
@@ -16,6 +16,7 @@ import {
   type MatchAdmissionRouteScore,
   type MatchAdmissionRouteThresholds,
 } from "@/lib/matching/matchAdmissionPolicy";
+import { parseStoredPhone } from "@/lib/phone/phoneNumber";
 import { canOfferMatchAction } from "@/lib/route/matchHall";
 
 export const MATCH_REQUEST_BODY_KEYS = [
@@ -44,9 +45,12 @@ export const MATCH_REQUEST_ERROR = {
   categoryNotSupported: "error.match_request_category_not_supported",
   alreadyOpen: "error.match_request_already_open",
   idempotencyConflict: "error.match_request_idempotency_conflict",
+  notCurrent: "error.match_request_not_current",
+  inconsistentState: "error.match_request_inconsistent_state",
   notEligible: "error.match_request_not_eligible",
   creationDisabled: "error.match_request_creation_disabled",
   pricingNotReady: "error.match_request_pricing_not_ready",
+  locationOverrideNotReady: "error.match_request_location_override_not_ready",
   phoneRequired: "error.match_request_phone_required",
   contactChannelInvalid: "error.match_request_contact_channel_invalid",
   openLimit: "error.match_request_open_limit",
@@ -65,10 +69,18 @@ export const MATCH_REQUEST_SAFE_LOGS = {
   requestLimitReached: "[match-request] request limit reached",
   creationDisabled: "[match-request] creation disabled",
   pricingNotReady: "[match-request] pricing not ready",
+  locationOverrideNotReady: "[match-request] location override not ready",
 } as const;
 
 const HIGH_RISK_KEYS = [
   "phone",
+  "email",
+  "plate",
+  "plusCode",
+  "plus_code",
+  "mapUrl",
+  "map_url",
+  "gps",
   "contactCode",
   "contactCodeHash",
   "origin_gps",
@@ -92,14 +104,17 @@ const HIGH_RISK_KEYS = [
   "requestStatus",
   "membership",
   "quota",
+  "__proto__",
+  "constructor",
+  "prototype",
 ] as const;
 
 const TRAVEL_PROPOSAL_KEYS = [
   "category",
   "proposedDate",
   "proposedTimeWindow",
-  "pickupLocation",
-  "dropoffLocation",
+  "pickup",
+  "dropoff",
   "bumpTierId",
   "note",
 ] as const;
@@ -107,38 +122,84 @@ const DELIVER_PROPOSAL_KEYS = [
   "category",
   "proposedDate",
   "proposedTimeWindow",
-  "pickupLocation",
-  "deliveryLocation",
+  "pickup",
+  "delivery",
   "bumpTierId",
   "note",
 ] as const;
-const LOCATION_KEYS = ["locationVersion", "displayAddress"] as const;
+const LOCATION_CHOICE_KEYS = ["mode", "location"] as const;
+const RESOLVED_LOCATION_KEYS = [
+  "locationVersion",
+  "displayLabel",
+  "latitude",
+  "longitude",
+  "precision",
+  "timezoneName",
+] as const;
+const PRECISIONS = ["locality", "district", "approximate", "precise"] as const;
+const IANA_RE =
+  /^(UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:\/[A-Za-z0-9_+\-]+)+)$/;
+const BUMP_TIER_RE = /^[a-z0-9][a-z0-9_.:-]*$/;
+const STORED_PHONE_RE = /^[1-9][0-9]{7,14}$/;
 
 export type ContactPreference = "phone" | "whatsapp" | "viber";
+export type LocationPrecision = (typeof PRECISIONS)[number];
 
-export type BrowserLocationInput = {
-  locationVersion?: number;
-  displayAddress?: string;
+export type ResolvedRequestLocationV1 = {
+  locationVersion: 1;
+  displayLabel: string;
+  latitude: number;
+  longitude: number;
+  precision: LocationPrecision;
+  timezoneName: string;
+};
+
+export type RequestLocationChoiceV1 =
+  | { mode: "demand_post_default" }
+  | { mode: "override"; location: ResolvedRequestLocationV1 };
+
+export type TravelMatchRequestProposalV1 = {
+  category: "travel";
+  proposedDate: string;
+  proposedTimeWindow: string;
+  pickup: RequestLocationChoiceV1;
+  dropoff: RequestLocationChoiceV1;
+  bumpTierId?: string;
+  note?: string;
+};
+
+export type DeliverMatchRequestProposalV1 = {
+  category: "deliver";
+  proposedDate: string;
+  proposedTimeWindow: string;
+  pickup: RequestLocationChoiceV1;
+  delivery: RequestLocationChoiceV1;
+  bumpTierId?: string;
+  note?: string;
 };
 
 export type MatchRequestProposalInput =
+  | TravelMatchRequestProposalV1
+  | DeliverMatchRequestProposalV1;
+
+export type CanonicalProposal =
   | {
       category: "travel";
       proposedDate: string;
       proposedTimeWindow: string;
-      pickupLocation?: BrowserLocationInput;
-      dropoffLocation?: BrowserLocationInput;
-      bumpTierId?: string;
-      note?: string;
+      pickup: RequestLocationChoiceV1;
+      dropoff: RequestLocationChoiceV1;
+      bumpTierId: string | null;
+      note: string | null;
     }
   | {
       category: "deliver";
       proposedDate: string;
       proposedTimeWindow: string;
-      pickupLocation?: BrowserLocationInput;
-      deliveryLocation?: BrowserLocationInput;
-      bumpTierId?: string;
-      note?: string;
+      pickup: RequestLocationChoiceV1;
+      delivery: RequestLocationChoiceV1;
+      bumpTierId: string | null;
+      note: string | null;
     };
 
 export type MatchRequestCreateInput = {
@@ -165,22 +226,6 @@ export type ServerMatchRequestQuote = {
   extraDurationSeconds: number;
 };
 
-export type CanonicalLocationSnapshot = {
-  locationVersion: 1;
-  displayAddress: string;
-};
-
-export type CanonicalProposal = {
-  category: "travel" | "deliver";
-  proposedDate: string;
-  proposedTimeWindow: string;
-  pickupLocation: CanonicalLocationSnapshot;
-  dropoffLocation?: CanonicalLocationSnapshot;
-  deliveryLocation?: CanonicalLocationSnapshot;
-  bumpTierId: string | null;
-  note: string | null;
-};
-
 export type MatchRequestWriterRow = {
   request_id: string;
   revision_id: string;
@@ -202,6 +247,10 @@ export type MatchRequestInspectRow = {
   creation_enabled: boolean;
 };
 
+export type TrustedLocationResolver = (
+  choice: RequestLocationChoiceV1,
+) => ResolvedRequestLocationV1 | null;
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
@@ -221,20 +270,30 @@ function containsHighRiskKey(value: unknown): boolean {
   return false;
 }
 
+function parseFail(
+  errorKey: string = MATCH_REQUEST_ERROR.invalidInput,
+): { ok: false; status: 400; errorKey: string } {
+  return { ok: false, status: 400, errorKey };
+}
+
+export function isCanonicalStoredPhone(value: string | null | undefined): boolean {
+  if (typeof value !== "string" || !STORED_PHONE_RE.test(value)) return false;
+  const parsed = parseStoredPhone(value);
+  return parsed.valid && parsed.normalizedDigits === value;
+}
+
 export function parseMatchRequestCreateBody(
   body: unknown,
 ):
   | { ok: true; value: MatchRequestCreateInput }
   | { ok: false; status: 400; errorKey: string } {
-  if (!isPlainObject(body)) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
-  }
+  if (!isPlainObject(body)) return parseFail();
   if (containsHighRiskKey(body)) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.unknownKey };
+    return parseFail(MATCH_REQUEST_ERROR.unknownKey);
   }
   for (const key of Object.keys(body)) {
     if (!(MATCH_REQUEST_BODY_KEYS as readonly string[]).includes(key)) {
-      return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.unknownKey };
+      return parseFail(MATCH_REQUEST_ERROR.unknownKey);
     }
   }
   const {
@@ -258,13 +317,17 @@ export function parseMatchRequestCreateBody(
     !isUuid(clientRevisionId) ||
     initiatorPostId === counterpartPostId
   ) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
+    return parseFail();
   }
-  if (contactPreference !== "phone" && contactPreference !== "whatsapp" && contactPreference !== "viber") {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
+  if (
+    contactPreference !== "phone" &&
+    contactPreference !== "whatsapp" &&
+    contactPreference !== "viber"
+  ) {
+    return parseFail();
   }
   if (typeof whatsappAvailable !== "boolean" || typeof viberAvailable !== "boolean") {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
+    return parseFail();
   }
   const parsedProposal = parseProposal(proposal);
   if (!parsedProposal.ok) return parsedProposal;
@@ -273,7 +336,7 @@ export function parseMatchRequestCreateBody(
     (contactPreference === "whatsapp" && whatsappAvailable) ||
     (contactPreference === "viber" && viberAvailable);
   if (!preferredAllowed) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.contactChannelInvalid };
+    return parseFail(MATCH_REQUEST_ERROR.contactChannelInvalid);
   }
   return {
     ok: true,
@@ -295,12 +358,8 @@ function parseProposal(
 ):
   | { ok: true; value: MatchRequestProposalInput }
   | { ok: false; status: 400; errorKey: string } {
-  if (!isPlainObject(value)) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
-  }
-  if (containsHighRiskKey(value)) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.unknownKey };
-  }
+  if (!isPlainObject(value)) return parseFail();
+  if (containsHighRiskKey(value)) return parseFail(MATCH_REQUEST_ERROR.unknownKey);
   const category = value.category;
   const allowed =
     category === "travel"
@@ -309,11 +368,11 @@ function parseProposal(
         ? DELIVER_PROPOSAL_KEYS
         : null;
   if (!allowed) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.categoryNotSupported };
+    return parseFail(MATCH_REQUEST_ERROR.categoryNotSupported);
   }
   for (const key of Object.keys(value)) {
     if (!(allowed as readonly string[]).includes(key)) {
-      return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.unknownKey };
+      return parseFail(MATCH_REQUEST_ERROR.unknownKey);
     }
   }
   if (
@@ -324,12 +383,16 @@ function parseProposal(
       proposedTimeWindow: value.proposedTimeWindow,
     })
   ) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
+    return parseFail();
   }
-  const pickup = parseLocation(value.pickupLocation);
+  const pickup = parseLocationChoice(value.pickup);
   if (!pickup.ok) return pickup;
+  const bump = parseOptionalBump(value.bumpTierId);
+  if (!bump.ok) return bump;
+  const note = parseOptionalNote(value.note);
+  if (!note.ok) return note;
   if (category === "travel") {
-    const dropoff = parseLocation(value.dropoffLocation);
+    const dropoff = parseLocationChoice(value.dropoff);
     if (!dropoff.ok) return dropoff;
     return {
       ok: true,
@@ -337,14 +400,14 @@ function parseProposal(
         category: "travel",
         proposedDate: value.proposedDate,
         proposedTimeWindow: value.proposedTimeWindow,
-        pickupLocation: pickup.value,
-        dropoffLocation: dropoff.value,
-        bumpTierId: optionalString(value.bumpTierId),
-        note: optionalString(value.note),
+        pickup: pickup.value,
+        dropoff: dropoff.value,
+        ...(bump.value != null ? { bumpTierId: bump.value } : {}),
+        ...(note.value != null ? { note: note.value } : {}),
       },
     };
   }
-  const delivery = parseLocation(value.deliveryLocation);
+  const delivery = parseLocationChoice(value.delivery);
   if (!delivery.ok) return delivery;
   return {
     ok: true,
@@ -352,115 +415,161 @@ function parseProposal(
       category: "deliver",
       proposedDate: value.proposedDate,
       proposedTimeWindow: value.proposedTimeWindow,
-      pickupLocation: pickup.value,
-      deliveryLocation: delivery.value,
-      bumpTierId: optionalString(value.bumpTierId),
-      note: optionalString(value.note),
+      pickup: pickup.value,
+      delivery: delivery.value,
+      ...(bump.value != null ? { bumpTierId: bump.value } : {}),
+      ...(note.value != null ? { note: note.value } : {}),
     },
   };
 }
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function parseLocation(
+export function parseLocationChoice(
   value: unknown,
 ):
-  | { ok: true; value: BrowserLocationInput | undefined }
+  | { ok: true; value: RequestLocationChoiceV1 }
   | { ok: false; status: 400; errorKey: string } {
-  if (value == null) return { ok: true, value: undefined };
-  if (!isPlainObject(value)) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.invalidInput };
-  }
-  if (containsHighRiskKey(value)) {
-    return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.unknownKey };
-  }
+  if (!isPlainObject(value)) return parseFail();
+  if (containsHighRiskKey(value)) return parseFail(MATCH_REQUEST_ERROR.unknownKey);
   for (const key of Object.keys(value)) {
-    if (!(LOCATION_KEYS as readonly string[]).includes(key)) {
-      return { ok: false, status: 400, errorKey: MATCH_REQUEST_ERROR.unknownKey };
+    if (!(LOCATION_CHOICE_KEYS as readonly string[]).includes(key)) {
+      return parseFail(MATCH_REQUEST_ERROR.unknownKey);
     }
+  }
+  if (value.mode === "demand_post_default") {
+    if ("location" in value) return parseFail();
+    return { ok: true, value: { mode: "demand_post_default" } };
+  }
+  if (value.mode === "override") {
+    const location = parseResolvedLocation(value.location);
+    if (!location.ok) return location;
+    return { ok: true, value: { mode: "override", location: location.value } };
+  }
+  return parseFail();
+}
+
+function parseResolvedLocation(
+  value: unknown,
+):
+  | { ok: true; value: ResolvedRequestLocationV1 }
+  | { ok: false; status: 400; errorKey: string } {
+  if (!isPlainObject(value)) return parseFail();
+  if (containsHighRiskKey(value)) return parseFail(MATCH_REQUEST_ERROR.unknownKey);
+  for (const key of Object.keys(value)) {
+    if (!(RESOLVED_LOCATION_KEYS as readonly string[]).includes(key)) {
+      return parseFail(MATCH_REQUEST_ERROR.unknownKey);
+    }
+  }
+  if (value.locationVersion !== 1 || !Number.isSafeInteger(value.locationVersion)) {
+    return parseFail();
+  }
+  if (
+    typeof value.latitude !== "number" ||
+    typeof value.longitude !== "number" ||
+    !Number.isFinite(value.latitude) ||
+    !Number.isFinite(value.longitude) ||
+    value.latitude < -90 ||
+    value.latitude > 90 ||
+    value.longitude < -180 ||
+    value.longitude > 180
+  ) {
+    return parseFail();
+  }
+  if (typeof value.displayLabel !== "string" || typeof value.timezoneName !== "string") {
+    return parseFail();
+  }
+  const displayLabel = value.displayLabel.trim();
+  const timezoneName = value.timezoneName.trim();
+  if (
+    displayLabel.length < 1 ||
+    displayLabel.length > 200 ||
+    timezoneName.length < 1 ||
+    timezoneName.length > 100 ||
+    !IANA_RE.test(timezoneName)
+  ) {
+    return parseFail();
+  }
+  if (!(PRECISIONS as readonly string[]).includes(String(value.precision))) {
+    return parseFail();
   }
   return {
     ok: true,
     value: {
-      locationVersion: typeof value.locationVersion === "number" ? value.locationVersion : undefined,
-      displayAddress: typeof value.displayAddress === "string" ? value.displayAddress : undefined,
+      locationVersion: 1,
+      displayLabel,
+      latitude: value.latitude,
+      longitude: value.longitude,
+      precision: value.precision as LocationPrecision,
+      timezoneName,
     },
   };
 }
 
-export function canonicalizeProposal(input: {
-  proposal: MatchRequestProposalInput;
-  initiator: MatchAdmissionPost;
-  counterpart: MatchAdmissionPost;
-}): { ok: true; value: CanonicalProposal } | { ok: false; errorKey: string } {
-  if (input.initiator.category !== input.proposal.category) {
-    return { ok: false, errorKey: MATCH_REQUEST_ERROR.notEligible };
-  }
-  if (input.proposal.category !== "travel" && input.proposal.category !== "deliver") {
-    return { ok: false, errorKey: MATCH_REQUEST_ERROR.categoryNotSupported };
-  }
-  const pickup: CanonicalLocationSnapshot = {
-    locationVersion: 1,
-    displayAddress: input.initiator.origin_address ?? "",
-  };
-  const destination: CanonicalLocationSnapshot = {
-    locationVersion: 1,
-    displayAddress: input.initiator.destination_address ?? "",
-  };
-  if (input.proposal.category === "travel") {
+function parseOptionalBump(
+  value: unknown,
+):
+  | { ok: true; value: string | undefined }
+  | { ok: false; status: 400; errorKey: string } {
+  if (value == null) return { ok: true, value: undefined };
+  if (typeof value !== "string") return parseFail();
+  const trimmed = value.trim();
+  if (trimmed === "") return parseFail();
+  if (trimmed.length > 50 || !BUMP_TIER_RE.test(trimmed)) return parseFail();
+  return { ok: true, value: trimmed };
+}
+
+function parseOptionalNote(
+  value: unknown,
+):
+  | { ok: true; value: string | undefined }
+  | { ok: false; status: 400; errorKey: string } {
+  if (value == null) return { ok: true, value: undefined };
+  if (typeof value !== "string") return parseFail();
+  const trimmed = value.trim();
+  if (trimmed === "") return { ok: true, value: undefined };
+  if (trimmed.length > 500) return parseFail();
+  return { ok: true, value: trimmed };
+}
+
+export function canonicalizeBrowserProposal(
+  proposal: MatchRequestProposalInput,
+): CanonicalProposal {
+  const bump = proposal.bumpTierId?.trim() ? proposal.bumpTierId.trim() : null;
+  const note = proposal.note?.trim() ? proposal.note.trim() : null;
+  if (proposal.category === "travel") {
     return {
-      ok: true,
-      value: {
-        category: "travel",
-        proposedDate: input.proposal.proposedDate,
-        proposedTimeWindow: input.proposal.proposedTimeWindow,
-        pickupLocation: pickup,
-        dropoffLocation: destination,
-        bumpTierId: input.proposal.bumpTierId ?? null,
-        note: input.proposal.note ?? null,
-      },
+      category: "travel",
+      proposedDate: proposal.proposedDate,
+      proposedTimeWindow: proposal.proposedTimeWindow,
+      pickup: proposal.pickup,
+      dropoff: proposal.dropoff,
+      bumpTierId: bump,
+      note,
     };
   }
   return {
-    ok: true,
-    value: {
-      category: "deliver",
-      proposedDate: input.proposal.proposedDate,
-      proposedTimeWindow: input.proposal.proposedTimeWindow,
-      pickupLocation: pickup,
-      deliveryLocation: destination,
-      bumpTierId: input.proposal.bumpTierId ?? null,
-      note: input.proposal.note ?? null,
-    },
+    category: "deliver",
+    proposedDate: proposal.proposedDate,
+    proposedTimeWindow: proposal.proposedTimeWindow,
+    pickup: proposal.pickup,
+    delivery: proposal.delivery,
+    bumpTierId: bump,
+    note,
   };
 }
 
-export function revisionStatusTimestampsAreLegal(input: {
-  status: string;
-  supersededAt: string | null;
-  respondedAt: string | null;
-}): boolean {
-  const superseded = input.supersededAt != null;
-  const responded = input.respondedAt != null;
-  if (superseded && responded) return false;
-  switch (input.status) {
-    case "current":
-    case "expired":
-    case "invalidated":
-      return !superseded && !responded;
-    case "superseded":
-      return superseded && !responded;
-    case "accepted":
-    case "rejected":
-      return responded && !superseded;
-    default:
-      return false;
-  }
+export function proposalHasOverride(proposal: CanonicalProposal): boolean {
+  if (proposal.pickup.mode === "override") return true;
+  if (proposal.category === "travel") return proposal.dropoff.mode === "override";
+  return proposal.delivery.mode === "override";
 }
 
-export function quoteIsLegal(quote: ServerMatchRequestQuote | null): quote is ServerMatchRequestQuote {
+export function demandDefaultLocation(): RequestLocationChoiceV1 {
+  return { mode: "demand_post_default" };
+}
+
+export function quoteIsLegal(
+  quote: ServerMatchRequestQuote | null,
+): quote is ServerMatchRequestQuote {
   if (quote == null) return false;
   return (
     Number.isInteger(quote.pricingVersion) &&
@@ -486,12 +595,105 @@ export function buildProductionServerQuote(): ServerMatchRequestQuote | null {
   return null;
 }
 
-export function digestCanonicalProposal(proposal: CanonicalProposal): string {
-  return createHash("md5").update(JSON.stringify(proposal), "utf8").digest("hex");
+function stableLocation(choice: RequestLocationChoiceV1): unknown {
+  if (choice.mode === "demand_post_default") return { mode: "demand_post_default" };
+  return {
+    mode: "override",
+    location: {
+      locationVersion: choice.location.locationVersion,
+      displayLabel: choice.location.displayLabel,
+      latitude: choice.location.latitude,
+      longitude: choice.location.longitude,
+      precision: choice.location.precision,
+      timezoneName: choice.location.timezoneName,
+    },
+  };
 }
 
-export function digestServerQuote(quote: ServerMatchRequestQuote): string {
-  return createHash("md5").update(JSON.stringify(quote), "utf8").digest("hex");
+export function stableCanonicalProposal(proposal: CanonicalProposal): string {
+  if (proposal.category === "travel") {
+    return JSON.stringify({
+      category: "travel",
+      proposedDate: proposal.proposedDate,
+      proposedTimeWindow: proposal.proposedTimeWindow,
+      pickup: stableLocation(proposal.pickup),
+      dropoff: stableLocation(proposal.dropoff),
+      bumpTierId: proposal.bumpTierId,
+      note: proposal.note,
+    });
+  }
+  return JSON.stringify({
+    category: "deliver",
+    proposedDate: proposal.proposedDate,
+    proposedTimeWindow: proposal.proposedTimeWindow,
+    pickup: stableLocation(proposal.pickup),
+    delivery: stableLocation(proposal.delivery),
+    bumpTierId: proposal.bumpTierId,
+    note: proposal.note,
+  });
+}
+
+export function computeIdempotencyPayloadHash(input: {
+  actorUserId: string;
+  initiatorPostId: string;
+  counterpartPostId: string;
+  clientRequestId: string;
+  clientRevisionId: string;
+  proposal: CanonicalProposal;
+  contactPreference: ContactPreference;
+  whatsappAvailable: boolean;
+  viberAvailable: boolean;
+  contactCodeHash: string;
+}): string {
+  const payload = [
+    input.actorUserId,
+    input.initiatorPostId,
+    input.counterpartPostId,
+    input.clientRequestId,
+    input.clientRevisionId,
+    stableCanonicalProposal(input.proposal),
+    input.contactPreference,
+    input.whatsappAvailable ? "true" : "false",
+    input.viberAvailable ? "true" : "false",
+    input.contactCodeHash,
+  ].join("\n");
+  return createHash("sha256").update(payload, "utf8").digest("hex");
+}
+
+export function revisionStatusTimestampsAreLegal(input: {
+  status: string;
+  supersededAt: string | null;
+  respondedAt: string | null;
+}): boolean {
+  const superseded = input.supersededAt != null;
+  const responded = input.respondedAt != null;
+  if (superseded && responded) return false;
+  switch (input.status) {
+    case "current":
+    case "expired":
+    case "invalidated":
+      return !superseded && !responded;
+    case "superseded":
+      return superseded && !responded;
+    case "accepted":
+    case "rejected":
+      return responded && !superseded;
+    default:
+      return false;
+  }
+}
+
+export function compositeRevisionPointerHolds(input: {
+  requestId: string;
+  pointerRevisionId: string | null;
+  revisionId: string;
+  revisionRequestId: string;
+}): boolean {
+  if (input.pointerRevisionId == null) return true;
+  return (
+    input.pointerRevisionId === input.revisionId &&
+    input.requestId === input.revisionRequestId
+  );
 }
 
 export function httpStatusForMatchRequestError(errorKey: string): number {
@@ -512,6 +714,7 @@ export function httpStatusForMatchRequestError(errorKey: string): number {
       return 429;
     case MATCH_REQUEST_ERROR.alreadyOpen:
     case MATCH_REQUEST_ERROR.idempotencyConflict:
+    case MATCH_REQUEST_ERROR.notCurrent:
     case MATCH_REQUEST_ERROR.postUnavailable:
     case MATCH_REQUEST_ERROR.notEligible:
     case MATCH_REQUEST_ERROR.roleMismatch:
@@ -519,6 +722,7 @@ export function httpStatusForMatchRequestError(errorKey: string): number {
     case MATCH_REQUEST_ERROR.categoryNotSupported:
     case MATCH_REQUEST_ERROR.creationDisabled:
     case MATCH_REQUEST_ERROR.pricingNotReady:
+    case MATCH_REQUEST_ERROR.locationOverrideNotReady:
     case MATCH_REQUEST_ERROR.phoneRequired:
       return 409;
     default:
@@ -601,10 +805,13 @@ export function evaluateMatchRequestEligibility(input: {
 
 export function extractWriterErrorKey(message: string): string | null {
   const match = MATCH_REQUEST_ERROR_KEYS.find((key) => message.includes(key));
-  return match ?? (message.includes("error.server_configuration") ? MATCH_REQUEST_ERROR.serverConfiguration : null);
+  return match ??
+    (message.includes("error.server_configuration")
+      ? MATCH_REQUEST_ERROR.serverConfiguration
+      : null);
 }
 
-export type SimulatedPost = MatchAdmissionPost & { origin_gps?: unknown; destination_gps?: unknown };
+export type SimulatedPost = MatchAdmissionPost;
 export type SimulatedProfile = { id: string; phone: string };
 export type SimulatedInvitation = {
   id: string;
@@ -618,6 +825,7 @@ export type SimulatedInvitation = {
   client_request_id: string;
   disclosure_mode: string;
   expires_at: string;
+  invalidated_at: string | null;
 };
 export type SimulatedRequest = {
   id: string;
@@ -633,11 +841,7 @@ export type SimulatedRequest = {
   updated_at: string;
   current_revision_id: string;
   accepted_revision_id: string | null;
-  request_assertion: {
-    admissionDigest: string;
-    proposalDigest: string;
-    quoteDigest: string;
-  };
+  idempotency_payload_hash: string;
 };
 export type SimulatedRevision = {
   id: string;
@@ -646,6 +850,7 @@ export type SimulatedRevision = {
   status: string;
   client_revision_id: string;
   proposal_payload: CanonicalProposal;
+  quote: ServerMatchRequestQuote;
   contact_preference: ContactPreference;
 };
 export type SimulatedGrant = {
@@ -655,6 +860,7 @@ export type SimulatedGrant = {
   allowed_channels: string[];
   preferred_channel: string;
   expires_at: string;
+  revoked_at: string | null;
 };
 
 export type SimulatedWriterState = {
@@ -687,9 +893,8 @@ export function evaluateMatchRequestWriter(
     clientRequestId: string;
     clientRevisionId: string;
     contactCodeHash: string;
-    admissionDigest: string;
-    proposalDigest: string;
-    quoteDigest: string;
+    idempotencyPayloadHash: string;
+    admissionFactsHash: string;
     proposal: CanonicalProposal;
     quote: ServerMatchRequestQuote;
     contactPreference: ContactPreference;
@@ -707,7 +912,8 @@ export function evaluateMatchRequestWriter(
   if (
     !isUuid(input.actorUserId) ||
     !isUuid(input.initiatorPostId) ||
-    !isContactCodeHash(input.contactCodeHash)
+    !isContactCodeHash(input.contactCodeHash) ||
+    !/^[0-9a-f]{64}$/.test(input.idempotencyPayloadHash)
   ) {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.invalidInput, state: next };
   }
@@ -719,22 +925,28 @@ export function evaluateMatchRequestWriter(
   if (existing) {
     const inv = next.invitations.find((row) => row.id === existing.invitation_id);
     const rev = next.revisions.find((row) => row.id === existing.current_revision_id);
+    if (!inv || !rev || rev.request_id !== existing.id) {
+      return { ok: false, errorKey: MATCH_REQUEST_ERROR.inconsistentState, state: next };
+    }
     const same =
-      inv &&
-      rev &&
-      existing.status === "pending" &&
-      rev.status === "current" &&
-      inv.initiator_post_id === input.initiatorPostId &&
+      existing.idempotency_payload_hash === input.idempotencyPayloadHash &&
       rev.client_revision_id === input.clientRevisionId &&
       inv.contact_code_hash === input.contactCodeHash &&
-      existing.request_assertion.proposalDigest === input.proposalDigest &&
-      existing.request_assertion.quoteDigest === input.quoteDigest &&
       ((input.initiatorPostId === existing.demand_post_id &&
         input.counterpartPostId === existing.provider_post_id) ||
         (input.initiatorPostId === existing.provider_post_id &&
           input.counterpartPostId === existing.demand_post_id));
     if (!same) {
       return { ok: false, errorKey: MATCH_REQUEST_ERROR.idempotencyConflict, state: next };
+    }
+    const open =
+      existing.status === "pending" &&
+      rev.status === "current" &&
+      Date.parse(existing.expires_at) > Date.parse(next.now) &&
+      Date.parse(rev.status === "current" ? existing.expires_at : existing.expires_at) >
+        Date.parse(next.now);
+    if (!open) {
+      return { ok: false, errorKey: MATCH_REQUEST_ERROR.notCurrent, state: next };
     }
     return {
       ok: true,
@@ -754,6 +966,9 @@ export function evaluateMatchRequestWriter(
   }
   if (!next.config.matching_request_creation_enabled) {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.creationDisabled, state: next };
+  }
+  if (proposalHasOverride(input.proposal)) {
+    return { ok: false, errorKey: MATCH_REQUEST_ERROR.locationOverrideNotReady, state: next };
   }
   if (!quoteIsLegal(input.quote)) {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.pricingNotReady, state: next };
@@ -787,13 +1002,13 @@ export function evaluateMatchRequestWriter(
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.categoryNotSupported, state: next };
   }
   if (
-    input.admissionDigest &&
-    input.admissionDigest !== matchAdmissionDigestHex(initiator, counterpart)
+    !/^[0-9a-f]{64}$/.test(input.admissionFactsHash) ||
+    input.admissionFactsHash !== matchAdmissionDigestHex(initiator, counterpart)
   ) {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.notEligible, state: next };
   }
   const profile = next.profiles.find((row) => row.id === input.actorUserId);
-  if (!profile || profile.phone.trim() === "") {
+  if (!profile || !isCanonicalStoredPhone(profile.phone)) {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.phoneRequired, state: next };
   }
   const channels = ["phone"];
@@ -813,9 +1028,22 @@ export function evaluateMatchRequestWriter(
   );
   if (pending) {
     if (Date.parse(pending.expires_at) <= nowMs) {
-      pending.status = "expired";
+      const expired = expireOpenPair(next, pending, nowMs);
+      if (!expired.ok) return expired;
     } else {
       return { ok: false, errorKey: MATCH_REQUEST_ERROR.alreadyOpen, state: next };
+    }
+  }
+  const openInv = next.invitations.find(
+    (row) =>
+      row.demand_post_id === demandId &&
+      row.provider_post_id === providerId &&
+      row.status === "open",
+  );
+  if (openInv) {
+    const linked = next.requests.find((row) => row.invitation_id === openInv.id);
+    if (!linked || linked.status !== "expired") {
+      return { ok: false, errorKey: MATCH_REQUEST_ERROR.inconsistentState, state: next };
     }
   }
   const openCount = next.requests.filter(
@@ -855,6 +1083,7 @@ export function evaluateMatchRequestWriter(
     client_request_id: input.clientRequestId,
     disclosure_mode: "recipient_contacts_initiator",
     expires_at: expiresAt,
+    invalidated_at: null,
   });
   next.requests.push({
     id: requestId,
@@ -870,11 +1099,7 @@ export function evaluateMatchRequestWriter(
     updated_at: next.now,
     current_revision_id: revisionId,
     accepted_revision_id: null,
-    request_assertion: {
-      admissionDigest: input.admissionDigest,
-      proposalDigest: input.proposalDigest,
-      quoteDigest: input.quoteDigest,
-    },
+    idempotency_payload_hash: input.idempotencyPayloadHash,
   });
   next.revisions.push({
     id: revisionId,
@@ -883,6 +1108,7 @@ export function evaluateMatchRequestWriter(
     status: "current",
     client_revision_id: input.clientRevisionId,
     proposal_payload: input.proposal,
+    quote: input.quote,
     contact_preference: input.contactPreference,
   });
   next.grants.push({
@@ -892,7 +1118,18 @@ export function evaluateMatchRequestWriter(
     allowed_channels: channels,
     preferred_channel: input.contactPreference,
     expires_at: expiresAt,
+    revoked_at: null,
   });
+  if (
+    !compositeRevisionPointerHolds({
+      requestId,
+      pointerRevisionId: revisionId,
+      revisionId,
+      revisionRequestId: requestId,
+    })
+  ) {
+    return { ok: false, errorKey: MATCH_REQUEST_ERROR.inconsistentState, state: next };
+  }
   return {
     ok: true,
     state: next,
@@ -908,4 +1145,33 @@ export function evaluateMatchRequestWriter(
       created: true,
     },
   };
+}
+
+function expireOpenPair(
+  next: SimulatedWriterState,
+  pending: SimulatedRequest,
+  nowMs: number,
+):
+  | { ok: true }
+  | { ok: false; errorKey: string; state: SimulatedWriterState } {
+  const rev = next.revisions.find((row) => row.id === pending.current_revision_id);
+  const inv = next.invitations.find((row) => row.id === pending.invitation_id);
+  const grant = next.grants.find((row) => row.invitation_id === pending.invitation_id);
+  if (!rev || rev.request_id !== pending.id || !inv || inv.id !== pending.invitation_id || !grant) {
+    return { ok: false, errorKey: MATCH_REQUEST_ERROR.inconsistentState, state: next };
+  }
+  if (
+    inv.demand_post_id !== pending.demand_post_id ||
+    inv.provider_post_id !== pending.provider_post_id
+  ) {
+    return { ok: false, errorKey: MATCH_REQUEST_ERROR.inconsistentState, state: next };
+  }
+  rev.status = "expired";
+  pending.status = "expired";
+  inv.status = "expired";
+  inv.invalidated_at = next.now;
+  if (grant.revoked_at == null || Date.parse(grant.revoked_at) > nowMs) {
+    grant.revoked_at = next.now;
+  }
+  return { ok: true };
 }

@@ -31,6 +31,31 @@ legacy AS (
       'inspect_match_contact_invitation_v95'
     )
 ),
+snapshot_fn AS (
+  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'read_match_request_candidate_snapshot_v95'
+),
+hash_fn AS (
+  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'match_request_admission_facts_hash_v95'
+),
+req_oid AS (
+  SELECT to_regclass('public.match_requests') AS oid
+),
+rev_oid AS (
+  SELECT to_regclass('public.match_request_revisions') AS oid
+),
+req_checks AS (
+  SELECT c.conname, c.contype, pg_get_constraintdef(c.oid, false) AS def
+  FROM pg_catalog.pg_constraint c
+  WHERE c.conrelid = (SELECT oid FROM req_oid)
+),
 roles AS (
   SELECT
     (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'anon') AS anon_oid,
@@ -279,6 +304,62 @@ all_checks AS (
     ) THEN 'PASS' ELSE 'FAIL' END,
     'pointers',
     'current and accepted revision ids'
+  UNION ALL SELECT 231, 'request', 'idempotency payload hash column',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM cols
+      WHERE attrelid = 'public.match_requests'::regclass
+        AND attname = 'idempotency_payload_hash'
+        AND typ = 'text' AND attnotnull
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'text not null',
+    'idempotency_payload_hash text NOT NULL'
+  UNION ALL SELECT 232, 'request', 'idempotency payload hash check',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM req_checks
+      WHERE conname = 'match_requests_idempotency_payload_hash_check'
+        AND def LIKE '%^[0-9a-f]{64}$%'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'check',
+    '64 lowercase hex'
+  UNION ALL SELECT 233, 'request', 'composite current revision fk',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM req_checks
+      WHERE conname = 'match_requests_current_revision_pair_fkey'
+        AND def ILIKE '%current_revision_id%'
+        AND def ILIKE '%match_request_revisions%'
+        AND def ILIKE '%RESTRICT%'
+        AND def ILIKE '%DEFERRABLE%'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'composite-fk',
+    '(current_revision_id, id) same request'
+  UNION ALL SELECT 234, 'request', 'composite accepted revision fk',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM req_checks
+      WHERE conname = 'match_requests_accepted_revision_pair_fkey'
+        AND def ILIKE '%accepted_revision_id%'
+        AND def ILIKE '%match_request_revisions%'
+        AND def ILIKE '%RESTRICT%'
+        AND def ILIKE '%DEFERRABLE%'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'composite-fk',
+    '(accepted_revision_id, id) same request'
+  UNION ALL SELECT 235, 'request', 'old single-column revision fks absent',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM req_checks
+      WHERE conname IN (
+        'match_requests_current_revision_id_fkey',
+        'match_requests_accepted_revision_id_fkey'
+      )
+    ) THEN 'FAIL' ELSE 'PASS' END,
+    'absent',
+    'no cross-thread single-column pointer fk'
+  UNION ALL SELECT 236, 'revision', 'id request_id unique',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rev_checks
+      WHERE contype = 'u' AND conname = 'match_request_revisions_id_request_id_key'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    'unique',
+    'UNIQUE (id, request_id)'
   UNION ALL SELECT 300, 'function', 'writer count',
     CASE WHEN (SELECT count(*) FROM writer) = 1 THEN 'PASS' ELSE 'FAIL' END,
     (SELECT count(*)::text FROM writer),
@@ -389,6 +470,66 @@ all_checks AS (
         'EXECUTE'
       ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
     'authenticated',
+    'false'
+  UNION ALL SELECT 316, 'function', 'writer omits unbound digest params',
+    CASE WHEN (SELECT count(*) FROM writer) <> 1 THEN 'FAIL'
+      WHEN EXISTS (
+        SELECT 1 FROM writer e, unnest(e.proargnames) n
+        WHERE n IN ('p_proposal_digest', 'p_quote_digest')
+      ) THEN 'FAIL' ELSE 'PASS' END,
+    'no-digest-args',
+    'p_idempotency_payload_hash only'
+  UNION ALL SELECT 317, 'function', 'writer uses now not timezone utc',
+    CASE WHEN (SELECT count(*) FROM writer) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM writer) LIKE '%timezone(''utc'', now())%' THEN 'FAIL'
+      WHEN (SELECT prosrc FROM writer) LIKE '%v_now timestamptz := now()%' THEN 'PASS'
+      ELSE 'FAIL' END,
+    'now()',
+    'timestamptz now()'
+  UNION ALL SELECT 318, 'function', 'writer phone uses digit boundary',
+    CASE WHEN (SELECT count(*) FROM writer) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM writer) LIKE '%^[1-9][0-9]{7,14}$%'
+       AND (SELECT prosrc FROM writer) LIKE '%profiles%'
+      THEN 'PASS' ELSE 'FAIL' END,
+    'canonical-digits',
+    'not arbitrary nonempty phone'
+  UNION ALL SELECT 319, 'function', 'writer expires four layers',
+    CASE WHEN (SELECT count(*) FROM writer) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM writer) LIKE '%error.match_request_inconsistent_state%'
+       AND (SELECT prosrc FROM writer) LIKE '%status = ''expired''%'
+       AND (SELECT prosrc FROM writer) LIKE '%revoked_at%'
+      THEN 'PASS' ELSE 'FAIL' END,
+    'four-layer',
+    'revision/request/invitation/grant'
+  UNION ALL SELECT 334, 'function', 'snapshot rpc count',
+    CASE WHEN (SELECT count(*) FROM snapshot_fn) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT count(*)::text FROM snapshot_fn),
+    '1'
+  UNION ALL SELECT 335, 'function', 'admission hash rpc count',
+    CASE WHEN (SELECT count(*) FROM hash_fn) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT count(*)::text FROM hash_fn),
+    '1'
+  UNION ALL SELECT 336, 'acl', 'snapshot service_role execute',
+    CASE
+      WHEN (SELECT count(*) FROM snapshot_fn) <> 1 THEN NULL
+      WHEN (SELECT service_role_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT service_role_oid FROM roles),
+        (SELECT oid FROM snapshot_fn),
+        'EXECUTE'
+      ) IS TRUE THEN 'PASS' ELSE 'FAIL' END,
+    'service_role',
+    'true'
+  UNION ALL SELECT 337, 'acl', 'snapshot anon execute denied',
+    CASE
+      WHEN (SELECT count(*) FROM snapshot_fn) <> 1 THEN NULL
+      WHEN (SELECT anon_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT anon_oid FROM roles),
+        (SELECT oid FROM snapshot_fn),
+        'EXECUTE'
+      ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
+    'anon',
     'false'
   UNION ALL SELECT 333, 'acl', 'inspect service_role execute',
     CASE

@@ -7,35 +7,104 @@ import {
   readContactCodePepper,
 } from "@/lib/matching/contactInvitationCode";
 import { runMatchRequestCreate } from "@/lib/matching/matchRequestCreate";
-import { buildProductionServerQuote } from "@/lib/matching/matchRequestCreateCore";
+import {
+  buildProductionServerQuote,
+  isCanonicalStoredPhone,
+} from "@/lib/matching/matchRequestCreateCore";
 import {
   loadMatchAdmissionThresholds,
   scoreOfficialMatchAdmissionRoute,
 } from "@/lib/matching/matchAdmissionServer";
 import type { MatchAdmissionPost } from "@/lib/matching/matchAdmissionPolicy";
 
-const POST_SELECT = [
-  "id",
-  "user_id",
-  "post_type",
-  "category",
-  "status",
-  "departure_date",
-  "departure_time_window",
-  "service_time_window",
-  "transport_mode",
-  "escort_seats",
-  "max_companions",
-  "count_small",
-  "count_medium",
-  "count_large",
-  "count_xlarge",
-  "origin_address",
-  "destination_address",
-  "waypoints",
-  "origin_gps",
-  "destination_gps",
-].join(", ");
+type SnapshotRow = {
+  admission_facts_hash: string;
+  left_id: string;
+  left_user_id: string;
+  left_post_type: string;
+  left_category: string;
+  left_status: string;
+  left_departure_date: string | null;
+  left_departure_time_window: string | null;
+  left_service_time_window: string | null;
+  left_transport_mode: string | null;
+  left_escort_seats: number | null;
+  left_max_companions: number | null;
+  left_count_small: number | null;
+  left_count_medium: number | null;
+  left_count_large: number | null;
+  left_count_xlarge: number | null;
+  left_origin_address: string | null;
+  left_destination_address: string | null;
+  left_waypoints: string[] | null;
+  left_origin_gps_ewkb: string | null;
+  left_destination_gps_ewkb: string | null;
+  left_origin_lat: number | null;
+  left_origin_lng: number | null;
+  left_destination_lat: number | null;
+  left_destination_lng: number | null;
+  right_id: string;
+  right_user_id: string;
+  right_post_type: string;
+  right_category: string;
+  right_status: string;
+  right_departure_date: string | null;
+  right_departure_time_window: string | null;
+  right_service_time_window: string | null;
+  right_transport_mode: string | null;
+  right_escort_seats: number | null;
+  right_max_companions: number | null;
+  right_count_small: number | null;
+  right_count_medium: number | null;
+  right_count_large: number | null;
+  right_count_xlarge: number | null;
+  right_origin_address: string | null;
+  right_destination_address: string | null;
+  right_waypoints: string[] | null;
+  right_origin_gps_ewkb: string | null;
+  right_destination_gps_ewkb: string | null;
+  right_origin_lat: number | null;
+  right_origin_lng: number | null;
+  right_destination_lat: number | null;
+  right_destination_lng: number | null;
+};
+
+function postFromSnapshot(
+  side: "left" | "right",
+  row: SnapshotRow,
+): MatchAdmissionPost {
+  const p = (name: string) => row[`${side}_${name}` as keyof SnapshotRow];
+  const lat = p("origin_lat") as number | null;
+  const lng = p("origin_lng") as number | null;
+  const dlat = p("destination_lat") as number | null;
+  const dlng = p("destination_lng") as number | null;
+  return {
+    id: String(p("id")),
+    user_id: String(p("user_id")),
+    post_type: String(p("post_type")),
+    category: String(p("category")),
+    status: String(p("status")),
+    departure_date: (p("departure_date") as string | null) ?? null,
+    departure_time_window: (p("departure_time_window") as string | null) ?? null,
+    service_time_window: (p("service_time_window") as string | null) ?? null,
+    transport_mode: (p("transport_mode") as string | null) ?? null,
+    escort_seats: (p("escort_seats") as number | null) ?? null,
+    max_companions: (p("max_companions") as number | null) ?? null,
+    count_small: (p("count_small") as number | null) ?? null,
+    count_medium: (p("count_medium") as number | null) ?? null,
+    count_large: (p("count_large") as number | null) ?? null,
+    count_xlarge: (p("count_xlarge") as number | null) ?? null,
+    origin_address: (p("origin_address") as string | null) ?? null,
+    destination_address: (p("destination_address") as string | null) ?? null,
+    waypoints: (p("waypoints") as string[] | null) ?? null,
+    origin_gps_ewkb: (p("origin_gps_ewkb") as string | null) ?? null,
+    destination_gps_ewkb: (p("destination_gps_ewkb") as string | null) ?? null,
+    origin_gps:
+      lat != null && lng != null ? { lat, lng } : null,
+    destination_gps:
+      dlat != null && dlng != null ? { lat: dlat, lng: dlng } : null,
+  };
+}
 
 export async function POST(request: Request) {
   const result = await runMatchRequestCreate({
@@ -60,20 +129,27 @@ export async function POST(request: Request) {
       const row = Array.isArray(data) ? data[0] : data;
       return row;
     },
-    loadPosts: async (admin, ids) => {
+    loadSnapshot: async (admin, ids) => {
       const client = admin as SupabaseClient;
-      const { data, error } = await client
-        .from("posts")
-        .select(POST_SELECT)
-        .in("id", [ids.initiatorPostId, ids.counterpartPostId]);
-      if (error) throw new Error("post_lookup_failed");
-      const rows = (data ?? []) as unknown as MatchAdmissionPost[];
+      const { data, error } = await client.rpc(
+        "read_match_request_candidate_snapshot_v95",
+        {
+          p_left_post_id: ids.initiatorPostId,
+          p_right_post_id: ids.counterpartPostId,
+        },
+      );
+      if (error) throw new Error(error.message ?? "snapshot_failed");
+      const row = (Array.isArray(data) ? data[0] : data) as SnapshotRow | undefined;
+      if (!row) {
+        return { initiator: null, counterpart: null, admissionFactsHash: "" };
+      }
       return {
-        initiator: rows.find((row) => row.id === ids.initiatorPostId) ?? null,
-        counterpart: rows.find((row) => row.id === ids.counterpartPostId) ?? null,
+        initiator: postFromSnapshot("left", row),
+        counterpart: postFromSnapshot("right", row),
+        admissionFactsHash: row.admission_facts_hash,
       };
     },
-    loadActorPhonePresent: async (admin, actorUserId) => {
+    loadActorPhoneCanonical: async (admin, actorUserId) => {
       const client = admin as SupabaseClient;
       const { data, error } = await client
         .from("profiles")
@@ -81,8 +157,9 @@ export async function POST(request: Request) {
         .eq("id", actorUserId)
         .maybeSingle();
       if (error) throw new Error("profile_lookup_failed");
-      const phone = typeof data?.phone === "string" ? data.phone.trim() : "";
-      return phone.length > 0;
+      return isCanonicalStoredPhone(
+        typeof data?.phone === "string" ? data.phone : null,
+      );
     },
     scoreRoute: (initiator, counterpart) =>
       scoreOfficialMatchAdmissionRoute({ left: initiator, right: counterpart }),
@@ -97,9 +174,8 @@ export async function POST(request: Request) {
         p_client_request_id: args.clientRequestId,
         p_client_revision_id: args.clientRevisionId,
         p_contact_code_hash: args.contactCodeHash,
-        p_admission_digest: args.admissionDigest,
-        p_proposal_digest: args.proposalDigest,
-        p_quote_digest: args.quoteDigest,
+        p_idempotency_payload_hash: args.idempotencyPayloadHash,
+        p_admission_facts_hash: args.admissionFactsHash,
         p_proposal_payload: args.proposalPayload,
         p_pricing_version: args.quote.pricingVersion,
         p_pricing_country_code: args.quote.pricingCountryCode,

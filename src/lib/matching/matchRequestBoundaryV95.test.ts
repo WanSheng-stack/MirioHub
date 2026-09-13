@@ -1,7 +1,6 @@
 /**
- * PHASE 6.7C.1B.2A.1 — v95 inventory UNION column alignment.
- * Static catalog checks, PUBLIC ACL helpers, and top-level SELECT list counts.
- * Inventory SQL has not been executed against PostgreSQL or Supabase.
+ * PHASE 6.7C.1B.2A.2 — v95 inventory catalog "char" cast + UNION columns.
+ * Static catalog checks. Inventory SQL has not been executed against PostgreSQL.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
 
@@ -22,7 +21,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "d01a5dbfa85a88dbe42ae6feb9294587a5f768fd";
+const PHASE_BASELINE = "981b6b508a0573d4801ebaf1446e6b582fe1166b";
 const INVENTORY_RESULT_COLUMNS = 38;
 const INVENTORY_UNION_BRANCHES = 13;
 const V95_REL =
@@ -556,6 +555,24 @@ assert.equal(inventoryFinalItems[26], "acl_privilege");
 assert.equal(inventoryFinalItems[27], "acl_status");
 assert.equal(inventoryFinalItems[37], "object_definition");
 
+assert.equal(/\|\|\s*d\.deptype(?!::text)\b/.test(inventorySql), false);
+assert.equal(/\|\|\s*d\.deptype\s*,/.test(inventorySql), false);
+const ownedSequenceItems = inventoryUnionLists.find(
+  (items) => items[1] === "'owned_sequence'",
+);
+assert.ok(ownedSequenceItems);
+assert.equal(ownedSequenceItems.length, INVENTORY_RESULT_COLUMNS);
+assert.ok(
+  ownedSequenceItems[6]?.includes(
+    "'owned_sequence:' || cls.table_name || '.' || a.attname || '.' || d.deptype::text",
+  ),
+);
+assert.equal(ownedSequenceItems[6]?.includes("|| d.deptype::text"), true);
+assert.equal(/\|\|\s*d\.deptype(?!::text)\b/.test(ownedSequenceItems[6]!), false);
+assert.equal(ownedSequenceItems[7], "d.deptype::text");
+assert.equal(ownedSequenceItems[29], "d.deptype::text");
+assert.ok(ownedSequenceItems[37]?.includes("'deptype=' || d.deptype::text"));
+
 assert.ok(verifySql.includes("snapshot single posts read"));
 assert.ok(verifySql.includes("hash helper does not read posts"));
 assert.ok(verifySql.includes("writer reuses facts helper after lock"));
@@ -698,7 +715,7 @@ assert.equal(
   existsSync(join(repoRoot, "src/lib/matching/contactInvitationCreate.ts")),
   false,
 );
-assert.ok(ledger.includes("6.7C.1B.2A.1"));
+assert.ok(ledger.includes("6.7C.1B.2A.2"));
 assert.ok(ledger.includes("aclexplode"));
 assert.ok(ledger.includes("missing_oid:<oid>"));
 

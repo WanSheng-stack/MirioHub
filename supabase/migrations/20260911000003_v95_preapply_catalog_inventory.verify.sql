@@ -372,7 +372,7 @@ inventory AS (
   SELECT
     'table_fingerprint', 'owned_sequence', cls.schema_name, cls.table_name,
     ns.nspname || '.' || s.relname, 0,
-    'owned_sequence:' || cls.table_name || '.' || a.attname || '.' || d.deptype,
+    'owned_sequence:' || cls.table_name || '.' || a.attname || '.' || d.deptype::text,
     d.deptype::text, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     d.deptype::text, NULL, NULL, NULL, NULL, NULL, NULL, NULL,

@@ -268,7 +268,7 @@ OWNER against PostGIS.
 
 ## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1B.2A.1 keeps v95 unexecuted and fail-closed.
+- **Current state:** PHASE 6.7C.1B.2A.2 keeps v95 unexecuted and fail-closed.
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading
@@ -281,7 +281,9 @@ OWNER against PostGIS.
   `aclexplode`/`grantee = 0`; named roles use real OIDs or
   `role_missing`. Policy `polroles` OID 0 is `PUBLIC`; unknown OIDs
   are `missing_oid:<oid>`. Inventory UNION branches share one 38-column
-  result schema. No live PostgreSQL/MVCC run was performed.
+  result schema. Owned-sequence `object_identity` casts
+  `pg_depend.deptype` to text before `||`. No live PostgreSQL/MVCC run
+  was performed.
   v95 still cannot apply until that inventory CSV is imported.
   Creation stays false. MatchRequestSheet stays unmounted.
 - **Still unresolved / later phases:** live catalog CSV import, v95 apply,

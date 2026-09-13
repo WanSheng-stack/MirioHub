@@ -268,20 +268,18 @@ OWNER against PostGIS.
 
 ## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1B.1 hardens the still-unexecuted v95
-  first-send writer. Exact retry uses `idempotency_payload_hash` (SHA-256
-  of stable request facts) and does not reload posts, OSRM, or quote.
-  Request revisions store sparse Demand-default location choices
-  (`mode=demand_post_default`); production overrides fail closed. Request
-  and revision use composite FKs. Expired same-pair rows sync request,
-  current revision, invitation, and grant. Admission facts come from one
-  snapshot RPC plus a SQL hash recomputed after lock. Phone must be
-  canonical stored digits, not any nonempty string. Profiles still have
-  no strong verified-phone flag; that remains an open-gate precondition.
-  `matching_request_creation_enabled` stays false. v95 cannot apply until
-  a live post-v94 catalog CSV is imported. MatchRequestSheet stays
-  unmounted. Cargo V2 / Travel subtypes that are not persisted on `posts`
-  are creation-enable blockers and are not covered by the admission hash.
+- **Current state:** PHASE 6.7C.1B.2 keeps v95 unexecuted and fail-closed.
+  The candidate snapshot is a single SQL statement: one MATERIALIZED
+  `posts` read feeds both returned fields and `admission_facts_hash`.
+  Shared helpers build jsonb facts and hash them without rereading
+  `posts`. The writer rebuilds that same jsonb after `FOR UPDATE`.
+  Exact retry still skips snapshot/OSRM/quote. The pre-apply inventory
+  now covers columns/defaults/identity, constraint deferrability,
+  indexes, RLS policies, table ACL, non-internal triggers, owned
+  sequences, the empty v93/v94 function set, and pgcrypto/PostGIS
+  prerequisites. No live PostgreSQL/MVCC run was performed. v95 still
+  cannot apply until that inventory CSV is imported. Creation stays
+  false. MatchRequestSheet stays unmounted.
 - **Still unresolved / later phases:** live catalog CSV import, v95 apply,
   request list, resend, accept/reject, contact DTO, MatchRequestSheet
   mount, country pricing, trusted location resolver, and contract

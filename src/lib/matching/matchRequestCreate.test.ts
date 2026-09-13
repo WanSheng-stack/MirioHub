@@ -8,11 +8,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateContactInvitationCode } from "@/lib/matching/contactInvitationCodeCore";
+import { ADMISSION_FACTS_FIELDS } from "@/lib/matching/matchAdmissionPolicy";
 import {
-  ADMISSION_FACTS_FIELDS,
-  matchAdmissionDigestHex,
-} from "@/lib/matching/matchAdmissionPolicy";
-import {
+  buildAdmissionPostFact,
   buildProductionServerQuote,
   canonicalizeBrowserProposal,
   compositeRevisionPointerHolds,
@@ -20,7 +18,9 @@ import {
   demandDefaultLocation,
   evaluateMatchRequestEligibility,
   evaluateMatchRequestWriter,
+  hashAdmissionFactsPair,
   httpStatusForMatchRequestError,
+  snapshotPairQueryAccepts,
   isCanonicalStoredPhone,
   MATCH_REQUEST_ERROR,
   parseLocationChoice,
@@ -123,7 +123,7 @@ const providerPost = {
   departure_time_window: "20:00-20:15",
 };
 const providerB = { ...providerPost, id: PROVIDER_B };
-const admissionHash = matchAdmissionDigestHex(demandPost, providerPost);
+const admissionHash = hashAdmissionFactsPair(demandPost, providerPost);
 
 const pair = generateCodeWithPepper(
   {
@@ -648,23 +648,63 @@ async function main() {
     ],
   );
   {
-    const base = matchAdmissionDigestHex(demandPost, providerPost);
-    const snapshot = { initiator: demandPost, counterpart: providerPost, admissionFactsHash: base };
+    const base = hashAdmissionFactsPair(demandPost, providerPost);
+    assert.equal(hashAdmissionFactsPair(providerPost, demandPost), base);
+    assert.notEqual(
+      hashAdmissionFactsPair({ ...demandPost, escort_seats: 2 }, providerPost),
+      base,
+    );
+    assert.notEqual(
+      hashAdmissionFactsPair({ ...demandPost, origin_gps_ewkb: "ffff" }, providerPost),
+      base,
+    );
+    assert.notEqual(
+      hashAdmissionFactsPair({ ...demandPost, count_small: 3 }, providerPost),
+      base,
+    );
+    assert.notEqual(
+      hashAdmissionFactsPair(
+        { ...demandPost, waypoints: ["A", "B"] },
+        providerPost,
+      ),
+      hashAdmissionFactsPair(
+        { ...demandPost, waypoints: ["B", "A"] },
+        providerPost,
+      ),
+    );
+    const pipeLeft = { ...demandPost, origin_address: "Belgrade|Novi Sad", destination_address: "" };
+    const pipeRight = { ...demandPost, origin_address: "Belgrade", destination_address: "Novi Sad" };
+    assert.notEqual(
+      JSON.stringify(buildAdmissionPostFact(pipeLeft)),
+      JSON.stringify(buildAdmissionPostFact(pipeRight)),
+    );
+    const nullAddr = buildAdmissionPostFact({ ...demandPost, origin_address: null });
+    const emptyAddr = buildAdmissionPostFact({ ...demandPost, origin_address: "" });
+    assert.notEqual(JSON.stringify(nullAddr), JSON.stringify(emptyAddr));
+    const extraField = { ...demandPost, share_mode: "public" } as typeof demandPost & {
+      share_mode: string;
+    };
+    assert.equal(hashAdmissionFactsPair(extraField, providerPost), base);
+    const unicode = { ...demandPost, origin_address: "贝尔格莱德\n|" };
+    assert.notEqual(
+      JSON.stringify(buildAdmissionPostFact(unicode)),
+      JSON.stringify(buildAdmissionPostFact(demandPost)),
+    );
     assert.equal(
-      matchAdmissionDigestHex(snapshot.initiator, snapshot.counterpart),
-      snapshot.admissionFactsHash,
+      snapshotPairQueryAccepts({ leftId: DEMAND, rightId: PROVIDER, foundIds: [DEMAND, PROVIDER] }),
+      true,
     );
-    assert.notEqual(
-      matchAdmissionDigestHex({ ...demandPost, escort_seats: 2 }, providerPost),
-      base,
+    assert.equal(
+      snapshotPairQueryAccepts({ leftId: PROVIDER, rightId: DEMAND, foundIds: [DEMAND, PROVIDER] }),
+      true,
     );
-    assert.notEqual(
-      matchAdmissionDigestHex({ ...demandPost, origin_gps_ewkb: "ffff" }, providerPost),
-      base,
+    assert.equal(
+      snapshotPairQueryAccepts({ leftId: DEMAND, rightId: PROVIDER, foundIds: [DEMAND] }),
+      false,
     );
-    assert.notEqual(
-      matchAdmissionDigestHex({ ...demandPost, count_small: 3 }, providerPost),
-      base,
+    assert.equal(
+      snapshotPairQueryAccepts({ leftId: DEMAND, rightId: DEMAND, foundIds: [DEMAND] }),
+      false,
     );
   }
 
@@ -748,7 +788,7 @@ async function main() {
         actorUserId: OTHER,
         initiatorPostId: PROVIDER,
         counterpartPostId: DEMAND,
-        admissionFactsHash: matchAdmissionDigestHex(providerPost, demandPost),
+        admissionFactsHash: hashAdmissionFactsPair(providerPost, demandPost),
         idempotencyPayloadHash: idemHash({
           actorUserId: OTHER,
           initiatorPostId: PROVIDER,
@@ -765,7 +805,7 @@ async function main() {
         actorUserId: OTHER,
         initiatorPostId: PROVIDER,
         counterpartPostId: DEMAND,
-        admissionFactsHash: matchAdmissionDigestHex(providerPost, demandPost),
+        admissionFactsHash: hashAdmissionFactsPair(providerPost, demandPost),
         idempotencyPayloadHash: idemHash({
           actorUserId: OTHER,
           initiatorPostId: PROVIDER,

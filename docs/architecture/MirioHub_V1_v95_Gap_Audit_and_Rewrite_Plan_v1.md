@@ -379,6 +379,7 @@ Cursor 完成第一阶段后必须停止。产品负责人审阅 diff 和输出�
 | --- | --- | --- |
 | 6.7C.1B | 重写 v95：首发请求原子边界 | 本文确认 |
 | 6.7C.1B.1 | 修复未执行 v95 的幂等、稀疏地点、关系完整性和 fail-fast guard | 6.7C.1B 代码审计；v95 仍不可执行，需先导入 post-v94 live catalog CSV |
+| 6.7C.1B.2 | 单 CTE 原子 admission snapshot + 完整 pre-apply catalog inventory | 1B.1；仍不可执行，需用户手工跑修正后的 inventory SQL 并导出 CSV |
 | 6.7C.2 | 请求列表、contact DTO、新 MatchRequestSheet 挂载 | v95 已验证 |
 | 6.7C.3 | revision 重发与拒绝 | 列表稳定 |
 | 6.7D.1 | accept 原子合同 + Demand 唯一性 | current revision 稳定 |

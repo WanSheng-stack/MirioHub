@@ -255,6 +255,8 @@ V1先导入塞尔维亚和实际需要的巴尔干地点。目录更新使用版
 - `describeTimeDifference`：排序/提示；
 - `validateProposedSchedule`：发送和接受的合法性边界。
 
+首发请求的准入事实与 `admission_facts_hash` 必须由同一条 SQL、同一次 `posts` 读取生成（MATERIALIZED CTE）。Hash 对已构造的 jsonb facts 计算，不再用裸 `|` 拼接，也不在 snapshot 内重新查询 `posts`。Writer 在锁帖后复用同一 facts/hash helper。浏览器不能提交或看到该 hash。该设计尚未在真实 PostgreSQL 并发环境验证。
+
 ### 7.2 路线公式
 
 继续保留：

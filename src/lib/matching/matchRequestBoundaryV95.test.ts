@@ -21,7 +21,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "1156d35834175a6b883d19099e824f8ef6772cfa";
+const PHASE_BASELINE = "fce1106831bf79df750860328e0688a699a425ca";
 const V95_REL =
   "supabase/migrations/20260911000003_create_contact_invitation_boundary_v95.sql";
 const V95_VERIFY_REL =
@@ -88,6 +88,7 @@ assert.ok(migration.includes("matching_request_creation_enabled boolean NOT NULL
 assert.ok(migration.includes("DEFERRABLE INITIALLY DEFERRED"));
 assert.equal(migration.includes("timezone('utc', now())"), false);
 assert.ok(guard.includes("post-v94 live catalog fixture missing"));
+assert.ok(guard.includes("run corrected 20260911000003_v95_preapply_catalog_inventory.verify.sql"));
 assert.ok(guard.includes("v95 is not executable"));
 assert.ok(guard.includes("btrim(regexp_replace"));
 assert.equal(guard.includes("replace(n, '::text'"), false);
@@ -106,6 +107,43 @@ assert.ok(verifySql.includes("writer phone uses digit boundary"));
 assert.ok(verifySql.includes("writer expires four layers"));
 assert.ok(verifySql.includes("snapshot rpc count"));
 
+function dollarBody(sql: string, tag: string): string {
+  const token = `$${tag}$`;
+  const start = sql.indexOf(token);
+  if (start < 0) return "";
+  const end = sql.indexOf(token, start + token.length);
+  if (end < 0) return "";
+  return sql.slice(start + token.length, end);
+}
+
+const snapshotBody = dollarBody(migration, "snap");
+const hashBody = dollarBody(migration, "hash");
+const factsBody = dollarBody(migration, "facts");
+const writerBody = dollarBody(migration, "fn");
+assert.ok(snapshotBody.includes("WITH pair AS MATERIALIZED"));
+assert.ok(snapshotBody.includes("decorated AS MATERIALIZED"));
+assert.equal(
+  snapshotBody.split("FROM public.posts").length - 1,
+  1,
+);
+assert.ok(snapshotBody.includes("jsonb_agg(d.fact ORDER BY d.id)"));
+assert.ok(snapshotBody.includes("p_left_post_id IS DISTINCT FROM p_right_post_id"));
+assert.ok(snapshotBody.includes("(SELECT count(*) FROM decorated) = 2"));
+assert.equal(snapshotBody.includes("match_request_admission_facts_hash_v95(p_left_post_id"), false);
+assert.equal(hashBody.includes("public.posts"), false);
+assert.ok(hashBody.includes("digest("));
+assert.equal(factsBody.includes("public.posts"), false);
+assert.ok(factsBody.includes("jsonb_build_object"));
+assert.ok(factsBody.includes("'origin_gps_ewkb'"));
+assert.equal(factsBody.includes("|| '|' ||"), false);
+assert.ok(writerBody.includes("FOR UPDATE"));
+assert.ok(writerBody.includes("match_request_admission_post_facts_v95"));
+assert.ok(writerBody.includes("match_request_admission_facts_hash_v95(v_facts)"));
+assert.ok(
+  writerBody.indexOf("match_request_admission_post_facts_v95") >
+    writerBody.indexOf("FOR UPDATE"),
+);
+
 const inventoryStatements = sqlBody(inventorySql)
   .split(";")
   .map((part) => part.trim())
@@ -113,7 +151,32 @@ const inventoryStatements = sqlBody(inventorySql)
 assert.equal(inventoryStatements.length, 1);
 assert.ok(inventorySql.includes("pg_get_constraintdef(c.oid, false)"));
 assert.ok(inventorySql.includes("pg_get_expr(ad.adbin, ad.adrelid)"));
+assert.ok(inventorySql.includes("attidentity"));
+assert.ok(inventorySql.includes("attgenerated"));
+assert.ok(inventorySql.includes("condeferrable"));
+assert.ok(inventorySql.includes("condeferred"));
+assert.ok(inventorySql.includes("convalidated"));
+assert.ok(inventorySql.includes("indisvalid"));
+assert.ok(inventorySql.includes("indisready"));
+assert.ok(inventorySql.includes("rls_policy"));
+assert.ok(inventorySql.includes("rls_policy_count"));
+assert.ok(inventorySql.includes("role_missing"));
+assert.ok(inventorySql.includes("table_acl"));
+assert.ok(inventorySql.includes("tgisinternal"));
+assert.ok(inventorySql.includes("owned_sequence"));
+assert.ok(inventorySql.includes("deptype IN ('a', 'i')"));
+assert.ok(inventorySql.includes("expected function set empty"));
+assert.ok(inventorySql.includes("pgcrypto"));
+assert.ok(inventorySql.includes("postgis"));
+assert.ok(inventorySql.includes("object_identity"));
+assert.equal(/prosrc/i.test(inventorySql), false);
+assert.equal(/posts\.origin_address|profiles\.phone/i.test(inventorySql), false);
+assert.ok(inventorySql.includes("fail-closed"));
+assert.ok(inventorySql.includes("ORDER BY"));
 assert.ok(existsSync(join(repoRoot, INVENTORY_REL)));
+assert.ok(verifySql.includes("snapshot single posts read"));
+assert.ok(verifySql.includes("hash helper does not read posts"));
+assert.ok(verifySql.includes("writer reuses facts helper after lock"));
 
 assert.ok(route.includes("create_match_request_v95"));
 assert.ok(route.includes("read_match_request_candidate_snapshot_v95"));

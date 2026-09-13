@@ -1,7 +1,8 @@
 /**
- * PHASE 6.7C.1B.1 — match-request create orchestration.
- * Exact retry uses only the stable idempotency payload hash.
- * create_match_request_v95 is the only success authority.
+ * PHASE 6.7C.1B.2 — match-request create orchestration.
+ * Exact retry uses only the stable idempotency payload hash and never
+ * loads the candidate snapshot. Snapshot hash is passed through from SQL
+ * as-is; this module does not rebuild the PostgreSQL hash.
  */
 
 import {

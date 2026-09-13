@@ -39,11 +39,19 @@ snapshot_fn AS (
     AND p.proname = 'read_match_request_candidate_snapshot_v95'
 ),
 hash_fn AS (
-  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc
+  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc,
+         p.proargtypes
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
     AND p.proname = 'match_request_admission_facts_hash_v95'
+),
+facts_fn AS (
+  SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig, p.prosrc
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'match_request_admission_post_facts_v95'
 ),
 req_oid AS (
   SELECT to_regclass('public.match_requests') AS oid
@@ -530,6 +538,82 @@ all_checks AS (
         'EXECUTE'
       ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
     'anon',
+    'false'
+  UNION ALL SELECT 338, 'function', 'facts helper count',
+    CASE WHEN (SELECT count(*) FROM facts_fn) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT count(*)::text FROM facts_fn),
+    '1'
+  UNION ALL SELECT 339, 'function', 'snapshot is sql language',
+    CASE WHEN (SELECT count(*) FROM snapshot_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM snapshot_fn) LIKE '%WITH pair AS MATERIALIZED%'
+       AND (SELECT prosrc FROM snapshot_fn) LIKE '%decorated AS MATERIALIZED%'
+      THEN 'PASS' ELSE 'FAIL' END,
+    'sql-cte',
+    'one MATERIALIZED posts CTE'
+  UNION ALL SELECT 340, 'function', 'snapshot single posts read',
+    CASE WHEN (SELECT count(*) FROM snapshot_fn) <> 1 THEN 'FAIL'
+      WHEN (
+        SELECT length(prosrc) - length(replace(prosrc, 'FROM public.posts', ''))
+        FROM snapshot_fn
+      ) / length('FROM public.posts') = 1
+      THEN 'PASS' ELSE 'FAIL' END,
+    'one-posts-scan',
+    'exactly one FROM public.posts'
+  UNION ALL SELECT 341, 'function', 'hash helper does not read posts',
+    CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM hash_fn) LIKE '%public.posts%' THEN 'FAIL'
+      WHEN (SELECT prosrc FROM hash_fn) LIKE '%digest(%' THEN 'PASS'
+      ELSE 'FAIL' END,
+    'jsonb-only',
+    'no posts reread'
+  UNION ALL SELECT 342, 'function', 'facts helper does not read posts',
+    CASE WHEN (SELECT count(*) FROM facts_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM facts_fn) LIKE '%public.posts%' THEN 'FAIL'
+      WHEN (SELECT prosrc FROM facts_fn) LIKE '%jsonb_build_object%' THEN 'PASS'
+      ELSE 'FAIL' END,
+    'jsonb-only',
+    'no posts reread'
+  UNION ALL SELECT 343, 'function', 'writer reuses facts helper after lock',
+    CASE WHEN (SELECT count(*) FROM writer) <> 1 THEN 'FAIL'
+      WHEN strpos((SELECT prosrc FROM writer), 'FOR UPDATE') = 0 THEN 'FAIL'
+      WHEN strpos((SELECT prosrc FROM writer), 'match_request_admission_post_facts_v95')
+        > strpos((SELECT prosrc FROM writer), 'FOR UPDATE')
+       AND (SELECT prosrc FROM writer) LIKE '%match_request_admission_facts_hash_v95(v_facts)%'
+      THEN 'PASS' ELSE 'FAIL' END,
+    'lock-then-hash',
+    'same helper after FOR UPDATE'
+  UNION ALL SELECT 344, 'acl', 'hash service_role execute',
+    CASE
+      WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN NULL
+      WHEN (SELECT service_role_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT service_role_oid FROM roles),
+        (SELECT oid FROM hash_fn),
+        'EXECUTE'
+      ) IS TRUE THEN 'PASS' ELSE 'FAIL' END,
+    'service_role',
+    'true'
+  UNION ALL SELECT 345, 'acl', 'hash anon execute denied',
+    CASE
+      WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN NULL
+      WHEN (SELECT anon_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT anon_oid FROM roles),
+        (SELECT oid FROM hash_fn),
+        'EXECUTE'
+      ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
+    'anon',
+    'false'
+  UNION ALL SELECT 346, 'acl', 'facts helper authenticated execute denied',
+    CASE
+      WHEN (SELECT count(*) FROM facts_fn) <> 1 THEN NULL
+      WHEN (SELECT authenticated_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT authenticated_oid FROM roles),
+        (SELECT oid FROM facts_fn),
+        'EXECUTE'
+      ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
+    'authenticated',
     'false'
   UNION ALL SELECT 333, 'acl', 'inspect service_role execute',
     CASE

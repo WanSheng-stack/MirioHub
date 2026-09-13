@@ -1,6 +1,7 @@
 /**
- * PHASE 6.7C.1B.1 — match-request parse, sparse locations, stable idempotency.
- * Pure helpers. Not a live PostgreSQL run.
+ * PHASE 6.7C.1B.2 — match-request parse, sparse locations, stable idempotency.
+ * Pure helpers. Not a live PostgreSQL run. TS admission-fact JSON is a
+ * contract mirror for collision tests, not a PostgreSQL MVCC proof.
  */
 
 import { createHash } from "node:crypto";
@@ -10,7 +11,6 @@ import {
 } from "@/lib/matching/contactInvitationCodeCore";
 import {
   evaluateMatchAdmission,
-  matchAdmissionDigestHex,
   validateProposedSchedule,
   type MatchAdmissionPost,
   type MatchAdmissionRouteScore,
@@ -696,6 +696,86 @@ export function compositeRevisionPointerHolds(input: {
   );
 }
 
+export const ADMISSION_FACT_JSON_KEYS = [
+  "id",
+  "user_id",
+  "post_type",
+  "category",
+  "status",
+  "departure_date",
+  "departure_time_window",
+  "service_time_window",
+  "transport_mode",
+  "escort_seats",
+  "max_companions",
+  "count_small",
+  "count_medium",
+  "count_large",
+  "count_xlarge",
+  "origin_address",
+  "destination_address",
+  "waypoints",
+  "origin_gps_ewkb",
+  "destination_gps_ewkb",
+] as const;
+
+/**
+ * Mirrors SQL jsonb_build_object keys for collision tests.
+ * Not a PostgreSQL jsonb::text byte match and not an MVCC proof.
+ */
+export function buildAdmissionPostFact(
+  post: MatchAdmissionPost,
+): Record<(typeof ADMISSION_FACT_JSON_KEYS)[number], unknown> {
+  return {
+    id: post.id,
+    user_id: post.user_id,
+    post_type: post.post_type,
+    category: post.category,
+    status: post.status,
+    departure_date: post.departure_date ?? null,
+    departure_time_window: post.departure_time_window ?? null,
+    service_time_window: post.service_time_window ?? null,
+    transport_mode: post.transport_mode ?? null,
+    escort_seats: post.escort_seats ?? null,
+    max_companions: post.max_companions ?? null,
+    count_small: post.count_small ?? null,
+    count_medium: post.count_medium ?? null,
+    count_large: post.count_large ?? null,
+    count_xlarge: post.count_xlarge ?? null,
+    origin_address: post.origin_address ?? null,
+    destination_address: post.destination_address ?? null,
+    waypoints: post.waypoints ?? null,
+    origin_gps_ewkb: post.origin_gps_ewkb ?? null,
+    destination_gps_ewkb: post.destination_gps_ewkb ?? null,
+  };
+}
+
+/** SQL snapshot WHERE contract only. Not a live PostgreSQL execution. */
+export function snapshotPairQueryAccepts(input: {
+  leftId: string | null;
+  rightId: string | null;
+  foundIds: string[];
+}): boolean {
+  if (input.leftId == null || input.rightId == null) return false;
+  if (input.leftId === input.rightId) return false;
+  const unique = new Set(input.foundIds);
+  return (
+    unique.size === 2 &&
+    unique.has(input.leftId) &&
+    unique.has(input.rightId)
+  );
+}
+
+export function hashAdmissionFactsPair(
+  left: MatchAdmissionPost,
+  right: MatchAdmissionPost,
+): string {
+  const facts = [buildAdmissionPostFact(left), buildAdmissionPostFact(right)].sort((a, b) =>
+    String(a.id).localeCompare(String(b.id)),
+  );
+  return createHash("sha256").update(JSON.stringify(facts), "utf8").digest("hex");
+}
+
 export function httpStatusForMatchRequestError(errorKey: string): number {
   switch (errorKey) {
     case MATCH_REQUEST_ERROR.unknownKey:
@@ -1003,7 +1083,7 @@ export function evaluateMatchRequestWriter(
   }
   if (
     !/^[0-9a-f]{64}$/.test(input.admissionFactsHash) ||
-    input.admissionFactsHash !== matchAdmissionDigestHex(initiator, counterpart)
+    input.admissionFactsHash !== hashAdmissionFactsPair(initiator, counterpart)
   ) {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.notEligible, state: next };
   }

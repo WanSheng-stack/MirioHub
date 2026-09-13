@@ -1,6 +1,4 @@
--- PHASE 6.7C.1B.1 — harden unexecuted v95 request boundary
--- Idempotency hash, sparse Demand-default locations, composite FKs,
--- four-layer expiry, admission snapshot, now(), phone digits.
+-- PHASE 6.7C.1B.2 — atomic admission snapshot + complete catalog inventory
 -- Unexecuted. No v96. Guard fail-closed until post-v94 catalog CSV exists.
 -- One user action: send a match request. The writer atomically creates
 -- the internal contact envelope, request thread, first current revision,
@@ -318,9 +316,18 @@ BEGIN
     RAISE EXCEPTION 'v95_guard: snapshot rpc already exists';
   END IF;
   IF to_regprocedure(
-    'public.match_request_admission_facts_hash_v95(uuid,uuid)'
+    'public.match_request_admission_facts_hash_v95(jsonb)'
   ) IS NOT NULL THEN
     RAISE EXCEPTION 'v95_guard: admission hash rpc already exists';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'match_request_admission_post_facts_v95'
+  ) THEN
+    RAISE EXCEPTION 'v95_guard: admission facts helper already exists';
   END IF;
 
   SELECT count(*)::int INTO fn_count
@@ -332,6 +339,7 @@ BEGIN
       'inspect_match_request_v95',
       'read_match_request_candidate_snapshot_v95',
       'match_request_admission_facts_hash_v95',
+      'match_request_admission_post_facts_v95',
       'create_match_contact_invitation_v95',
       'inspect_match_contact_invitation_v95'
     );
@@ -340,7 +348,7 @@ BEGIN
   END IF;
 
   RAISE EXCEPTION
-    'v95_guard: post-v94 live catalog fixture missing; run 20260911000003_v95_preapply_catalog_inventory.verify.sql and export CSV. v95 is not executable.';
+    'v95_guard: post-v94 live catalog fixture missing; run corrected 20260911000003_v95_preapply_catalog_inventory.verify.sql and export CSV. v95 is not executable.';
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -603,61 +611,129 @@ GRANT EXECUTE ON FUNCTION public.inspect_match_request_v95(uuid, uuid, uuid) TO 
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- ═══════════════════════════════════════════════════════════════════════════
--- 3b. admission snapshot / hash — one SQL canonical
+-- 3b. admission snapshot / shared hash — one posts read, jsonb facts
+-- Hash helpers never SELECT public.posts. Snapshot reads both target posts
+-- once in a MATERIALIZED CTE and derives returned fields and the hash from
+-- that same relation. This is the intended SQL shape, not a live MVCC proof.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE FUNCTION public.match_request_admission_facts_hash_v95(
-  p_left_post_id uuid,
-  p_right_post_id uuid
+CREATE FUNCTION public.match_request_admission_post_facts_v95(
+  p_id uuid,
+  p_user_id uuid,
+  p_post_type text,
+  p_category text,
+  p_status text,
+  p_departure_date date,
+  p_departure_time_window text,
+  p_service_time_window text,
+  p_transport_mode text,
+  p_escort_seats integer,
+  p_max_companions integer,
+  p_count_small integer,
+  p_count_medium integer,
+  p_count_large integer,
+  p_count_xlarge integer,
+  p_origin_address text,
+  p_destination_address text,
+  p_waypoints jsonb,
+  p_origin_gps public.geography,
+  p_destination_gps public.geography
 )
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $facts$
+  SELECT jsonb_build_object(
+    'id', p_id,
+    'user_id', p_user_id,
+    'post_type', p_post_type,
+    'category', p_category,
+    'status', p_status,
+    'departure_date', p_departure_date,
+    'departure_time_window', p_departure_time_window,
+    'service_time_window', p_service_time_window,
+    'transport_mode', p_transport_mode,
+    'escort_seats', p_escort_seats,
+    'max_companions', p_max_companions,
+    'count_small', p_count_small,
+    'count_medium', p_count_medium,
+    'count_large', p_count_large,
+    'count_xlarge', p_count_xlarge,
+    'origin_address', p_origin_address,
+    'destination_address', p_destination_address,
+    'waypoints', p_waypoints,
+    'origin_gps_ewkb',
+      CASE
+        WHEN p_origin_gps IS NULL THEN NULL
+        ELSE encode(public.st_asewkb(p_origin_gps::public.geometry), 'hex')
+      END,
+    'destination_gps_ewkb',
+      CASE
+        WHEN p_destination_gps IS NULL THEN NULL
+        ELSE encode(public.st_asewkb(p_destination_gps::public.geometry), 'hex')
+      END
+  );
+$facts$;
+
+COMMENT ON FUNCTION public.match_request_admission_post_facts_v95(
+  uuid, uuid, text, text, text, date, text, text, text,
+  integer, integer, integer, integer, integer, integer, text, text, jsonb,
+  public.geography, public.geography
+) IS
+  'Builds one post admission jsonb from already-read columns. Does not read posts. NULL and empty string stay distinct JSON values.';
+
+REVOKE ALL ON FUNCTION public.match_request_admission_post_facts_v95(
+  uuid, uuid, text, text, text, date, text, text, text,
+  integer, integer, integer, integer, integer, integer, text, text, jsonb,
+  public.geography, public.geography
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.match_request_admission_post_facts_v95(
+  uuid, uuid, text, text, text, date, text, text, text,
+  integer, integer, integer, integer, integer, integer, text, text, jsonb,
+  public.geography, public.geography
+) FROM anon;
+REVOKE ALL ON FUNCTION public.match_request_admission_post_facts_v95(
+  uuid, uuid, text, text, text, date, text, text, text,
+  integer, integer, integer, integer, integer, integer, text, text, jsonb,
+  public.geography, public.geography
+) FROM authenticated;
+REVOKE ALL ON FUNCTION public.match_request_admission_post_facts_v95(
+  uuid, uuid, text, text, text, date, text, text, text,
+  integer, integer, integer, integer, integer, integer, text, text, jsonb,
+  public.geography, public.geography
+) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.match_request_admission_post_facts_v95(
+  uuid, uuid, text, text, text, date, text, text, text,
+  integer, integer, integer, integer, integer, integer, text, text, jsonb,
+  public.geography, public.geography
+) TO service_role;
+
+CREATE FUNCTION public.match_request_admission_facts_hash_v95(p_facts jsonb)
 RETURNS text
-LANGUAGE plpgsql
+LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $hash$
-DECLARE
-  v_payload text;
-BEGIN
-  IF p_left_post_id IS NULL OR p_right_post_id IS NULL THEN
-    RETURN NULL;
-  END IF;
-  SELECT string_agg(facts, E'\n' ORDER BY pid)
-  INTO v_payload
-  FROM (
-    SELECT p.id AS pid, (
-      p.id::text || '|' || p.user_id::text || '|' ||
-      coalesce(p.post_type, '') || '|' || coalesce(p.category, '') || '|' ||
-      coalesce(p.status, '') || '|' || coalesce(p.departure_date::text, '') || '|' ||
-      coalesce(p.departure_time_window, '') || '|' || coalesce(p.service_time_window, '') || '|' ||
-      coalesce(p.transport_mode, '') || '|' || coalesce(p.escort_seats::text, '') || '|' ||
-      coalesce(p.max_companions::text, '') || '|' || coalesce(p.count_small::text, '') || '|' ||
-      coalesce(p.count_medium::text, '') || '|' || coalesce(p.count_large::text, '') || '|' ||
-      coalesce(p.count_xlarge::text, '') || '|' || coalesce(p.origin_address, '') || '|' ||
-      coalesce(p.destination_address, '') || '|' ||
-      coalesce((
-        SELECT string_agg(elem, E'\x1f' ORDER BY ord)
-        FROM jsonb_array_elements_text(coalesce(p.waypoints, '[]'::jsonb))
-          WITH ORDINALITY AS t(elem, ord)
-      ), '') || '|' ||
-      coalesce(encode(public.st_asewkb(p.origin_gps::public.geometry), 'hex'), '') || '|' ||
-      coalesce(encode(public.st_asewkb(p.destination_gps::public.geometry), 'hex'), '')
-    ) AS facts
-    FROM public.posts p
-    WHERE p.id IN (p_left_post_id, p_right_post_id)
-  ) s;
-  IF v_payload IS NULL THEN
-    RETURN NULL;
-  END IF;
-  RETURN encode(digest(convert_to(v_payload, 'UTF8'), 'sha256'), 'hex');
-END;
+  SELECT CASE
+    WHEN p_facts IS NULL
+      OR jsonb_typeof(p_facts) IS DISTINCT FROM 'array'
+      OR jsonb_array_length(p_facts) IS DISTINCT FROM 2
+    THEN NULL
+    ELSE encode(digest(convert_to(p_facts::text, 'UTF8'), 'sha256'), 'hex')
+  END;
 $hash$;
 
-REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(uuid, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(uuid, uuid) FROM anon;
-REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(uuid, uuid) FROM authenticated;
-REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(uuid, uuid) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.match_request_admission_facts_hash_v95(uuid, uuid) TO service_role;
+COMMENT ON FUNCTION public.match_request_admission_facts_hash_v95(jsonb) IS
+  'SHA-256 of an already-built two-element admission facts jsonb array. Does not read posts.';
+
+REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(jsonb) FROM anon;
+REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(jsonb) FROM authenticated;
+REVOKE ALL ON FUNCTION public.match_request_admission_facts_hash_v95(jsonb) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.match_request_admission_facts_hash_v95(jsonb) TO service_role;
 
 CREATE FUNCTION public.read_match_request_candidate_snapshot_v95(
   p_left_post_id uuid,
@@ -714,64 +790,126 @@ RETURNS TABLE (
   right_destination_lat double precision,
   right_destination_lng double precision
 )
-LANGUAGE plpgsql
+LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $snap$
-DECLARE
-  l public.posts%ROWTYPE;
-  r public.posts%ROWTYPE;
-BEGIN
-  IF p_left_post_id IS NULL OR p_right_post_id IS NULL THEN
-    RETURN;
-  END IF;
-  SELECT * INTO l FROM public.posts WHERE id = p_left_post_id;
-  SELECT * INTO r FROM public.posts WHERE id = p_right_post_id;
-  IF l.id IS NULL OR r.id IS NULL THEN
-    RETURN;
-  END IF;
-  admission_facts_hash := public.match_request_admission_facts_hash_v95(p_left_post_id, p_right_post_id);
-  left_id := l.id; left_user_id := l.user_id; left_post_type := l.post_type;
-  left_category := l.category; left_status := l.status;
-  left_departure_date := l.departure_date::text;
-  left_departure_time_window := l.departure_time_window;
-  left_service_time_window := l.service_time_window;
-  left_transport_mode := l.transport_mode;
-  left_escort_seats := l.escort_seats; left_max_companions := l.max_companions;
-  left_count_small := l.count_small; left_count_medium := l.count_medium;
-  left_count_large := l.count_large; left_count_xlarge := l.count_xlarge;
-  left_origin_address := l.origin_address; left_destination_address := l.destination_address;
-  left_waypoints := l.waypoints;
-  left_origin_gps_ewkb := encode(public.st_asewkb(l.origin_gps::public.geometry), 'hex');
-  left_destination_gps_ewkb := encode(public.st_asewkb(l.destination_gps::public.geometry), 'hex');
-  left_origin_lat := public.st_y(l.origin_gps::public.geometry);
-  left_origin_lng := public.st_x(l.origin_gps::public.geometry);
-  left_destination_lat := public.st_y(l.destination_gps::public.geometry);
-  left_destination_lng := public.st_x(l.destination_gps::public.geometry);
-  right_id := r.id; right_user_id := r.user_id; right_post_type := r.post_type;
-  right_category := r.category; right_status := r.status;
-  right_departure_date := r.departure_date::text;
-  right_departure_time_window := r.departure_time_window;
-  right_service_time_window := r.service_time_window;
-  right_transport_mode := r.transport_mode;
-  right_escort_seats := r.escort_seats; right_max_companions := r.max_companions;
-  right_count_small := r.count_small; right_count_medium := r.count_medium;
-  right_count_large := r.count_large; right_count_xlarge := r.count_xlarge;
-  right_origin_address := r.origin_address; right_destination_address := r.destination_address;
-  right_waypoints := r.waypoints;
-  right_origin_gps_ewkb := encode(public.st_asewkb(r.origin_gps::public.geometry), 'hex');
-  right_destination_gps_ewkb := encode(public.st_asewkb(r.destination_gps::public.geometry), 'hex');
-  right_origin_lat := public.st_y(r.origin_gps::public.geometry);
-  right_origin_lng := public.st_x(r.origin_gps::public.geometry);
-  right_destination_lat := public.st_y(r.destination_gps::public.geometry);
-  right_destination_lng := public.st_x(r.destination_gps::public.geometry);
-  RETURN NEXT;
-END;
+  WITH pair AS MATERIALIZED (
+    SELECT
+      p.id,
+      p.user_id,
+      p.post_type,
+      p.category,
+      p.status,
+      p.departure_date,
+      p.departure_time_window,
+      p.service_time_window,
+      p.transport_mode,
+      p.escort_seats,
+      p.max_companions,
+      p.count_small,
+      p.count_medium,
+      p.count_large,
+      p.count_xlarge,
+      p.origin_address,
+      p.destination_address,
+      p.waypoints,
+      p.origin_gps,
+      p.destination_gps
+    FROM public.posts p
+    WHERE p_left_post_id IS NOT NULL
+      AND p_right_post_id IS NOT NULL
+      AND p_left_post_id IS DISTINCT FROM p_right_post_id
+      AND p.id IN (p_left_post_id, p_right_post_id)
+  ),
+  decorated AS MATERIALIZED (
+    SELECT
+      p.*,
+      public.match_request_admission_post_facts_v95(
+        p.id,
+        p.user_id,
+        p.post_type,
+        p.category,
+        p.status,
+        p.departure_date,
+        p.departure_time_window,
+        p.service_time_window,
+        p.transport_mode,
+        p.escort_seats,
+        p.max_companions,
+        p.count_small,
+        p.count_medium,
+        p.count_large,
+        p.count_xlarge,
+        p.origin_address,
+        p.destination_address,
+        p.waypoints,
+        p.origin_gps,
+        p.destination_gps
+      ) AS fact
+    FROM pair p
+  )
+  SELECT
+    public.match_request_admission_facts_hash_v95(
+      (SELECT jsonb_agg(d.fact ORDER BY d.id) FROM decorated d)
+    ),
+    l.id,
+    l.user_id,
+    l.post_type,
+    l.category,
+    l.status,
+    l.departure_date::text,
+    l.departure_time_window,
+    l.service_time_window,
+    l.transport_mode,
+    l.escort_seats,
+    l.max_companions,
+    l.count_small,
+    l.count_medium,
+    l.count_large,
+    l.count_xlarge,
+    l.origin_address,
+    l.destination_address,
+    l.waypoints,
+    l.fact->>'origin_gps_ewkb',
+    l.fact->>'destination_gps_ewkb',
+    public.st_y(l.origin_gps::public.geometry),
+    public.st_x(l.origin_gps::public.geometry),
+    public.st_y(l.destination_gps::public.geometry),
+    public.st_x(l.destination_gps::public.geometry),
+    r.id,
+    r.user_id,
+    r.post_type,
+    r.category,
+    r.status,
+    r.departure_date::text,
+    r.departure_time_window,
+    r.service_time_window,
+    r.transport_mode,
+    r.escort_seats,
+    r.max_companions,
+    r.count_small,
+    r.count_medium,
+    r.count_large,
+    r.count_xlarge,
+    r.origin_address,
+    r.destination_address,
+    r.waypoints,
+    r.fact->>'origin_gps_ewkb',
+    r.fact->>'destination_gps_ewkb',
+    public.st_y(r.origin_gps::public.geometry),
+    public.st_x(r.origin_gps::public.geometry),
+    public.st_y(r.destination_gps::public.geometry),
+    public.st_x(r.destination_gps::public.geometry)
+  FROM decorated l
+  JOIN decorated r ON r.id = p_right_post_id
+  WHERE l.id = p_left_post_id
+    AND (SELECT count(*) FROM decorated) = 2;
 $snap$;
 
 COMMENT ON FUNCTION public.read_match_request_candidate_snapshot_v95(uuid, uuid) IS
-  'One-statement post snapshot plus SQL admission_facts_hash. Hash uses EWKB hex. Browser cannot submit the hash.';
+  'Single SQL statement. One MATERIALIZED posts read. Returned fields and admission_facts_hash come from that CTE. Hash order is post id ascending, independent of left/right args. Missing/duplicate ids return no row. Intended SQL shape only; not a live MVCC proof. Browser cannot submit the hash.';
 
 REVOKE ALL ON FUNCTION public.read_match_request_candidate_snapshot_v95(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.read_match_request_candidate_snapshot_v95(uuid, uuid) FROM anon;
@@ -863,6 +1001,7 @@ DECLARE
   v_req_id uuid;
   v_rev_id uuid;
   v_hash text;
+  v_facts jsonb := '[]'::jsonb;
   v_pickup jsonb;
   v_second_loc jsonb;
 BEGIN
@@ -991,13 +1130,57 @@ BEGIN
   END IF;
 
   FOR v_rec IN
-    SELECT p.id, p.user_id, p.post_type, p.category, p.status
+    SELECT
+      p.id,
+      p.user_id,
+      p.post_type,
+      p.category,
+      p.status,
+      p.departure_date,
+      p.departure_time_window,
+      p.service_time_window,
+      p.transport_mode,
+      p.escort_seats,
+      p.max_companions,
+      p.count_small,
+      p.count_medium,
+      p.count_large,
+      p.count_xlarge,
+      p.origin_address,
+      p.destination_address,
+      p.waypoints,
+      p.origin_gps,
+      p.destination_gps
     FROM public.posts p
     WHERE p.id IN (v_first, v_second)
     ORDER BY p.id
     FOR UPDATE
   LOOP
     v_locked := v_locked + 1;
+    v_facts := v_facts || jsonb_build_array(
+      public.match_request_admission_post_facts_v95(
+        v_rec.id,
+        v_rec.user_id,
+        v_rec.post_type,
+        v_rec.category,
+        v_rec.status,
+        v_rec.departure_date,
+        v_rec.departure_time_window,
+        v_rec.service_time_window,
+        v_rec.transport_mode,
+        v_rec.escort_seats,
+        v_rec.max_companions,
+        v_rec.count_small,
+        v_rec.count_medium,
+        v_rec.count_large,
+        v_rec.count_xlarge,
+        v_rec.origin_address,
+        v_rec.destination_address,
+        v_rec.waypoints,
+        v_rec.origin_gps,
+        v_rec.destination_gps
+      )
+    );
     IF v_rec.id = p_initiator_post_id THEN
       v_init_id := v_rec.id;
       v_init_user := v_rec.user_id;
@@ -1075,7 +1258,7 @@ BEGIN
     RAISE EXCEPTION 'error.match_request_not_eligible';
   END IF;
 
-  v_hash := public.match_request_admission_facts_hash_v95(p_initiator_post_id, p_counterpart_post_id);
+  v_hash := public.match_request_admission_facts_hash_v95(v_facts);
   IF v_hash IS DISTINCT FROM p_admission_facts_hash THEN
     RAISE EXCEPTION 'error.match_request_not_eligible';
   END IF;

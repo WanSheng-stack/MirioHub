@@ -268,13 +268,17 @@ OWNER against PostGIS.
 
 ## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1B.3A keeps v95 unexecuted. The pre-apply
-  guard rebuilds the live 38-column inventory and compares encoding-v2
-  regional SHA-256 digests. Catalog text is UTF-8 lowercase hex before
-  joining, so field/row separators cannot be impersonated by control
-  characters. The old fixture-missing raise is gone, so v95 is
-  structurally executable when the live catalog matches that
-  fingerprint, but it has not been applied.
+- **Current state:** PHASE 6.7C.1B.3A bound the v95 guard to encoding-v2
+  fingerprints; v95 has now been applied by the user and official verify
+  is 69/69 PASS. PHASE 6.7C.2A adds unapplied v96: `posts.service_subtype`,
+  `origin_country_code`, `origin_timezone`, `night_policy_version`, and
+  `night_service_policies` with an RS country default
+  (`Europe/Belgrade`, 22:00–06:00, enabled=false). Historical
+  travel/deliver NULL subtype is legacy_unknown and must fail closed for
+  new matching. The next versioned writer/snapshot (v97 or later) must
+  add those four fields to server admission facts; do not patch the
+  deployed v95 hash helper. Creation stays false. MatchRequestSheet
+  stays unmounted. Night policy stays disabled.
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading
@@ -290,10 +294,10 @@ OWNER against PostGIS.
   result schema. Owned-sequence `object_identity` casts
   `pg_depend.deptype` to text before `||`. No live PostgreSQL/MVCC run
   was performed. Creation stays false. MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** reviewed v95 apply,
-  request list, resend, accept/reject, contact DTO, MatchRequestSheet
-  mount, country pricing, trusted location resolver, and contract
-  capacity/fulfillment.
+- **Still unresolved / later phases:** reviewed v96 apply, publish-path
+  subtype/night checks, v97 admission-hash facts, request list, resend,
+  accept/reject, contact DTO, MatchRequestSheet mount, country pricing,
+  trusted location resolver, and contract capacity/fulfillment.
 - **Future replacement:** A later grant writer must re-check recipient
   settings and confirmed channels before any contact DTO.
 - **Earliest safe production use:** After v95 is applied, verify.sql is run

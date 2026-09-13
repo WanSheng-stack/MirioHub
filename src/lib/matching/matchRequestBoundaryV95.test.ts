@@ -858,14 +858,14 @@ assert.equal(gitDiff(V95_REL), "");
 assert.equal(gitDiff(V95_VERIFY_REL), "");
 assert.equal(gitDiff("scripts/generate-v95-post-v94-catalog.ts"), "");
 
-assert.equal(
-  readdirSync(join(repoRoot, "supabase/migrations")).some(
-    (name) =>
-      name.includes("_v96.") ||
-      name.startsWith("20260911000004") ||
-      name.includes("v96"),
-  ),
-  false,
+assert.deepEqual(
+  readdirSync(join(repoRoot, "supabase/migrations"))
+    .filter((name) => name.includes("v96") || name.startsWith("20260911000004"))
+    .sort(),
+  [
+    "20260913000001_service_subtype_night_safety_foundation_v96.sql",
+    "20260913000001_service_subtype_night_safety_foundation_v96.verify.sql",
+  ],
 );
 
 const runtimeFiles: string[] = [];

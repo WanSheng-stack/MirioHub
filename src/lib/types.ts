@@ -51,6 +51,13 @@ export type TransportMode =
   | "car"
   | "van";
 
+export type TravelServiceSubtype =
+  | "passenger"
+  | "small_item_only"
+  | "passenger_with_small_item";
+export type DeliverServiceSubtype = "cargo_only" | "cargo_with_escort";
+export type ServiceSubtype = TravelServiceSubtype | DeliverServiceSubtype;
+
 export type DeliveryMode = "spot" | "door";
 export type ShareMode = "share" | "private";
 export type ItemUnit = "pcs" | "kg" | "g" | "l" | "ml" | "box" | "pack" | "bottle";
@@ -71,6 +78,10 @@ export type Post = {
   destination_gps: unknown | null;
   capacity_type: CapacityType | null;
   transport_mode: TransportMode | null;
+  service_subtype?: ServiceSubtype | null;
+  origin_country_code?: string | null;
+  origin_timezone?: string | null;
+  night_policy_version?: number | null;
   escort_seats: number;
   fee_amount: number | null;
   estimated_item_cost: number | null;

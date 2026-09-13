@@ -8,9 +8,11 @@
 >
 > 代码审阅基线：`feature/home-bottomsheet-fix` @ `a3945a54a6f6d379f0ab23020da34acb91667a5b`
 >
-> 数据库状态：v90–v94 已执行并冻结；v95 仍未执行。PHASE 6.7C.1B.3A 已把
-> guard 绑定到 encoding-v2 post-v94 catalog fingerprint；结构上可执行，
-> 但禁止在代码审核前自行 apply。
+> 数据库状态：v90–v95 已执行并冻结。PHASE 6.7C.2A 新增 v96 服务子类型与
+> 地区夜间策略基础，尚未 apply；creation-enabled 仍为 false。后续新请求
+> writer/snapshot 必须以 v97 或新版本化 RPC 把 service_subtype、
+> origin_country_code、origin_timezone、night_policy_version 写入
+> admission facts，不得改已部署的 v95 hash helper。
 
 ---
 

@@ -676,11 +676,14 @@ assert.equal(
   "",
 );
 assert.equal(gitDiff("supabase/init.sql"), "");
-assert.equal(
-  readdirSync(join(repoRoot, "supabase/migrations")).some((name) =>
-    name.includes("v96"),
-  ),
-  false,
+assert.deepEqual(
+  readdirSync(join(repoRoot, "supabase/migrations"))
+    .filter((name) => name.includes("v96"))
+    .sort(),
+  [
+    "20260913000001_service_subtype_night_safety_foundation_v96.sql",
+    "20260913000001_service_subtype_night_safety_foundation_v96.verify.sql",
+  ],
 );
 
 assert.equal(parseCsvRecords("a,b\n1,2").length, 2);

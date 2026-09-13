@@ -486,20 +486,27 @@ Onsite由Demand填写固定酬劳或“面议”，Provider填写自己提供该
 
 ## 21. 当前工程状态与禁令
 
-当前代码基线已经具有双帖表、合同/容量/事件基础、Cargo V2、统一匹配准入及尚未执行的v95联系邀请边界；真实用户仍未接入完整请求和接受流程。
+当前代码基线已经具有双帖表、合同/容量/事件基础、Cargo V2、统一匹配准入
+及已执行的 v95 原子请求边界。PHASE 6.7C.2A 增加 service_subtype 与
+地区夜间策略表，但 v96 尚未执行，夜间策略默认关闭，发帖 UI 尚未采集
+这些字段。
 
-由于本文已经将用户流程改为“一次发送顺路请求”，当前v95不能直接部署。
-PHASE 6.7C.1B.3A 已写入 encoding-v2 post-v94 catalog fingerprint，使
-v95 在 catalog 完全一致时结构上可执行；仍须先审核，再决定是否由用户执行。
+Travel/Deliver 新帖必须有合法 service_subtype 才能发布；历史
+service_subtype=NULL 的 active 帖不得进入新 Match Hall 和新顺路请求。
+夜间禁止 travel/passenger、travel/passenger_with_small_item、
+deliver/cargo_with_escort 和全部 onsite；允许 travel/small_item_only、
+deliver/cargo_only、buy、errand。交通方式与是否载人分离：摩托车、船、
+公交/火车/飞机等不能作为平台载人撮合。
 
-完成技术规格及代码差距审计前：
+后续：
 
-- 不执行v95；
-- 不继续开发独立联系邀请列表或UI；
-- 不把旧MatchRequestSheet挂入生产页面；
-- 不修改已经执行的v90–v94和`init.sql`；
-- 不让浏览器直接写Matching私有表；
-- 不恢复旧`confirm_match`。
+- 不执行 v96，直到审核完成；
+- 不打开 matching_request_creation_enabled；
+- 不把夜间策略 enabled 改为 true；
+- 不把旧 MatchRequestSheet 挂入生产页面；
+- 不修改已经执行的 v90–v95 和 `init.sql`；
+- 不让浏览器直接写 Matching 私有表或 night_service_policies；
+- 不恢复旧 `confirm_match`。
 
 ## 22. 配置参数与后续里程碑
 

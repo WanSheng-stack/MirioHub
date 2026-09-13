@@ -60,6 +60,16 @@ export interface PostPayload {
   estimated_kms?: number;
 }
 
+export {
+  DELIVER_SERVICE_SUBTYPES,
+  TRAVEL_SERVICE_SUBTYPES,
+} from "@/lib/safety/nightServicePolicy";
+export type {
+  DeliverServiceSubtype,
+  ServiceSubtype,
+  TravelServiceSubtype,
+} from "@/lib/safety/nightServicePolicy";
+
 export const POST_CATEGORIES: readonly PostCategory[] = [
   "travel",
   "deliver",

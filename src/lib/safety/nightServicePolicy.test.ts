@@ -12,6 +12,8 @@ import {
   TRAVEL_SERVICE_SUBTYPES,
   evaluateNightServicePolicy,
   isLocalTimeInBlockedWindow,
+  NIGHT_POLICY_SCOPE_PRIORITY,
+  NIGHT_POLICY_TIE_BREAK,
   serviceRequiresHumanTravel,
   serviceSubtypeIsLegal,
   serviceSubtypesAreCompatible,
@@ -150,6 +152,46 @@ assert.equal(
     transportMode: "private_boat",
   }).ok,
   false,
+);
+assert.equal(
+  denialReason(
+    evaluateNightServicePolicy({
+      category: "travel",
+      serviceSubtype: "small_item_only",
+      transportMode: null,
+    }),
+  ),
+  "illegal_transport_combo",
+);
+assert.equal(
+  denialReason(
+    evaluateNightServicePolicy({
+      category: "travel",
+      serviceSubtype: "small_item_only",
+      transportMode: "",
+    }),
+  ),
+  "illegal_transport_combo",
+);
+assert.equal(
+  denialReason(
+    evaluateNightServicePolicy({
+      category: "deliver",
+      serviceSubtype: "cargo_only",
+      transportMode: null,
+    }),
+  ),
+  "illegal_transport_combo",
+);
+assert.equal(
+  denialReason(
+    evaluateNightServicePolicy({
+      category: "deliver",
+      serviceSubtype: "cargo_only",
+      transportMode: "",
+    }),
+  ),
+  "illegal_transport_combo",
 );
 assert.equal(
   evaluateNightServicePolicy({
@@ -352,6 +394,81 @@ assert.equal(
   ),
   "illegal_transport_combo",
 );
+assert.equal(
+  denialReason(
+    evaluateNightServicePolicy({
+      category: "travel",
+      serviceSubtype: "small_item_only",
+      policyEnabled: false,
+    }),
+  ),
+  "illegal_transport_combo",
+);
+assert.equal(
+  denialReason(
+    evaluateNightServicePolicy({
+      category: "deliver",
+      serviceSubtype: "cargo_only",
+      policyEnabled: false,
+    }),
+  ),
+  "illegal_transport_combo",
+);
+
+for (const subtype of TRAVEL_SERVICE_SUBTYPES) {
+  assert.equal(
+    denialReason(
+      evaluateNightServicePolicy({
+        category: "travel",
+        serviceSubtype: subtype,
+        transportMode: null,
+      }),
+    ),
+    "illegal_transport_combo",
+    `travel/${subtype} requires transportMode`,
+  );
+  assert.equal(
+    denialReason(
+      evaluateNightServicePolicy({
+        category: "travel",
+        serviceSubtype: subtype,
+        transportMode: "unknown",
+      }),
+    ),
+    "illegal_transport_combo",
+    `travel/${subtype} unknown mode`,
+  );
+}
+for (const subtype of DELIVER_SERVICE_SUBTYPES) {
+  assert.equal(
+    denialReason(
+      evaluateNightServicePolicy({
+        category: "deliver",
+        serviceSubtype: subtype,
+        transportMode: "",
+      }),
+    ),
+    "illegal_transport_combo",
+    `deliver/${subtype} requires transportMode`,
+  );
+}
+
+assert.equal(
+  evaluateNightServicePolicy({
+    category: "buy",
+    serviceSubtype: null,
+  }).ok,
+  true,
+);
+assert.deepEqual(NIGHT_POLICY_SCOPE_PRIORITY, [
+  "exact_region_code",
+  "country_default",
+]);
+assert.deepEqual(NIGHT_POLICY_TIE_BREAK, [
+  "policy_version DESC",
+  "effective_from DESC",
+  "id ASC",
+]);
 
 assert.ok(TARGET_TRAVEL_TRANSPORT_MODES.includes("car"));
 assert.equal(TRAVEL_SERVICE_SUBTYPES.length, 3);

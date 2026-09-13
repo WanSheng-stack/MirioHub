@@ -115,7 +115,10 @@ ALTER TABLE public.posts
   ADD CONSTRAINT posts_origin_timezone_check
     CHECK (
       origin_timezone IS NULL
-      OR length(btrim(origin_timezone)) BETWEEN 1 AND 100
+      OR (
+        origin_timezone = btrim(origin_timezone)
+        AND length(origin_timezone) BETWEEN 1 AND 100
+      )
     ),
   ADD CONSTRAINT posts_night_policy_version_check
     CHECK (night_policy_version IS NULL OR night_policy_version > 0),
@@ -150,7 +153,7 @@ COMMENT ON COLUMN public.posts.service_subtype IS
 COMMENT ON COLUMN public.posts.origin_country_code IS
   'ISO 3166-1 alpha-2 used to resolve night_service_policies. Browser cannot authorize this.';
 COMMENT ON COLUMN public.posts.origin_timezone IS
-  'IANA timezone name. Writer must validate with PostgreSQL timezone support. Not a UTC offset.';
+  'IANA timezone name stored already trimmed. CHECK confirms trim equality and length, not that the name exists in the PostgreSQL timezone catalog. Writer must validate with PostgreSQL timezone support. Not a UTC offset.';
 COMMENT ON COLUMN public.posts.night_policy_version IS
   'Policy version observed when the post was last authorized. Later admission facts must include it.';
 
@@ -158,6 +161,10 @@ COMMENT ON COLUMN public.posts.night_policy_version IS
 -- 2. night_service_policies
 -- region_code NULL is the country default. At most one open-ended
 -- (effective_until IS NULL) row per country default and per region.
+-- Version unique indexes prevent same-scope/version duplicates.
+-- They do not fully prevent overlapping bounded intervals of
+-- different versions. Future writers must close the old interval
+-- before inserting a new version. Do not claim interval exclusion.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE TABLE public.night_service_policies (
@@ -178,10 +185,16 @@ CREATE TABLE public.night_service_policies (
   CONSTRAINT night_service_policies_region_code_check
     CHECK (
       region_code IS NULL
-      OR length(btrim(region_code)) BETWEEN 1 AND 64
+      OR (
+        region_code = btrim(region_code)
+        AND length(region_code) BETWEEN 1 AND 64
+      )
     ),
   CONSTRAINT night_service_policies_timezone_name_check
-    CHECK (length(btrim(timezone_name)) BETWEEN 1 AND 100),
+    CHECK (
+      timezone_name = btrim(timezone_name)
+      AND length(timezone_name) BETWEEN 1 AND 100
+    ),
   CONSTRAINT night_service_policies_blocked_window_check
     CHECK (blocked_start_local IS DISTINCT FROM blocked_end_local),
   CONSTRAINT night_service_policies_policy_version_check
@@ -204,8 +217,16 @@ CREATE UNIQUE INDEX night_service_policies_region_open_uidx
   ON public.night_service_policies (country_code, region_code)
   WHERE region_code IS NOT NULL AND effective_until IS NULL;
 
+CREATE UNIQUE INDEX night_service_policies_country_default_version_uidx
+  ON public.night_service_policies (country_code, policy_version)
+  WHERE region_code IS NULL;
+
+CREATE UNIQUE INDEX night_service_policies_region_version_uidx
+  ON public.night_service_policies (country_code, region_code, policy_version)
+  WHERE region_code IS NOT NULL;
+
 COMMENT ON TABLE public.night_service_policies IS
-  'Platform-owned regional night windows. Exact region_code beats country default. Timezone is IANA, not a fixed UTC offset.';
+  'Platform-owned regional night windows. Exact region_code beats country default. Timezone is IANA, not a fixed UTC offset. Unique indexes prevent same-scope/version duplicates and multiple open-ended rows. They do not fully prevent overlapping bounded intervals of different versions. Future reader: enabled, in-force window, region before country default, then policy_version DESC, effective_from DESC, id ASC, take one. Future writer must close the old interval before inserting a new version.';
 COMMENT ON COLUMN public.night_service_policies.region_code IS
   'NULL means the country default. Only one open-ended country default may exist.';
 COMMENT ON COLUMN public.night_service_policies.timezone_name IS

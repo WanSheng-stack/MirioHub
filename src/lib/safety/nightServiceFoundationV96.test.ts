@@ -101,7 +101,14 @@ assert.ok(migration.includes("CREATE TABLE public.night_service_policies"));
 assert.ok(migration.includes("night_service_policies_lookup_idx"));
 assert.ok(migration.includes("night_service_policies_effective_idx"));
 assert.ok(migration.includes("night_service_policies_country_default_open_uidx"));
+assert.ok(migration.includes("night_service_policies_region_open_uidx"));
+assert.ok(migration.includes("night_service_policies_country_default_version_uidx"));
+assert.ok(migration.includes("night_service_policies_region_version_uidx"));
 assert.ok(migration.includes("region_code IS NULL AND effective_until IS NULL"));
+assert.ok(migration.includes("origin_timezone = btrim(origin_timezone)"));
+assert.ok(migration.includes("region_code = btrim(region_code)"));
+assert.ok(migration.includes("timezone_name = btrim(timezone_name)"));
+assert.ok(migration.includes("do not fully prevent overlapping bounded intervals"));
 assert.ok(migration.includes("ENABLE ROW LEVEL SECURITY"));
 assert.equal(/FORCE ROW LEVEL SECURITY/i.test(migration), false);
 assert.ok(migration.includes("REVOKE ALL ON TABLE public.night_service_policies FROM PUBLIC"));
@@ -121,13 +128,50 @@ assert.ok(verifySql.includes("RS country default"));
 assert.ok(verifySql.includes("no new rpc"));
 assert.ok(verifySql.includes("v95 writer still present"));
 assert.ok(verifySql.includes("v95 hash still extensions.digest"));
+assert.ok(verifySql.includes("pg_catalog.pg_attrdef"));
+assert.ok(verifySql.includes("pg_get_constraintdef"));
+assert.ok(verifySql.includes("pg_get_indexdef"));
+assert.ok(verifySql.includes("posts_service_subtype_category_check"));
+assert.ok(verifySql.includes("night_service_policies_pkey"));
+assert.ok(verifySql.includes("indisvalid"));
+assert.ok(verifySql.includes("indisready"));
+assert.ok(verifySql.includes("night_service_policies_country_default_version_uidx"));
+assert.ok(verifySql.includes("night_service_policies_region_version_uidx"));
+assert.ok(verifySql.includes("aclexplode"));
+assert.ok(verifySql.includes("grantee = 0"));
+assert.equal(/has_table_privilege\s*\(\s*0\s*,/.test(verifySql), false);
+assert.ok(verifySql.includes("'SELECT'"));
+assert.ok(verifySql.includes("'INSERT'"));
+assert.ok(verifySql.includes("'UPDATE'"));
+assert.ok(verifySql.includes("'DELETE'"));
+assert.ok(verifySql.includes("'TRUNCATE'"));
+assert.ok(verifySql.includes("'REFERENCES'"));
+assert.ok(verifySql.includes("'TRIGGER'"));
+assert.ok(verifySql.includes("deptype IN ('a', 'i')"));
+assert.equal(verifySql.includes("nullable-text"), false);
 assert.equal(/pg_get_functiondef/i.test(verifySql), false);
 assert.equal(/SELECT\s+public\.create_match_request_v95\s*\(/i.test(verifySql), false);
 assert.equal(payload.includes("service_subtype?:"), false);
 assert.ok(payload.includes("TRAVEL_SERVICE_SUBTYPES"));
+assert.ok(helper.includes('if (mode == null || mode === "") return false'));
+assert.equal(helper.includes("return !needsPeople"), false);
+assert.ok(helper.includes("policy_version DESC"));
+assert.ok(helper.includes("effective_from DESC"));
+assert.ok(helper.includes("id ASC"));
 assert.ok(ledger.includes("6.7C.2A"));
 assert.ok(ledger.includes("night_service_policies"));
 assert.ok(ledger.includes("v97"));
+assert.ok(ledger.includes("overlapping bounded intervals"));
+
+const techSpec = read(
+  "docs/architecture/MirioHub_V1_Matching_Fulfillment_Technical_Spec_v2.md",
+);
+assert.ok(techSpec.includes("exact region_code"));
+assert.ok(techSpec.includes("policy_version DESC"));
+assert.ok(techSpec.includes("effective_from DESC"));
+assert.ok(techSpec.includes("id ASC"));
+assert.ok(techSpec.includes("overlapping bounded intervals"));
+assert.ok(techSpec.includes("do not fully prevent"));
 
 const v96Files = readdirSync(join(repoRoot, "supabase/migrations"))
   .filter((name) => name.includes("v96"))

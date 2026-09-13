@@ -270,12 +270,20 @@ OWNER against PostGIS.
 
 - **Current state:** PHASE 6.7C.1B.3A bound the v95 guard to encoding-v2
   fingerprints; v95 has now been applied by the user and official verify
-  is 69/69 PASS. PHASE 6.7C.2A adds unapplied v96: `posts.service_subtype`,
-  `origin_country_code`, `origin_timezone`, `night_policy_version`, and
-  `night_service_policies` with an RS country default
-  (`Europe/Belgrade`, 22:00–06:00, enabled=false). Historical
+  is 69/69 PASS. PHASE 6.7C.2A / 6.7C.2A.1 adds unapplied v96:
+  `posts.service_subtype`, `origin_country_code`, `origin_timezone`,
+  `night_policy_version`, and `night_service_policies` with an RS country
+  default (`Europe/Belgrade`, 22:00–06:00, enabled=false). Historical
   travel/deliver NULL subtype is legacy_unknown and must fail closed for
-  new matching. The next versioned writer/snapshot (v97 or later) must
+  new matching. Travel/Deliver also fail closed when `transportMode` is
+  NULL, empty, or unknown, even if night policy is disabled. Unique
+  indexes prevent same-scope/version duplicates and multiple open-ended
+  rows; they do not fully prevent overlapping bounded intervals of
+  different versions. Future reader order is locked: enabled, in-force
+  window, exact region before country default, then
+  `policy_version DESC`, `effective_from DESC`, `id ASC`, take one.
+  Future writers must close the old interval before inserting a new
+  version. The next versioned writer/snapshot (v97 or later) must
   add those four fields to server admission facts; do not patch the
   deployed v95 hash helper. Creation stays false. MatchRequestSheet
   stays unmounted. Night policy stays disabled.

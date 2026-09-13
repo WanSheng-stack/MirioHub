@@ -64,6 +64,29 @@ export const PLATFORM_PASSENGER_MODES = [
   "other_cargo_vehicle",
 ] as const;
 
+/**
+ * Future reader contract only. This phase does not ship a production
+ * reader or SQL function. Database unique indexes prevent same-scope
+ * version duplicates and multiple open-ended rows. They do not fully
+ * prevent overlapping bounded intervals of different versions.
+ */
+export const NIGHT_POLICY_READER_FILTERS = [
+  "enabled IS TRUE",
+  "effective_from <= evaluation_time",
+  "effective_until IS NULL OR evaluation_time < effective_until",
+] as const;
+
+export const NIGHT_POLICY_SCOPE_PRIORITY = [
+  "exact_region_code",
+  "country_default",
+] as const;
+
+export const NIGHT_POLICY_TIE_BREAK = [
+  "policy_version DESC",
+  "effective_from DESC",
+  "id ASC",
+] as const;
+
 export type NightServicePurpose = "publish" | "match";
 
 export type NightServicePolicyInput = {
@@ -172,7 +195,7 @@ function transportComboIsLegal(
 ): boolean {
   const needsPeople = serviceRequiresHumanTravel(category, subtype);
   if (category === "travel") {
-    if (mode == null || mode === "") return !needsPeople;
+    if (mode == null || mode === "") return false;
     if (
       !(TARGET_TRAVEL_TRANSPORT_MODES as readonly string[]).includes(mode)
     ) {
@@ -184,7 +207,7 @@ function transportComboIsLegal(
     return true;
   }
   if (category === "deliver") {
-    if (mode == null || mode === "") return !needsPeople;
+    if (mode == null || mode === "") return false;
     if (
       !(TARGET_DELIVER_TRANSPORT_MODES as readonly string[]).includes(mode)
     ) {

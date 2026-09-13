@@ -8,11 +8,13 @@
 >
 > 代码审阅基线：`feature/home-bottomsheet-fix` @ `a3945a54a6f6d379f0ab23020da34acb91667a5b`
 >
-> 数据库状态：v90–v95 已执行并冻结。PHASE 6.7C.2A 新增 v96 服务子类型与
-> 地区夜间策略基础，尚未 apply；creation-enabled 仍为 false。后续新请求
-> writer/snapshot 必须以 v97 或新版本化 RPC 把 service_subtype、
-> origin_country_code、origin_timezone、night_policy_version 写入
-> admission facts，不得改已部署的 v95 hash helper。
+> 数据库状态：v90–v95 已执行并冻结。PHASE 6.7C.2A / 6.7C.2A.1 新增 v96
+> 服务子类型与地区夜间策略基础，尚未 apply；creation-enabled 仍为 false。
+> Travel/Deliver 缺少合法 transportMode 必须 fail closed。策略表阻止同
+> scope/version 重复和多条 open-ended 行，但不能完全阻止不同版本的有限
+> 有效区间重叠。后续新请求 writer/snapshot 必须以 v97 或新版本化 RPC 把
+> service_subtype、origin_country_code、origin_timezone、night_policy_version
+> 写入 admission facts，不得改已部署的 v95 hash helper。
 
 ---
 
@@ -207,17 +209,32 @@ V1先导入塞尔维亚和实际需要的巴尔干地点。目录更新使用版
 
 ### 6.2 配置
 
-建议版本化配置：
+v96 建立 `night_service_policies`：`enabled`、IANA `timezone_name`、
+`blocked_start_local` / `blocked_end_local`、`policy_version`、
+`effective_from` / `effective_until`。`region_code` 为 NULL 表示国家默认。
+字符串 CHECK 只保证 trim 后非空与长度，不宣称 `timezone_name` 已存在于
+PostgreSQL 时区目录；未来受控 writer 必须用数据库时区能力校验 IANA 名。
 
-- `enabled`
-- `local_start_time`
-- `local_end_time`
-- `applies_to_travel_passenger`
-- `applies_to_deliver_escort`
-- `applies_to_onsite`
-- `effective_from`, `version`
+当前数据库保证：同一 scope/version 不重复；同一 scope 最多一条
+`effective_until IS NULL` 的 open-ended 策略。当前数据库尚不能完全阻止
+不同版本的有限有效区间发生重叠（do not fully prevent overlapping bounded intervals）。不得宣称已有 exclusion constraint。
+未来受控 writer 必须先关闭旧有效区间，再创建新版本。
 
-时间区间必须支持跨午夜，例如 22:00–06:00。
+时间区间必须支持跨午夜，例如 22:00–06:00。Travel/Deliver 无论 subtype
+是否载人，都必须有合法 `transportMode`；NULL / 空字符串 / 未知值一律
+`illegal_transport_combo`，夜间策略关闭也不能绕过。
+
+### 6.2.1 确定性读取顺序
+
+本阶段不创建生产读取函数。未来唯一合法选择顺序：
+
+1. `enabled IS TRUE`
+2. `effective_from <= evaluation_time`
+3. `effective_until IS NULL OR evaluation_time < effective_until`
+4. exact region_code 优先于 country default
+5. 同一 scope 仍有多条候选时：`policy_version DESC`，然后
+   `effective_from DESC`，然后 `id ASC`
+6. 最终只取一条
 
 ### 6.3 适用矩阵
 
@@ -226,8 +243,8 @@ V1先导入塞尔维亚和实际需要的巴尔干地点。目录更新使用版
 | Travel Demand `passenger` | 拒绝 |
 | Travel Demand `passenger_with_small_item` | 拒绝 |
 | Travel Demand `small_item_only` | 允许 |
-| Travel Provider `passenger_only` | 拒绝 |
-| Travel Provider `passenger_and_small_item` | 拒绝 |
+| Travel Provider `passenger` | 拒绝 |
+| Travel Provider `passenger_with_small_item` | 拒绝 |
 | Travel Provider `small_item_only` | 允许 |
 | Deliver 押货 1 人 | 拒绝 |
 | Deliver 押货 0 人 | 允许 |

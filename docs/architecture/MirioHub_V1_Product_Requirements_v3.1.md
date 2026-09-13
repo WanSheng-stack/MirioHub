@@ -496,7 +496,12 @@ service_subtype=NULL 的 active 帖不得进入新 Match Hall 和新顺路请求
 夜间禁止 travel/passenger、travel/passenger_with_small_item、
 deliver/cargo_with_escort 和全部 onsite；允许 travel/small_item_only、
 deliver/cargo_only、buy、errand。交通方式与是否载人分离：摩托车、船、
-公交/火车/飞机等不能作为平台载人撮合。
+公交/火车/飞机等不能作为平台载人撮合。Travel/Deliver 发布与新匹配必须
+有合法 transportMode；NULL、空字符串或未知值 fail closed，夜间策略关闭
+也不能绕过。地区夜间策略按精确地区优先、再
+`policy_version DESC` / `effective_from DESC` / `id ASC` 只取一条。
+数据库阻止同 scope/version 重复和多条 open-ended 行，但不能完全阻止
+不同版本的有限有效区间重叠。
 
 后续：
 

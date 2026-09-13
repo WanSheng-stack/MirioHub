@@ -1119,7 +1119,7 @@ AS $hash$
       OR jsonb_typeof(p_facts) IS DISTINCT FROM 'array'
       OR jsonb_array_length(p_facts) IS DISTINCT FROM 2
     THEN NULL
-    ELSE encode(digest(convert_to(p_facts::text, 'UTF8'), 'sha256'), 'hex')
+    ELSE encode(extensions.digest(convert_to(p_facts::text, 'UTF8'), 'sha256'), 'hex')
   END;
 $hash$;
 

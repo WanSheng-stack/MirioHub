@@ -4,6 +4,8 @@
 -- Do not output function source, posts, phones, GPS, addresses, or codes.
 -- Pre-apply guard is bound to encoding-v2 live post-v94 catalog
 -- fingerprints. Text is UTF-8 lowercase hex before digest.
+-- Admission hash must call extensions.digest; search_path stays
+-- pg_catalog, public and must not include extensions.
 -- This file does not claim a remote v95 apply has succeeded.
 -- EXPECT: single result set with check_order, area, check_name, result, observed, expected, overall_pass
 
@@ -565,7 +567,7 @@ all_checks AS (
   UNION ALL SELECT 341, 'function', 'hash helper does not read posts',
     CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
       WHEN (SELECT prosrc FROM hash_fn) LIKE '%public.posts%' THEN 'FAIL'
-      WHEN (SELECT prosrc FROM hash_fn) LIKE '%digest(%' THEN 'PASS'
+      WHEN (SELECT prosrc FROM hash_fn) LIKE '%extensions.digest(%' THEN 'PASS'
       ELSE 'FAIL' END,
     'jsonb-only',
     'no posts reread'
@@ -606,6 +608,51 @@ all_checks AS (
         'EXECUTE'
       ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
     'anon',
+    'false'
+  UNION ALL SELECT 347, 'function', 'hash security definer',
+    CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosecdef FROM hash_fn) IS TRUE THEN 'PASS' ELSE 'FAIL' END,
+    'security_definer',
+    'true'
+  UNION ALL SELECT 348, 'function', 'hash search_path',
+    CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
+      WHEN EXISTS (
+        SELECT 1 FROM hash_fn e, unnest(e.proconfig) cfg
+        WHERE cfg IN ('search_path=pg_catalog, public', 'search_path=pg_catalog,public')
+      ) THEN 'PASS' ELSE 'FAIL' END,
+    'search-path',
+    'pg_catalog, public'
+  UNION ALL SELECT 349, 'function', 'hash uses extensions.digest',
+    CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
+      WHEN (SELECT prosrc FROM hash_fn) LIKE '%extensions.digest(%' THEN 'PASS'
+      ELSE 'FAIL' END,
+    'extensions.digest',
+    'extensions.digest'
+  UNION ALL SELECT 350, 'function', 'hash has no bare digest',
+    CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
+      WHEN replace((SELECT prosrc FROM hash_fn), 'extensions.digest(', '')
+        LIKE '%digest(%' THEN 'FAIL'
+      ELSE 'PASS' END,
+    'qualified-only',
+    'no bare digest('
+  UNION ALL SELECT 351, 'function', 'hash search_path excludes extensions',
+    CASE WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN 'FAIL'
+      WHEN EXISTS (
+        SELECT 1 FROM hash_fn e, unnest(COALESCE(e.proconfig, ARRAY[]::text[])) cfg
+        WHERE cfg ILIKE '%extensions%'
+      ) THEN 'FAIL' ELSE 'PASS' END,
+    'no-extensions',
+    'pg_catalog, public only'
+  UNION ALL SELECT 352, 'acl', 'hash authenticated execute denied',
+    CASE
+      WHEN (SELECT count(*) FROM hash_fn) <> 1 THEN NULL
+      WHEN (SELECT authenticated_oid FROM roles) IS NULL THEN NULL
+      WHEN has_function_privilege(
+        (SELECT authenticated_oid FROM roles),
+        (SELECT oid FROM hash_fn),
+        'EXECUTE'
+      ) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
+    'authenticated',
     'false'
   UNION ALL SELECT 346, 'acl', 'facts helper authenticated execute denied',
     CASE

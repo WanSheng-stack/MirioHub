@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.3A — v95 boundary + encoding-v2 catalog fingerprint.
+ * PHASE 6.7C.1B.3A.1 — v95 boundary + schema-qualified pgcrypto digest.
  * Static catalog checks. Inventory SQL has not been executed against PostgreSQL.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
@@ -21,7 +21,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "24c46f693ae5dca3bcc54a9ff4430aa736e26115";
+const PHASE_BASELINE = "680b53224368fffb24de1607f53eb0312b12d803";
 const INVENTORY_RESULT_COLUMNS = 38;
 const INVENTORY_UNION_BRANCHES = 13;
 const V95_REL =
@@ -61,6 +61,23 @@ function gitDiff(path: string): string {
     encoding: "utf8",
   });
 }
+
+function gitShow(path: string): string {
+  return execFileSync("git", ["show", `${PHASE_BASELINE}:${path}`], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+}
+
+/** True only for unqualified digest( / hmac( — not extensions.digest(. */
+function hasBareCall(sql: string, name: string): boolean {
+  return new RegExp(`(?<![\\w.])${name}\\s*\\(`).test(sql);
+}
+
+assert.equal(hasBareCall("digest(", "digest"), true);
+assert.equal(hasBareCall("encode(digest(convert_to(", "digest"), true);
+assert.equal(hasBareCall("extensions.digest(", "digest"), false);
+assert.equal(hasBareCall("encode(extensions.digest(convert_to(", "digest"), false);
 
 type DirectAclAce = {
   grantee: number;
@@ -396,7 +413,8 @@ assert.ok(guard.includes('"encoding_version":2'));
 assert.ok(guard.includes("encode(convert_to("));
 assert.equal(/'t:' \|\| object_definition\b/.test(guard), false);
 assert.ok(guard.includes("v95_guard: % mismatch"));
-assert.ok(guard.includes("extensions.digest"));
+assert.ok(/extensions\.digest\s*\(/.test(guard));
+assert.equal(hasBareCall(guard, "digest"), false);
 assert.ok(guard.includes("must still be empty"));
 assert.ok(guard.includes("btrim(regexp_replace"));
 assert.equal(guard.includes("replace(n, '::text'"), false);
@@ -414,6 +432,21 @@ assert.ok(verifySql.includes("writer uses now not timezone utc"));
 assert.ok(verifySql.includes("writer phone uses digit boundary"));
 assert.ok(verifySql.includes("writer expires four layers"));
 assert.ok(verifySql.includes("snapshot rpc count"));
+assert.ok(verifySql.includes("admission hash rpc count"));
+assert.ok(verifySql.includes("hash security definer"));
+assert.ok(verifySql.includes("hash search_path"));
+assert.ok(verifySql.includes("hash uses extensions.digest"));
+assert.ok(verifySql.includes("hash has no bare digest"));
+assert.ok(verifySql.includes("hash search_path excludes extensions"));
+assert.ok(verifySql.includes("hash service_role execute"));
+assert.ok(verifySql.includes("hash anon execute denied"));
+assert.ok(verifySql.includes("hash authenticated execute denied"));
+assert.equal(/SELECT\s+public\.match_request_admission_facts_hash_v95\s*\(/i.test(verifySql), false);
+assert.equal(/SELECT\s+public\.create_match_request_v95\s*\(/i.test(verifySql), false);
+assert.equal(/\n\s+\(SELECT prosrc FROM hash_fn\)/.test(verifySql), false);
+assert.ok(verifySql.includes("'qualified-only'"));
+assert.ok(verifySql.includes("'no-extensions'"));
+assert.ok(verifySql.includes("'security_definer'"));
 
 function dollarBody(sql: string, tag: string): string {
   const token = `$${tag}$`;
@@ -439,7 +472,10 @@ assert.ok(snapshotBody.includes("p_left_post_id IS DISTINCT FROM p_right_post_id
 assert.ok(snapshotBody.includes("(SELECT count(*) FROM decorated) = 2"));
 assert.equal(snapshotBody.includes("match_request_admission_facts_hash_v95(p_left_post_id"), false);
 assert.equal(hashBody.includes("public.posts"), false);
-assert.ok(hashBody.includes("digest("));
+assert.ok(/extensions\.digest\s*\(/.test(hashBody));
+assert.equal(hasBareCall(hashBody, "digest"), false);
+assert.ok(hashBody.includes("convert_to(p_facts::text, 'UTF8')"));
+assert.ok(hashBody.includes("'sha256'"));
 assert.equal(factsBody.includes("public.posts"), false);
 assert.ok(factsBody.includes("jsonb_build_object"));
 assert.ok(factsBody.includes("'origin_gps_ewkb'"));
@@ -451,6 +487,59 @@ assert.ok(
   writerBody.indexOf("match_request_admission_post_facts_v95") >
     writerBody.indexOf("FOR UPDATE"),
 );
+
+const hashFnStart = migration.indexOf(
+  "CREATE FUNCTION public.match_request_admission_facts_hash_v95",
+);
+const hashFnEnd = migration.indexOf("$hash$;", hashFnStart);
+const hashFnDef = migration.slice(hashFnStart, hashFnEnd);
+assert.ok(hashFnDef.includes("SECURITY DEFINER"));
+assert.ok(hashFnDef.includes("SET search_path = pg_catalog, public"));
+assert.equal(/search_path[^\n]*extensions/i.test(hashFnDef), false);
+assert.ok(/extensions\.digest\s*\(/.test(hashFnDef));
+assert.equal(hasBareCall(hashFnDef, "digest"), false);
+assert.equal(hasBareCall(hashFnDef, "hmac"), false);
+
+assert.equal(hasBareCall(migration, "digest"), false);
+assert.equal(hasBareCall(migration, "hmac"), false);
+assert.equal((migration.match(/extensions\.digest\s*\(/g) ?? []).length, 3);
+assert.equal(hasBareCall(migration, "st_asewkb"), false);
+assert.equal(hasBareCall(migration, "st_x"), false);
+assert.equal(hasBareCall(migration, "st_y"), false);
+assert.ok(factsBody.includes("public.st_asewkb("));
+assert.ok(snapshotBody.includes("public.st_x("));
+assert.ok(snapshotBody.includes("public.st_y("));
+
+const baselineMigration = gitShow(V95_REL);
+assert.equal(dollarBody(migration, "snap"), dollarBody(baselineMigration, "snap"));
+assert.equal(dollarBody(migration, "fn"), dollarBody(baselineMigration, "fn"));
+assert.equal(dollarBody(migration, "facts"), dollarBody(baselineMigration, "facts"));
+assert.equal(
+  hashBody.replace(/extensions\.digest\s*\(/g, "digest("),
+  dollarBody(baselineMigration, "hash"),
+);
+
+const fixture = JSON.parse(
+  read("src/lib/matching/v95PostV94Catalog.fixture.json"),
+) as {
+  encoding_version: number;
+  row_count: number;
+  rows: unknown[];
+  regions: unknown;
+  overall: unknown;
+};
+const baselineFixture = JSON.parse(
+  gitShow("src/lib/matching/v95PostV94Catalog.fixture.json"),
+) as typeof fixture;
+assert.equal(fixture.encoding_version, 2);
+assert.equal(fixture.row_count, 590);
+assert.equal(fixture.rows.length, 590);
+assert.deepEqual(fixture.regions, baselineFixture.regions);
+assert.deepEqual(fixture.overall, baselineFixture.overall);
+assert.deepEqual(fixture.rows, baselineFixture.rows);
+assert.equal(gitDiff("src/lib/matching/v95PostV94Catalog.fixture.json"), "");
+assert.equal(gitDiff("src/lib/matching/v95PostV94Catalog.ts"), "");
+assert.equal(gitDiff(INVENTORY_REL), "");
 
 const inventoryStatements = sqlBody(inventorySql)
   .split(";")
@@ -580,6 +669,8 @@ assert.ok(ownedSequenceItems[37]?.includes("'deptype=' || d.deptype::text"));
 
 assert.ok(verifySql.includes("snapshot single posts read"));
 assert.ok(verifySql.includes("hash helper does not read posts"));
+assert.ok(verifySql.includes("hash uses extensions.digest"));
+assert.ok(verifySql.includes("hash has no bare digest"));
 assert.ok(verifySql.includes("writer reuses facts helper after lock"));
 
 assert.equal(

@@ -3,14 +3,14 @@
  *
  * Single eligibility source for:
  * - buildMatchHall candidate display
- * - contact invitation creation
+ * - first-send match request creation
  * - evaluate-route-match (same product path; access is separate)
  *
  * Distinguishes: field legality, pair compatibility, route scorability,
  * and route threshold. `calculateRouteMatchScore.ok` is NOT admission.
  *
  * inspect RPC is a non-atomic cost hint. This helper is API authorization
- * for new invites. The v95 writer remains the state/idempotency/limit authority.
+ * for new match requests. The v95 writer remains the state/idempotency/limit authority.
  *
  * Active posts can still change matching-relevant fields after publish:
  * complete-contact may refresh origin_gps / destination_gps / scope and may
@@ -99,7 +99,7 @@ export function isStrictCalendarDate(value: string | null | undefined): boolean 
 
 export function isOfficialMatchTimeWindow(
   value: string | null | undefined,
-): boolean {
+): value is string {
   if (value == null) return false;
   return (TIME_WINDOWS as readonly string[]).includes(value);
 }
@@ -155,7 +155,13 @@ export function pairServiceTimeWindow(post: MatchAdmissionPost): string | null {
   return post.departure_time_window ?? post.service_time_window ?? null;
 }
 
-export function pairHasCompatibleSchedule(
+export function validatePostScheduleFields(post: MatchAdmissionPost): boolean {
+  const date = pairServiceDate(post);
+  const window = pairServiceTimeWindow(post);
+  return isStrictCalendarDate(date) && isOfficialMatchTimeWindow(window);
+}
+
+export function pairHasCompatibleDate(
   left: MatchAdmissionPost,
   right: MatchAdmissionPost,
 ): boolean {
@@ -170,14 +176,63 @@ export function pairHasCompatibleSchedule(
   }
   const leftDate = pairServiceDate(left);
   const rightDate = pairServiceDate(right);
+  return (
+    isStrictCalendarDate(leftDate) &&
+    isStrictCalendarDate(rightDate) &&
+    leftDate === rightDate
+  );
+}
+
+export type PairTimeDifference = {
+  overlap: boolean;
+  startDeltaMinutes: number | null;
+  advisoryOnly: true;
+};
+
+export function describePairTimeDifference(
+  left: MatchAdmissionPost,
+  right: MatchAdmissionPost,
+): PairTimeDifference {
   const leftWindow = pairServiceTimeWindow(left);
   const rightWindow = pairServiceTimeWindow(right);
-  if (!isStrictCalendarDate(leftDate) || !isStrictCalendarDate(rightDate)) {
-    return false;
+  if (
+    !isOfficialMatchTimeWindow(leftWindow) ||
+    !isOfficialMatchTimeWindow(rightWindow)
+  ) {
+    return { overlap: false, startDeltaMinutes: null, advisoryOnly: true };
   }
-  if (leftDate !== rightDate) return false;
-  if (!leftWindow || !rightWindow) return false;
-  return officialTimeWindowsCompatible(leftWindow, rightWindow);
+  const leftRange = parseOfficialTimeWindowMinutes(leftWindow);
+  const rightRange = parseOfficialTimeWindowMinutes(rightWindow);
+  if (!leftRange || !rightRange) {
+    return { overlap: false, startDeltaMinutes: null, advisoryOnly: true };
+  }
+  return {
+    overlap: leftRange.start < rightRange.end && rightRange.start < leftRange.end,
+    startDeltaMinutes: officialStartDeltaMinutes(leftRange.start, rightRange.start),
+    advisoryOnly: true,
+  };
+}
+
+export function validateProposedSchedule(input: {
+  proposedDate: string | null | undefined;
+  proposedTimeWindow: string | null | undefined;
+}): boolean {
+  return (
+    isStrictCalendarDate(input.proposedDate) &&
+    isOfficialMatchTimeWindow(input.proposedTimeWindow)
+  );
+}
+
+/** Date-hard admission only. Time overlap is advisory and must not gate eligibility. */
+export function pairHasCompatibleSchedule(
+  left: MatchAdmissionPost,
+  right: MatchAdmissionPost,
+): boolean {
+  return (
+    pairHasCompatibleDate(left, right) &&
+    validatePostScheduleFields(left) &&
+    validatePostScheduleFields(right)
+  );
 }
 
 function travelItemUnits(post: MatchAdmissionPost): number {
@@ -234,19 +289,13 @@ export function evaluatePairCompatibility(
   if (!pairHasCompatibleRolesAndCategory(left, right)) {
     return { ok: false, reasons: ["incompatible_pair"] };
   }
-  if (!pairHasCompatibleSchedule(left, right)) {
-    const leftDate = pairServiceDate(left);
-    const rightDate = pairServiceDate(right);
-    const leftWindow = pairServiceTimeWindow(left);
-    const rightWindow = pairServiceTimeWindow(right);
-    if (
-      !isStrictCalendarDate(leftDate) ||
-      !isStrictCalendarDate(rightDate) ||
-      !isOfficialMatchTimeWindow(leftWindow) ||
-      !isOfficialMatchTimeWindow(rightWindow)
-    ) {
-      return { ok: false, reasons: ["invalid_fields"] };
-    }
+  if (
+    !validatePostScheduleFields(left) ||
+    !validatePostScheduleFields(right)
+  ) {
+    return { ok: false, reasons: ["invalid_fields"] };
+  }
+  if (!pairHasCompatibleDate(left, right)) {
     return { ok: false, reasons: ["incompatible_pair"] };
   }
   if (

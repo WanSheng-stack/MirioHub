@@ -266,26 +266,22 @@ OWNER against PostGIS.
 - **Risk if wired early:** Half-contracts, oversell, or browser DML against
   fail-closed tables.
 
-## 14. Contact invitation creation boundary (v95)
+## 14. Atomic match-request creation boundary (v95)
 
-- **Current state:** PHASE 6.7C.1A.1 keeps the undeployed v95 writer as the
-  only success authority. `inspect_match_contact_invitation_v95` is a
-  non-atomic cost hint and never authorizes HTTP 200 or fabricates a writer
-  row. Exact idempotent retries still resolve
-  `(initiator_user_id, client_request_id)` first, then compare the recovered
-  `contact_code_hash` inside the writer. Hall, contact invitation, and
-  evaluate-route-match share `src/lib/matching/matchAdmissionPolicy.ts`.
-  Route admission is not `calculateRouteMatchScore.ok`; it also applies
-  `matching_route_max_extra_detour_km` (default 30) and
-  `matching_route_max_extra_detour_ratio` (default 0.5). Active posts can
-  still refresh GPS / fill null `transport_mode` via complete-contact, so
-  new creates bind a server admission digest after the writer locks posts.
-  Limits stay writer-atomic. This phase does not write `contact_grants`,
-  match requests, contracts, allocations, or Fraud tables, and does not
-  mount UI.
-- **Still unresolved / later phases:** invitation list, notifications,
-  contact-grant writer, MatchRequestSheet mount, formal match request,
-  accept/reject, and 6.7C.3 contract+allocation transaction.
+- **Current state:** PHASE 6.7C.1B rewrites undeployed v95 into the first-send
+  match-request boundary. One user action creates the internal
+  `match_contact_invitations` envelope, `match_requests` thread, first
+  `match_request_revisions` current row, and a one-way `contact_grants`
+  row in a single writer transaction. `matching_request_creation_enabled`
+  defaults to false and production pricing is fail-closed, so this API is
+  not open to real users. `disclosure_mode` is the fixed v93 legacy value
+  `recipient_contacts_initiator`. Hall and request creation share
+  `matchAdmissionPolicy.ts`: dates are hard; time windows are advisory.
+  Inspect is a hint; `create_match_request_v95` is the only success
+  authority. MatchRequestSheet stays unmounted.
+- **Still unresolved / later phases:** request list, resend, accept/reject,
+  contact DTO, MatchRequestSheet mount, country pricing, and contract
+  capacity/fulfillment.
 - **Future replacement:** A later grant writer must re-check recipient
   settings and confirmed channels before any contact DTO.
 - **Earliest safe production use:** After v95 is applied, verify.sql is run

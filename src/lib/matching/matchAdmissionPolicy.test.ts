@@ -5,11 +5,7 @@
 
 import assert from "node:assert/strict";
 import {
-  evaluateContactInvitationEligibility,
-  type ContactInvitationEligibilityPost,
-} from "@/lib/matching/contactInvitationEligibilityCore";
-import { CONTACT_INVITATION_ERROR } from "@/lib/matching/contactInvitationCreate";
-import {
+  describePairTimeDifference,
   evaluateMatchAdmission,
   evaluateRouteAdmission,
   hashMatchAdmissionDigest,
@@ -17,6 +13,7 @@ import {
   officialStartDeltaMinutes,
   officialTimeWindowsCompatible,
   pairHasCompatibleSchedule,
+  validateProposedSchedule,
   type MatchAdmissionPost,
   type MatchAdmissionRouteScore,
   type MatchAdmissionRouteThresholds,
@@ -105,7 +102,14 @@ assert.equal(
     ...provider,
     departure_time_window: "14:45-15:00",
   }),
-  false,
+  true,
+);
+assert.equal(
+  pairHasCompatibleSchedule(demand, {
+    ...provider,
+    departure_time_window: "20:00-20:15",
+  }),
+  true,
 );
 assert.equal(
   pairHasCompatibleSchedule(demand, {
@@ -156,6 +160,38 @@ assert.equal(
 );
 assert.equal(
   officialTimeWindowsCompatible("23:45-00:00", "00:30-00:45"),
+  false,
+);
+{
+  const midnight = describePairTimeDifference(demand, {
+    ...provider,
+    departure_time_window: "23:45-00:00",
+  });
+  assert.equal(midnight.advisoryOnly, true);
+  assert.equal(
+    admit(demand, { ...provider, departure_time_window: "23:45-00:00" }).eligible,
+    true,
+  );
+}
+assert.equal(
+  validateProposedSchedule({
+    proposedDate: "2026-09-12",
+    proposedTimeWindow: "14:00-14:15",
+  }),
+  true,
+);
+assert.equal(
+  validateProposedSchedule({
+    proposedDate: "2026-02-30",
+    proposedTimeWindow: "14:00-14:15",
+  }),
+  false,
+);
+assert.equal(
+  validateProposedSchedule({
+    proposedDate: "2026-09-12",
+    proposedTimeWindow: "14:00-18:00",
+  }),
   false,
 );
 
@@ -234,33 +270,18 @@ assert.equal(
 assert.equal(evaluateRouteAdmission(OK_ROUTE, null).ok, false);
 
 {
-  const invite = evaluateContactInvitationEligibility({
-    actorUserId: ACTOR,
-    initiator: demand as ContactInvitationEligibilityPost,
-    counterpart: provider as ContactInvitationEligibilityPost,
-    route: OK_ROUTE,
-    thresholds: THRESHOLDS,
-  });
   const hall = admit();
-  assert.equal(invite.ok, hall.eligible);
-  assert.equal(invite.ok, true);
+  const requestAdmission = admit(demand, {
+    ...provider,
+    departure_time_window: "08:00-08:15",
+  });
+  assert.equal(hall.eligible, true);
+  assert.equal(requestAdmission.eligible, true);
 }
 {
   const shifted = { ...provider, departure_date: "2026-09-13" };
-  const invite = evaluateContactInvitationEligibility({
-    actorUserId: ACTOR,
-    initiator: demand as ContactInvitationEligibilityPost,
-    counterpart: shifted as ContactInvitationEligibilityPost,
-    route: OK_ROUTE,
-    thresholds: THRESHOLDS,
-  });
   const hall = admit(demand, shifted);
-  assert.equal(invite.ok, false);
   assert.equal(hall.eligible, false);
-  if (!invite.ok) {
-    assert.equal(invite.errorKey, CONTACT_INVITATION_ERROR.notEligible);
-    assert.equal(JSON.stringify(invite).includes("date"), false);
-  }
 }
 
 assert.equal(hashMatchAdmissionDigest("a").length, 32);

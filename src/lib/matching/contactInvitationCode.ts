@@ -16,17 +16,19 @@ export function readContactCodePepper(): string | null {
   return pepper;
 }
 
-export function generateSessionContactInvitationCode(
-  actorUserId: string,
-  clientRequestId: string,
-): ContactInvitationCodePair {
+export function generateSessionContactInvitationCode(input: {
+  actorUserId: string;
+  clientRequestId: string;
+  clientRevisionId: string;
+  initiatorPostId: string;
+  counterpartPostId: string;
+}): ContactInvitationCodePair {
   const pepper = readContactCodePepper();
   if (pepper == null) {
     throw new Error("pepper_invalid");
   }
   return generateContactInvitationCode({
     pepper,
-    actorUserId,
-    clientRequestId,
+    ...input,
   });
 }

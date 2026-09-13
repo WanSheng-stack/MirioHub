@@ -8,8 +8,9 @@ import { createHmac } from "node:crypto";
 
 export const CONTACT_CODE_PEPPER_MIN_LENGTH = 32;
 export const CONTACT_CODE_MODULUS = 10_000;
-export const CONTACT_CODE_DOMAIN = "miriohub:contact-code:v1:";
-export const CONTACT_CODE_HASH_DOMAIN = "miriohub:contact-code-hash:v1:";
+export const CONTACT_CODE_DOMAIN = "miriohub:match-request-code:v1:";
+export const CONTACT_CODE_HASH_DOMAIN = "miriohub:match-request-code-hash:v1:";
+export const DELIVERY_CODE_DOMAIN = "miriohub:delivery-code:v1:";
 
 export const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -39,18 +40,33 @@ export function generateContactInvitationCode(input: {
   pepper: string;
   actorUserId: string;
   clientRequestId: string;
+  clientRevisionId: string;
+  initiatorPostId: string;
+  counterpartPostId: string;
 }): ContactInvitationCodePair {
   if (!pepperIsUsable(input.pepper)) {
     throw new Error("pepper_invalid");
   }
-  if (!isUuid(input.actorUserId) || !isUuid(input.clientRequestId)) {
+  if (
+    !isUuid(input.actorUserId) ||
+    !isUuid(input.clientRequestId) ||
+    !isUuid(input.clientRevisionId) ||
+    !isUuid(input.initiatorPostId) ||
+    !isUuid(input.counterpartPostId)
+  ) {
     throw new Error("uuid_invalid");
   }
 
+  const material = [
+    input.actorUserId,
+    input.clientRequestId,
+    input.clientRevisionId,
+    input.initiatorPostId,
+    input.counterpartPostId,
+  ].join(":");
+
   const codeDigest = createHmac("sha256", input.pepper)
-    .update(
-      `${CONTACT_CODE_DOMAIN}${input.actorUserId}:${input.clientRequestId}`,
-    )
+    .update(`${CONTACT_CODE_DOMAIN}${material}`)
     .digest();
   let value = BigInt(0);
   for (const byte of codeDigest) {
@@ -61,9 +77,7 @@ export function generateContactInvitationCode(input: {
     .padStart(4, "0");
 
   const codeHash = createHmac("sha256", input.pepper)
-    .update(
-      `${CONTACT_CODE_HASH_DOMAIN}${input.actorUserId}:${input.clientRequestId}:${code}`,
-    )
+    .update(`${CONTACT_CODE_HASH_DOMAIN}${material}:${code}`)
     .digest("hex");
 
   return { code, codeHash };

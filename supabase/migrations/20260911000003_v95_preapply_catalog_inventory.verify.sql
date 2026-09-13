@@ -264,13 +264,19 @@ inventory AS (
 
   UNION ALL
   SELECT
-    'table_fingerprint', 'table_acl', cls.schema_name, cls.table_name,
+    'table_fingerprint',
+    'table_acl',
+    cls.schema_name,
+    cls.table_name,
     g.grantee_name || ':' || priv.privilege,
     g.grantee_ord * 10 + priv.priv_ord,
     'acl:' || cls.table_name || '.' || g.grantee_name || '.' || priv.privilege,
-    'acl', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    'acl',
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL,
-    g.grantee_name, priv.privilege,
+    NULL, NULL, NULL, NULL, NULL,
+    g.grantee_name,
+    priv.privilege,
     CASE
       WHEN g.grantee_name = 'PUBLIC' THEN
         CASE
@@ -288,7 +294,8 @@ inventory AS (
       WHEN has_table_privilege(g.grantee_oid, cls.relid, priv.privilege) THEN 'true'
       ELSE 'false'
     END,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL,
     CASE
       WHEN g.grantee_name = 'PUBLIC' THEN
         CASE

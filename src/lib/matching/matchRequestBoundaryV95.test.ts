@@ -1,6 +1,6 @@
 /**
- * PHASE 6.7C.1B.2A — v95 SQL / verify / freeze / PUBLIC ACL inventory.
- * Static catalog checks and pure ACL/policy-role helpers.
+ * PHASE 6.7C.1B.2A.1 — v95 inventory UNION column alignment.
+ * Static catalog checks, PUBLIC ACL helpers, and top-level SELECT list counts.
  * Inventory SQL has not been executed against PostgreSQL or Supabase.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
@@ -22,7 +22,9 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "c75a857f81b777f7849c6a4dc8554cbbe0207e09";
+const PHASE_BASELINE = "d01a5dbfa85a88dbe42ae6feb9294587a5f768fd";
+const INVENTORY_RESULT_COLUMNS = 38;
+const INVENTORY_UNION_BRANCHES = 13;
 const V95_REL =
   "supabase/migrations/20260911000003_create_contact_invitation_boundary_v95.sql";
 const V95_VERIFY_REL =
@@ -103,6 +105,263 @@ function policyRolesFingerprint(
     .map((role) => policyRoleLabel(role.oid, role.rolname))
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
     .join(",");
+}
+
+function isSqlIdentChar(ch: string): boolean {
+  return /[A-Za-z0-9_]/.test(ch);
+}
+
+function sqlKeywordAt(sql: string, index: number, word: string): boolean {
+  if (sql.slice(index, index + word.length).toLowerCase() !== word.toLowerCase()) {
+    return false;
+  }
+  if (index > 0 && isSqlIdentChar(sql[index - 1]!)) return false;
+  const after = index + word.length;
+  if (after < sql.length && isSqlIdentChar(sql[after]!)) return false;
+  return true;
+}
+
+/** Skip SQL strings, quoted idents, comments, and dollar quotes. */
+function skipSqlLiteral(sql: string, index: number): number | null {
+  const ch = sql[index]!;
+  if (ch === "-" && sql[index + 1] === "-") {
+    const nl = sql.indexOf("\n", index);
+    return nl < 0 ? sql.length : nl + 1;
+  }
+  if (ch === "/" && sql[index + 1] === "*") {
+    const end = sql.indexOf("*/", index + 2);
+    return end < 0 ? sql.length : end + 2;
+  }
+  if (ch === "'") {
+    let cursor = index + 1;
+    while (cursor < sql.length) {
+      if (sql[cursor] === "'" && sql[cursor + 1] === "'") {
+        cursor += 2;
+        continue;
+      }
+      if (sql[cursor] === "'") return cursor + 1;
+      cursor += 1;
+    }
+    return sql.length;
+  }
+  if (ch === '"') {
+    let cursor = index + 1;
+    while (cursor < sql.length) {
+      if (sql[cursor] === '"' && sql[cursor + 1] === '"') {
+        cursor += 2;
+        continue;
+      }
+      if (sql[cursor] === '"') return cursor + 1;
+      cursor += 1;
+    }
+    return sql.length;
+  }
+  if (ch === "$") {
+    const tag = sql.slice(index).match(/^\$[A-Za-z_]*\$/);
+    if (tag) {
+      const close = sql.indexOf(tag[0], index + tag[0].length);
+      return close < 0 ? sql.length : close + tag[0].length;
+    }
+  }
+  return null;
+}
+
+function extractSqlParenBlock(sql: string, openIndex: number): string {
+  let depth = 0;
+  let cursor = openIndex;
+  while (cursor < sql.length) {
+    const skipped = skipSqlLiteral(sql, cursor);
+    if (skipped != null) {
+      cursor = skipped;
+      continue;
+    }
+    if (sql[cursor] === "(") {
+      depth += 1;
+      cursor += 1;
+      continue;
+    }
+    if (sql[cursor] === ")") {
+      depth -= 1;
+      if (depth === 0) return sql.slice(openIndex + 1, cursor);
+      cursor += 1;
+      continue;
+    }
+    cursor += 1;
+  }
+  throw new Error("unbalanced SQL parentheses");
+}
+
+/** Split on commas that are outside parens, strings, and CASE expressions. */
+function splitTopLevelSqlItems(list: string): string[] {
+  const items: string[] = [];
+  let start = 0;
+  let paren = 0;
+  let caseDepth = 0;
+  let cursor = 0;
+  while (cursor < list.length) {
+    const skipped = skipSqlLiteral(list, cursor);
+    if (skipped != null) {
+      cursor = skipped;
+      continue;
+    }
+    const ch = list[cursor]!;
+    if (ch === "(") {
+      paren += 1;
+      cursor += 1;
+      continue;
+    }
+    if (ch === ")") {
+      paren = Math.max(0, paren - 1);
+      cursor += 1;
+      continue;
+    }
+    if (paren === 0) {
+      if (sqlKeywordAt(list, cursor, "case")) {
+        caseDepth += 1;
+        cursor += 4;
+        continue;
+      }
+      if (caseDepth > 0 && sqlKeywordAt(list, cursor, "end")) {
+        caseDepth -= 1;
+        cursor += 3;
+        continue;
+      }
+      if (ch === "," && caseDepth === 0) {
+        const item = list.slice(start, cursor).trim();
+        if (item.length > 0) items.push(item);
+        start = cursor + 1;
+      }
+    }
+    cursor += 1;
+  }
+  const last = list.slice(start).trim();
+  if (last.length > 0) items.push(last);
+  return items;
+}
+
+function splitTopLevelUnionAll(sql: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let paren = 0;
+  let caseDepth = 0;
+  let cursor = 0;
+  while (cursor < sql.length) {
+    const skipped = skipSqlLiteral(sql, cursor);
+    if (skipped != null) {
+      cursor = skipped;
+      continue;
+    }
+    const ch = sql[cursor]!;
+    if (ch === "(") {
+      paren += 1;
+      cursor += 1;
+      continue;
+    }
+    if (ch === ")") {
+      paren = Math.max(0, paren - 1);
+      cursor += 1;
+      continue;
+    }
+    if (paren === 0) {
+      if (sqlKeywordAt(sql, cursor, "case")) {
+        caseDepth += 1;
+        cursor += 4;
+        continue;
+      }
+      if (caseDepth > 0 && sqlKeywordAt(sql, cursor, "end")) {
+        caseDepth -= 1;
+        cursor += 3;
+        continue;
+      }
+      if (caseDepth === 0 && sqlKeywordAt(sql, cursor, "union")) {
+        const matched = sql.slice(cursor).match(/^union\s+all\b/i);
+        if (matched) {
+          const part = sql.slice(start, cursor).trim();
+          if (part.length > 0) parts.push(part);
+          cursor += matched[0].length;
+          start = cursor;
+          continue;
+        }
+      }
+    }
+    cursor += 1;
+  }
+  const last = sql.slice(start).trim();
+  if (last.length > 0) parts.push(last);
+  return parts;
+}
+
+function selectListOfBranch(branch: string): string {
+  let paren = 0;
+  let caseDepth = 0;
+  let selectStart = -1;
+  let cursor = 0;
+  while (cursor < branch.length) {
+    const skipped = skipSqlLiteral(branch, cursor);
+    if (skipped != null) {
+      cursor = skipped;
+      continue;
+    }
+    const ch = branch[cursor]!;
+    if (ch === "(") {
+      paren += 1;
+      cursor += 1;
+      continue;
+    }
+    if (ch === ")") {
+      paren = Math.max(0, paren - 1);
+      cursor += 1;
+      continue;
+    }
+    if (paren === 0) {
+      if (selectStart < 0 && sqlKeywordAt(branch, cursor, "select")) {
+        cursor += 6;
+        selectStart = cursor;
+        continue;
+      }
+      if (selectStart >= 0) {
+        if (sqlKeywordAt(branch, cursor, "case")) {
+          caseDepth += 1;
+          cursor += 4;
+          continue;
+        }
+        if (caseDepth > 0 && sqlKeywordAt(branch, cursor, "end")) {
+          caseDepth -= 1;
+          cursor += 3;
+          continue;
+        }
+        if (caseDepth === 0 && sqlKeywordAt(branch, cursor, "from")) {
+          return branch.slice(selectStart, cursor);
+        }
+      }
+    }
+    cursor += 1;
+  }
+  if (selectStart < 0) throw new Error("branch has no SELECT");
+  return branch.slice(selectStart);
+}
+
+function inventoryCteSelectLists(sql: string): string[][] {
+  const matched = sql.match(/\binventory\s+AS\s*\(/i);
+  if (!matched || matched.index == null) {
+    throw new Error("inventory CTE not found");
+  }
+  const open = matched.index + matched[0].length - 1;
+  const body = extractSqlParenBlock(sql, open);
+  return splitTopLevelUnionAll(body).map((branch) =>
+    splitTopLevelSqlItems(selectListOfBranch(branch)),
+  );
+}
+
+function inventoryFinalSelectItems(sql: string): string[] {
+  const matched = sql.match(/\binventory\s+AS\s*\(/i);
+  if (!matched || matched.index == null) {
+    throw new Error("inventory CTE not found");
+  }
+  const open = matched.index + matched[0].length - 1;
+  const inner = extractSqlParenBlock(sql, open);
+  const after = sql.slice(open + 1 + inner.length + 1);
+  return splitTopLevelSqlItems(selectListOfBranch(after));
 }
 
 assert.deepEqual(transactionControls(migration), ["BEGIN;", "COMMIT;"]);
@@ -239,6 +498,64 @@ assert.equal(/posts\.origin_address|profiles\.phone/i.test(inventorySql), false)
 assert.ok(inventorySql.includes("fail-closed"));
 assert.ok(inventorySql.includes("ORDER BY"));
 assert.ok(existsSync(join(repoRoot, INVENTORY_REL)));
+
+assert.deepEqual(
+  splitTopLevelSqlItems("a, func(b, c), d"),
+  ["a", "func(b, c)", "d"],
+);
+assert.deepEqual(
+  splitTopLevelSqlItems("a, (SELECT x, y FROM z), b"),
+  ["a", "(SELECT x, y FROM z)", "b"],
+);
+assert.deepEqual(
+  splitTopLevelSqlItems("a, CASE WHEN x THEN y ELSE z END, b"),
+  ["a", "CASE WHEN x THEN y ELSE z END", "b"],
+);
+assert.deepEqual(
+  splitTopLevelSqlItems(
+    "a, CASE WHEN x THEN func(1, 2) ELSE CASE WHEN q THEN 1 ELSE 2 END END, b",
+  ),
+  [
+    "a",
+    "CASE WHEN x THEN func(1, 2) ELSE CASE WHEN q THEN 1 ELSE 2 END END",
+    "b",
+  ],
+);
+assert.deepEqual(splitTopLevelSqlItems("'a,b', c"), ["'a,b'", "c"]);
+assert.equal(
+  splitTopLevelSqlItems("a, func(b, c), d").length + 1,
+  splitTopLevelSqlItems("a, func(b, c), d, extra").length,
+);
+assert.equal(
+  splitTopLevelSqlItems("a, func(b, c), d").length - 1,
+  splitTopLevelSqlItems("a, func(b, c)").length,
+);
+
+const inventoryUnionLists = inventoryCteSelectLists(inventorySql);
+assert.equal(inventoryUnionLists.length, INVENTORY_UNION_BRANCHES);
+for (const [index, items] of inventoryUnionLists.entries()) {
+  assert.equal(items.length, INVENTORY_RESULT_COLUMNS, `union branch ${index + 1}`);
+}
+const tableAclItems = inventoryUnionLists.find((items) =>
+  items[1]?.includes("'table_acl'"),
+);
+assert.ok(tableAclItems);
+assert.equal(tableAclItems.length, INVENTORY_RESULT_COLUMNS);
+assert.ok(tableAclItems[25]?.includes("g.grantee_name"));
+assert.ok(tableAclItems[26]?.includes("priv.privilege"));
+assert.ok(tableAclItems[27]?.includes("aclexplode"));
+assert.ok(tableAclItems[37]?.includes("direct_acl"));
+for (let col = 28; col <= 36; col += 1) {
+  assert.match(tableAclItems[col]!, /^NULL\b/i, `table_acl placeholder ${col + 1}`);
+}
+const inventoryFinalItems = inventoryFinalSelectItems(inventorySql);
+assert.equal(inventoryFinalItems.length, INVENTORY_RESULT_COLUMNS);
+assert.equal(inventoryFinalItems[0], "scope");
+assert.equal(inventoryFinalItems[25], "acl_grantee");
+assert.equal(inventoryFinalItems[26], "acl_privilege");
+assert.equal(inventoryFinalItems[27], "acl_status");
+assert.equal(inventoryFinalItems[37], "object_definition");
+
 assert.ok(verifySql.includes("snapshot single posts read"));
 assert.ok(verifySql.includes("hash helper does not read posts"));
 assert.ok(verifySql.includes("writer reuses facts helper after lock"));
@@ -339,6 +656,7 @@ for (const path of FROZEN_PATHS) {
   assert.equal(gitDiff(path), "", path);
 }
 assert.equal(gitDiff(V95_REL), "", V95_REL);
+assert.equal(gitDiff(V95_VERIFY_REL), "", V95_VERIFY_REL);
 
 assert.equal(
   readdirSync(join(repoRoot, "supabase/migrations")).some(
@@ -380,7 +698,7 @@ assert.equal(
   existsSync(join(repoRoot, "src/lib/matching/contactInvitationCreate.ts")),
   false,
 );
-assert.ok(ledger.includes("6.7C.1B.2A"));
+assert.ok(ledger.includes("6.7C.1B.2A.1"));
 assert.ok(ledger.includes("aclexplode"));
 assert.ok(ledger.includes("missing_oid:<oid>"));
 

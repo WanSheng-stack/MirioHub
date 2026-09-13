@@ -8,7 +8,9 @@
 >
 > 代码审阅基线：`feature/home-bottomsheet-fix` @ `a3945a54a6f6d379f0ab23020da34acb91667a5b`
 >
-> 数据库状态：v90–v94 已执行并冻结；v95 尚未执行，禁止直接部署当前版本
+> 数据库状态：v90–v94 已执行并冻结；v95 仍未执行。PHASE 6.7C.1B.3 已把
+> guard 绑定到真实 post-v94 catalog fingerprint；结构上可执行，但禁止
+> 在代码审核前自行 apply。
 
 ---
 

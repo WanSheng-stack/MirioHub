@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.2A.2 — v95 inventory catalog "char" cast + UNION columns.
+ * PHASE 6.7C.1B.3 — v95 boundary + live catalog fingerprint.
  * Static catalog checks. Inventory SQL has not been executed against PostgreSQL.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
@@ -21,7 +21,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "981b6b508a0573d4801ebaf1446e6b582fe1166b";
+const PHASE_BASELINE = "afb9960b7a94ac53e214f379ce5564f385f0220b";
 const INVENTORY_RESULT_COLUMNS = 38;
 const INVENTORY_UNION_BRANCHES = 13;
 const V95_REL =
@@ -390,9 +390,11 @@ assert.ok(migration.includes("'{\"v\":1}'::jsonb"));
 assert.ok(migration.includes("matching_request_creation_enabled boolean NOT NULL DEFAULT false"));
 assert.ok(migration.includes("DEFERRABLE INITIALLY DEFERRED"));
 assert.equal(migration.includes("timezone('utc', now())"), false);
-assert.ok(guard.includes("post-v94 live catalog fixture missing"));
-assert.ok(guard.includes("run corrected 20260911000003_v95_preapply_catalog_inventory.verify.sql"));
-assert.ok(guard.includes("v95 is not executable"));
+assert.equal(guard.includes("post-v94 live catalog fixture missing"), false);
+assert.ok(guard.includes("$v95_fp$"));
+assert.ok(guard.includes("v95_guard: % mismatch"));
+assert.ok(guard.includes("extensions.digest"));
+assert.ok(guard.includes("must still be empty"));
 assert.ok(guard.includes("btrim(regexp_replace"));
 assert.equal(guard.includes("replace(n, '::text'"), false);
 assert.equal(/INSERT\s+INTO\s+public\.match_contracts/i.test(migration), false);
@@ -672,8 +674,8 @@ assert.equal(freezeLegacyDirectMatchIntercept().status, 409);
 for (const path of FROZEN_PATHS) {
   assert.equal(gitDiff(path), "", path);
 }
-assert.equal(gitDiff(V95_REL), "", V95_REL);
-assert.equal(gitDiff(V95_VERIFY_REL), "", V95_VERIFY_REL);
+assert.notEqual(gitDiff(V95_REL), "");
+assert.notEqual(gitDiff(V95_VERIFY_REL), "");
 
 assert.equal(
   readdirSync(join(repoRoot, "supabase/migrations")).some(
@@ -694,7 +696,11 @@ function walk(dir: string) {
       walk(full);
       continue;
     }
-    if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.includes(".test.")) {
+    if (
+      /\.(ts|tsx)$/.test(entry.name) &&
+      !entry.name.includes(".test.") &&
+      entry.name !== "v95PostV94Catalog.ts"
+    ) {
       runtimeFiles.push(full);
     }
   }
@@ -715,7 +721,7 @@ assert.equal(
   existsSync(join(repoRoot, "src/lib/matching/contactInvitationCreate.ts")),
   false,
 );
-assert.ok(ledger.includes("6.7C.1B.2A.2"));
+assert.ok(ledger.includes("6.7C.1B.3"));
 assert.ok(ledger.includes("aclexplode"));
 assert.ok(ledger.includes("missing_oid:<oid>"));
 

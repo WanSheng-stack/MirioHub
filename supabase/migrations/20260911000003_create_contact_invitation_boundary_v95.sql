@@ -1,228 +1,39 @@
--- PHASE 6.7C.1B.2 — atomic admission snapshot + complete catalog inventory
--- Unexecuted. No v96. Guard fail-closed until post-v94 catalog CSV exists.
+-- PHASE 6.7C.1B.3 — live post-v94 catalog fingerprint guard
+-- Structurally executable, not applied. No v96. Guard compares live
+-- inventory rows to frozen regional SHA-256 digests from the exported
+-- inventory CSV. Repeat apply still fail-fast. Do not auto-apply.
 -- One user action: send a match request. The writer atomically creates
 -- the internal contact envelope, request thread, first current revision,
 -- and one-way contact grant. match_contact_invitations is storage only.
 -- disclosure_mode is a fixed v93 legacy value, not a product switch.
--- MANUAL APPLY later. Do not auto-apply. Do not connect to Supabase here.
+-- MANUAL APPLY later. Do not connect to Supabase here.
 -- Explicit BEGIN/COMMIT. If a statement fails, execute ROLLBACK.
 
 BEGIN;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 0. Fail-fast live catalog guard
--- v93 four tables: column name/order/type/NOT NULL, PK/UNIQUE/CHECK/FK,
--- independent indexes, RLS, FORCE RLS, empty. Constraint/index defs use
--- whitespace-collapse + trim only against the v94-captured live catalog.
--- Column defaults are NOT compared here: the existing fixture stored
--- strip-cast default_norm, which this phase must not treat as raw catalog.
--- v94 tables: exist + RLS + empty, then fail closed — no live post-v94
--- catalog fixture exists in the repo. Run the inventory SQL and export CSV.
+-- Rebuilds the same 38-column inventory, canonicalizes whitespace-only
+-- on expressions, and compares regional count + SHA-256. Ten matching
+-- tables must stay empty. v95 objects must not already exist.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 DO $$
 DECLARE
   t text;
-  t_oid oid;
-  expected jsonb;
-  live_kind "char";
-  live_rls boolean;
-  live_force boolean;
   live_n bigint;
-  live_names text[];
-  exp_names text[];
-  missing text;
-  extra text;
+  r record;
+  expected jsonb := $v95_fp${"tables":{"count":10,"digest":"011a909e6c37e3c33906e17ba6a1b3a46f109f29869f0e96f8c9b9847e095a7b"},"columns":{"count":125,"digest":"8aee44ca89b115045be93447fab2308625c37018715f802f2204e356a81c5b50"},"constraints":{"count":120,"digest":"33aaca4ede53dbd90ebb67c2f56a43248f7de62a6b955f253b6cb1d2b117534d"},"indexes":{"count":22,"digest":"efb88375ff1f63361886ac00d50fa108f79f82c641e10496a783a0ab3a9b3080"},"policies":{"count":10,"digest":"63f41e1b1dd328f9d3e4a2eb551b3d966ae1ab34e4ce88186c7c961b0b72a1ba"},"acl":{"count":280,"digest":"63e96110171cbbe555ab6ec71acd40d4d920c0cb1e1e7f3459625efa5e40d144"},"triggers":{"count":10,"digest":"536aad59418b9c47c5c17abf17fd2494296b54572c60222355d1b8af441eed57"},"sequences":{"count":10,"digest":"df8c966b7f60d10f60b94bcdbd1aa7247f308011674c5bd48d0eeea49472eea9"},"functions":{"count":1,"digest":"8d055c5609791f8ae27bb1c674660d8a6281873bbe5194ef2c85e94f237c07d9"},"prerequisites":{"count":2,"digest":"3e4a81e7fe65f4a22bd97fdc88afef0ee6d1f61cf83c54c03c62e50f99d0e8a6"},"overall":{"count":590,"digest":"7a130bab8845465936a38828d8c6021d1c0c1c811151e5ab44873672ba385cbc"}}$v95_fp$::jsonb;
   exp jsonb;
-  live_type text;
-  live_notnull boolean;
-  live_def text;
-  n text;
-  exp_norm text;
+  seen text[] := ARRAY[]::text[];
+  want text;
   fn_count int;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
     'match_contact_invitations',
     'contact_grants',
     'match_requests',
-    'match_contracts'
-  ] LOOP
-    t_oid := to_regclass('public.' || t);
-    IF t_oid IS NULL THEN
-      RAISE EXCEPTION 'v95_guard: table missing: %', t;
-    END IF;
-
-    IF t = 'match_contact_invitations' THEN
-      expected := $v93_invitations_fp${"relkind":"r","relrowsecurity":true,"relforcerowsecurity":false,"columns":[{"name":"id","type":"uuid","not_null":true},{"name":"demand_post_id","type":"uuid","not_null":true},{"name":"provider_post_id","type":"uuid","not_null":true},{"name":"initiator_user_id","type":"uuid","not_null":true},{"name":"recipient_user_id","type":"uuid","not_null":true},{"name":"initiator_post_id","type":"uuid","not_null":true},{"name":"status","type":"text","not_null":true},{"name":"contact_policy_version","type":"integer","not_null":true},{"name":"disclosure_mode","type":"text","not_null":true},{"name":"contact_code_hash","type":"text","not_null":true},{"name":"client_request_id","type":"uuid","not_null":true},{"name":"expires_at","type":"timestamp with time zone","not_null":true},{"name":"converted_at","type":"timestamp with time zone","not_null":false},{"name":"invalidated_at","type":"timestamp with time zone","not_null":false},{"name":"created_at","type":"timestamp with time zone","not_null":true},{"name":"updated_at","type":"timestamp with time zone","not_null":true}],"constraints":[{"name":"match_contact_invitations_contact_code_hash_present","type":"c","def":"CHECK ((btrim(contact_code_hash) <> ''::text))"},{"name":"match_contact_invitations_converted_invalid_exclusive","type":"c","def":"CHECK (((converted_at IS NULL) OR (invalidated_at IS NULL)))"},{"name":"match_contact_invitations_converted_ts_consistent","type":"c","def":"CHECK (((status = 'converted'::text) = (converted_at IS NOT NULL)))"},{"name":"match_contact_invitations_demand_post_id_fkey","type":"f","def":"FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_contact_invitations_disclosure_mode_check","type":"c","def":"CHECK ((disclosure_mode = ANY (ARRAY['recipient_contacts_initiator'::text, 'mutual_eligible_contact'::text])))"},{"name":"match_contact_invitations_distinct_posts","type":"c","def":"CHECK ((demand_post_id <> provider_post_id))"},{"name":"match_contact_invitations_distinct_users","type":"c","def":"CHECK ((initiator_user_id <> recipient_user_id))"},{"name":"match_contact_invitations_expires_after_created","type":"c","def":"CHECK ((expires_at > created_at))"},{"name":"match_contact_invitations_initiator_client_request_id_key","type":"u","def":"UNIQUE (initiator_user_id, client_request_id)"},{"name":"match_contact_invitations_initiator_post_belongs","type":"c","def":"CHECK (((initiator_post_id = demand_post_id) OR (initiator_post_id = provider_post_id)))"},{"name":"match_contact_invitations_initiator_post_id_fkey","type":"f","def":"FOREIGN KEY (initiator_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_contact_invitations_initiator_user_id_fkey","type":"f","def":"FOREIGN KEY (initiator_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_contact_invitations_invalid_ts_consistent","type":"c","def":"CHECK (((status = ANY (ARRAY['invalidated'::text, 'expired'::text, 'blocked'::text])) = (invalidated_at IS NOT NULL)))"},{"name":"match_contact_invitations_pkey","type":"p","def":"PRIMARY KEY (id)"},{"name":"match_contact_invitations_policy_version_check","type":"c","def":"CHECK ((contact_policy_version > 0))"},{"name":"match_contact_invitations_provider_post_id_fkey","type":"f","def":"FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_contact_invitations_recipient_user_id_fkey","type":"f","def":"FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_contact_invitations_status_check","type":"c","def":"CHECK ((status = ANY (ARRAY['open'::text, 'converted'::text, 'invalidated'::text, 'expired'::text, 'blocked'::text])))"}],"indexes":[{"name":"match_contact_invitations_initiator_status_created_idx","def":"CREATE INDEX match_contact_invitations_initiator_status_created_idx ON public.match_contact_invitations USING btree (initiator_user_id, status, created_at DESC)"},{"name":"match_contact_invitations_one_open_pair","def":"CREATE UNIQUE INDEX match_contact_invitations_one_open_pair ON public.match_contact_invitations USING btree (demand_post_id, provider_post_id) WHERE (status = 'open'::text)"},{"name":"match_contact_invitations_open_expires_idx","def":"CREATE INDEX match_contact_invitations_open_expires_idx ON public.match_contact_invitations USING btree (expires_at) WHERE (status = 'open'::text)"},{"name":"match_contact_invitations_recipient_status_created_idx","def":"CREATE INDEX match_contact_invitations_recipient_status_created_idx ON public.match_contact_invitations USING btree (recipient_user_id, status, created_at DESC)"}]}$v93_invitations_fp$::jsonb;
-    ELSIF t = 'contact_grants' THEN
-      expected := $v93_grants_fp${"relkind":"r","relrowsecurity":true,"relforcerowsecurity":false,"columns":[{"name":"id","type":"uuid","not_null":true},{"name":"invitation_id","type":"uuid","not_null":true},{"name":"subject_user_id","type":"uuid","not_null":true},{"name":"viewer_user_id","type":"uuid","not_null":true},{"name":"allowed_channels","type":"text[]","not_null":true},{"name":"preferred_channel","type":"text","not_null":true},{"name":"policy_version","type":"integer","not_null":true},{"name":"granted_at","type":"timestamp with time zone","not_null":true},{"name":"expires_at","type":"timestamp with time zone","not_null":true},{"name":"revoked_at","type":"timestamp with time zone","not_null":false},{"name":"created_at","type":"timestamp with time zone","not_null":true}],"constraints":[{"name":"contact_grants_allowed_channels_contract_check","type":"c","def":"CHECK (((array_ndims(allowed_channels) = 1) AND (array_lower(allowed_channels, 1) = 1) AND (array_length(allowed_channels, 1) = cardinality(allowed_channels)) AND ((cardinality(allowed_channels) >= 1) AND (cardinality(allowed_channels) <= 3)) AND (array_position(allowed_channels, NULL::text) IS NULL) AND (allowed_channels <@ ARRAY['phone'::text, 'whatsapp'::text, 'viber'::text]) AND\nCASE cardinality(allowed_channels)\n    WHEN 1 THEN true\n    WHEN 2 THEN (allowed_channels[1] <> allowed_channels[2])\n    WHEN 3 THEN ((allowed_channels[1] <> allowed_channels[2]) AND (allowed_channels[1] <> allowed_channels[3]) AND (allowed_channels[2] <> allowed_channels[3]))\n    ELSE false\nEND AND (preferred_channel = ANY (allowed_channels))))"},{"name":"contact_grants_distinct_users","type":"c","def":"CHECK ((subject_user_id <> viewer_user_id))"},{"name":"contact_grants_expires_after_granted","type":"c","def":"CHECK ((expires_at > granted_at))"},{"name":"contact_grants_invitation_id_fkey","type":"f","def":"FOREIGN KEY (invitation_id) REFERENCES match_contact_invitations(id) ON DELETE RESTRICT"},{"name":"contact_grants_invitation_subject_viewer_key","type":"u","def":"UNIQUE (invitation_id, subject_user_id, viewer_user_id)"},{"name":"contact_grants_pkey","type":"p","def":"PRIMARY KEY (id)"},{"name":"contact_grants_policy_version_check","type":"c","def":"CHECK ((policy_version > 0))"},{"name":"contact_grants_revoked_after_granted","type":"c","def":"CHECK (((revoked_at IS NULL) OR (revoked_at >= granted_at)))"},{"name":"contact_grants_subject_user_id_fkey","type":"f","def":"FOREIGN KEY (subject_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"contact_grants_viewer_user_id_fkey","type":"f","def":"FOREIGN KEY (viewer_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"}],"indexes":[{"name":"contact_grants_invitation_id_idx","def":"CREATE INDEX contact_grants_invitation_id_idx ON public.contact_grants USING btree (invitation_id)"},{"name":"contact_grants_viewer_expires_live_idx","def":"CREATE INDEX contact_grants_viewer_expires_live_idx ON public.contact_grants USING btree (viewer_user_id, expires_at) WHERE (revoked_at IS NULL)"}]}$v93_grants_fp$::jsonb;
-    ELSIF t = 'match_requests' THEN
-      expected := $v93_requests_fp${"relkind":"r","relrowsecurity":true,"relforcerowsecurity":false,"columns":[{"name":"id","type":"uuid","not_null":true},{"name":"client_request_id","type":"uuid","not_null":true},{"name":"created_at","type":"timestamp with time zone","not_null":true},{"name":"updated_at","type":"timestamp with time zone","not_null":true},{"name":"responded_at","type":"timestamp with time zone","not_null":false},{"name":"expires_at","type":"timestamp with time zone","not_null":false},{"name":"invitation_id","type":"uuid","not_null":true},{"name":"demand_post_id","type":"uuid","not_null":true},{"name":"provider_post_id","type":"uuid","not_null":true},{"name":"requester_user_id","type":"uuid","not_null":true},{"name":"recipient_user_id","type":"uuid","not_null":true},{"name":"status","type":"text","not_null":true},{"name":"request_version","type":"integer","not_null":true},{"name":"request_assertion","type":"jsonb","not_null":true}],"constraints":[{"name":"match_requests_demand_post_id_fkey","type":"f","def":"FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_requests_distinct_posts","type":"c","def":"CHECK ((demand_post_id <> provider_post_id))"},{"name":"match_requests_invitation_id_fkey","type":"f","def":"FOREIGN KEY (invitation_id) REFERENCES match_contact_invitations(id) ON DELETE RESTRICT"},{"name":"match_requests_invitation_id_key","type":"u","def":"UNIQUE (invitation_id)"},{"name":"match_requests_non_response_terminal_null","type":"c","def":"CHECK (((status <> ALL (ARRAY['invalidated'::text, 'expired'::text])) OR (responded_at IS NULL)))"},{"name":"match_requests_pkey","type":"p","def":"PRIMARY KEY (id)"},{"name":"match_requests_provider_post_id_fkey","type":"f","def":"FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_requests_recipient_user_id_fkey","type":"f","def":"FOREIGN KEY (recipient_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_requests_request_assertion_object_check","type":"c","def":"CHECK ((jsonb_typeof(request_assertion) = 'object'::text))"},{"name":"match_requests_request_version_check","type":"c","def":"CHECK ((request_version > 0))"},{"name":"match_requests_requester_client_request_id_key","type":"u","def":"UNIQUE (requester_user_id, client_request_id)"},{"name":"match_requests_requester_ne_recipient","type":"c","def":"CHECK ((requester_user_id <> recipient_user_id))"},{"name":"match_requests_requester_user_id_fkey","type":"f","def":"FOREIGN KEY (requester_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_requests_responded_aligns_status","type":"c","def":"CHECK (((status = ANY (ARRAY['accepted'::text, 'rejected'::text])) = (responded_at IS NOT NULL)))"},{"name":"match_requests_status_check","type":"c","def":"CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'invalidated'::text, 'expired'::text])))"}],"indexes":[{"name":"match_requests_demand_post_id_idx","def":"CREATE INDEX match_requests_demand_post_id_idx ON public.match_requests USING btree (demand_post_id)"},{"name":"match_requests_one_pending_pair","def":"CREATE UNIQUE INDEX match_requests_one_pending_pair ON public.match_requests USING btree (demand_post_id, provider_post_id) WHERE (status = 'pending'::text)"},{"name":"match_requests_pending_expires_idx","def":"CREATE INDEX match_requests_pending_expires_idx ON public.match_requests USING btree (expires_at) WHERE (status = 'pending'::text)"},{"name":"match_requests_provider_post_id_idx","def":"CREATE INDEX match_requests_provider_post_id_idx ON public.match_requests USING btree (provider_post_id)"},{"name":"match_requests_recipient_status_created_idx","def":"CREATE INDEX match_requests_recipient_status_created_idx ON public.match_requests USING btree (recipient_user_id, status, created_at DESC)"},{"name":"match_requests_requester_status_created_idx","def":"CREATE INDEX match_requests_requester_status_created_idx ON public.match_requests USING btree (requester_user_id, status, created_at DESC)"}]}$v93_requests_fp$::jsonb;
-    ELSE
-      expected := $v93_contracts_fp${"relkind":"r","relrowsecurity":true,"relforcerowsecurity":false,"columns":[{"name":"id","type":"uuid","not_null":true},{"name":"request_id","type":"uuid","not_null":true},{"name":"demand_user_id","type":"uuid","not_null":true},{"name":"provider_user_id","type":"uuid","not_null":true},{"name":"snapshot_version","type":"integer","not_null":true},{"name":"demand_snapshot","type":"jsonb","not_null":true},{"name":"provider_snapshot","type":"jsonb","not_null":true},{"name":"agreement_snapshot","type":"jsonb","not_null":true},{"name":"created_at","type":"timestamp with time zone","not_null":true},{"name":"updated_at","type":"timestamp with time zone","not_null":true},{"name":"demand_post_id","type":"uuid","not_null":true},{"name":"provider_post_id","type":"uuid","not_null":true},{"name":"category","type":"text","not_null":true},{"name":"lifecycle_projection","type":"text","not_null":true},{"name":"formed_at","type":"timestamp with time zone","not_null":true},{"name":"terminal_at","type":"timestamp with time zone","not_null":false}],"constraints":[{"name":"match_contracts_agreement_snapshot_object_check","type":"c","def":"CHECK ((jsonb_typeof(agreement_snapshot) = 'object'::text))"},{"name":"match_contracts_category_check","type":"c","def":"CHECK ((category = ANY (ARRAY['travel'::text, 'deliver'::text, 'buy'::text, 'onsite'::text, 'errand'::text])))"},{"name":"match_contracts_demand_ne_provider","type":"c","def":"CHECK ((demand_user_id <> provider_user_id))"},{"name":"match_contracts_demand_post_id_fkey","type":"f","def":"FOREIGN KEY (demand_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_contracts_demand_post_id_key","type":"u","def":"UNIQUE (demand_post_id)"},{"name":"match_contracts_demand_snapshot_object_check","type":"c","def":"CHECK ((jsonb_typeof(demand_snapshot) = 'object'::text))"},{"name":"match_contracts_demand_user_id_fkey","type":"f","def":"FOREIGN KEY (demand_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_contracts_distinct_posts","type":"c","def":"CHECK ((demand_post_id <> provider_post_id))"},{"name":"match_contracts_lifecycle_projection_check","type":"c","def":"CHECK ((lifecycle_projection = ANY (ARRAY['formed'::text, 'in_progress'::text, 'pending_completion'::text, 'completed'::text, 'cancelled'::text])))"},{"name":"match_contracts_pkey","type":"p","def":"PRIMARY KEY (id)"},{"name":"match_contracts_provider_post_id_fkey","type":"f","def":"FOREIGN KEY (provider_post_id) REFERENCES posts(id) ON DELETE RESTRICT"},{"name":"match_contracts_provider_snapshot_object_check","type":"c","def":"CHECK ((jsonb_typeof(provider_snapshot) = 'object'::text))"},{"name":"match_contracts_provider_user_id_fkey","type":"f","def":"FOREIGN KEY (provider_user_id) REFERENCES profiles(id) ON DELETE RESTRICT"},{"name":"match_contracts_request_id_fkey","type":"f","def":"FOREIGN KEY (request_id) REFERENCES match_requests(id) ON DELETE RESTRICT"},{"name":"match_contracts_request_id_key","type":"u","def":"UNIQUE (request_id)"},{"name":"match_contracts_snapshot_version_check","type":"c","def":"CHECK ((snapshot_version > 0))"},{"name":"match_contracts_terminal_null_unless_closed","type":"c","def":"CHECK (((lifecycle_projection = ANY (ARRAY['completed'::text, 'cancelled'::text])) OR (terminal_at IS NULL)))"},{"name":"match_contracts_terminal_required_when_closed","type":"c","def":"CHECK (((lifecycle_projection <> ALL (ARRAY['completed'::text, 'cancelled'::text])) OR (terminal_at IS NOT NULL)))"}],"indexes":[{"name":"match_contracts_demand_user_lifecycle_formed_idx","def":"CREATE INDEX match_contracts_demand_user_lifecycle_formed_idx ON public.match_contracts USING btree (demand_user_id, lifecycle_projection, formed_at DESC)"},{"name":"match_contracts_provider_lifecycle_formed_idx","def":"CREATE INDEX match_contracts_provider_lifecycle_formed_idx ON public.match_contracts USING btree (provider_post_id, lifecycle_projection, formed_at)"},{"name":"match_contracts_provider_user_lifecycle_formed_idx","def":"CREATE INDEX match_contracts_provider_user_lifecycle_formed_idx ON public.match_contracts USING btree (provider_user_id, lifecycle_projection, formed_at DESC)"}]}$v93_contracts_fp$::jsonb;
-    END IF;
-
-    SELECT c.relkind, c.relrowsecurity, c.relforcerowsecurity
-    INTO live_kind, live_rls, live_force
-    FROM pg_catalog.pg_class c
-    WHERE c.oid = t_oid;
-
-    IF live_kind IS DISTINCT FROM 'r' THEN
-      RAISE EXCEPTION 'v95_guard: % is not a base table', t;
-    END IF;
-    IF live_rls IS DISTINCT FROM TRUE THEN
-      RAISE EXCEPTION 'v95_guard: % RLS is not enabled', t;
-    END IF;
-    IF live_force IS DISTINCT FROM FALSE THEN
-      RAISE EXCEPTION 'v95_guard: % FORCE RLS must stay off', t;
-    END IF;
-
-    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO live_n;
-    IF live_n IS DISTINCT FROM 0 THEN
-      RAISE EXCEPTION 'v95_guard: % must still be empty', t;
-    END IF;
-
-    SELECT coalesce(array_agg(a.attname ORDER BY a.attnum), ARRAY[]::text[])
-    INTO live_names
-    FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = t_oid AND a.attnum > 0 AND NOT a.attisdropped;
-
-    SELECT coalesce(array_agg(x.elem->>'name' ORDER BY x.ord), ARRAY[]::text[])
-    INTO exp_names
-    FROM jsonb_array_elements(expected->'columns') WITH ORDINALITY AS x(elem, ord);
-
-    missing := (
-      SELECT string_agg(q, ',' ORDER BY q)
-      FROM unnest(exp_names) q
-      WHERE NOT q = ANY (live_names)
-    );
-    IF missing IS NOT NULL THEN
-      RAISE EXCEPTION 'v95_guard: % column missing: %', t, missing;
-    END IF;
-    extra := (
-      SELECT string_agg(q, ',' ORDER BY q)
-      FROM unnest(live_names) q
-      WHERE NOT q = ANY (exp_names)
-    );
-    IF extra IS NOT NULL THEN
-      RAISE EXCEPTION 'v95_guard: % extra user column: %', t, extra;
-    END IF;
-    IF live_names IS DISTINCT FROM exp_names THEN
-      RAISE EXCEPTION 'v95_guard: % column order mismatch', t;
-    END IF;
-
-    FOR exp IN
-      SELECT elem FROM jsonb_array_elements(expected->'columns') AS elem
-    LOOP
-      SELECT format_type(a.atttypid, a.atttypmod), a.attnotnull
-      INTO live_type, live_notnull
-      FROM pg_catalog.pg_attribute a
-      WHERE a.attrelid = t_oid AND a.attname = exp->>'name';
-
-      IF live_type IS DISTINCT FROM exp->>'type'
-         OR live_notnull IS DISTINCT FROM (exp->>'not_null')::boolean THEN
-        RAISE EXCEPTION 'v95_guard: % column type/null mismatch: %', t, exp->>'name';
-      END IF;
-    END LOOP;
-
-    missing := (
-      SELECT string_agg(e->>'name', ',' ORDER BY 1)
-      FROM jsonb_array_elements(expected->'constraints') e
-      WHERE NOT EXISTS (
-        SELECT 1 FROM pg_catalog.pg_constraint c
-        WHERE c.conrelid = t_oid
-          AND c.conname = e->>'name'
-          AND c.contype IN ('p', 'u', 'c', 'f')
-      )
-    );
-    IF missing IS NOT NULL THEN
-      RAISE EXCEPTION 'v95_guard: % constraint missing: %', t, missing;
-    END IF;
-    extra := (
-      SELECT string_agg(c.conname, ',' ORDER BY 1)
-      FROM pg_catalog.pg_constraint c
-      WHERE c.conrelid = t_oid
-        AND c.contype IN ('p', 'u', 'c', 'f')
-        AND NOT EXISTS (
-          SELECT 1 FROM jsonb_array_elements(expected->'constraints') e
-          WHERE e->>'name' = c.conname
-        )
-    );
-    IF extra IS NOT NULL THEN
-      RAISE EXCEPTION 'v95_guard: % extra user constraint: %', t, extra;
-    END IF;
-
-    FOR exp IN
-      SELECT elem FROM jsonb_array_elements(expected->'constraints') AS elem
-    LOOP
-      SELECT c.contype::text, pg_get_constraintdef(c.oid, false)
-      INTO live_type, live_def
-      FROM pg_catalog.pg_constraint c
-      WHERE c.conrelid = t_oid AND c.conname = exp->>'name';
-
-      n := btrim(regexp_replace(coalesce(live_def, ''), '\s+', ' ', 'g'));
-      exp_norm := btrim(regexp_replace(coalesce(exp->>'def', ''), '\s+', ' ', 'g'));
-
-      IF live_type IS DISTINCT FROM exp->>'type' OR n IS DISTINCT FROM exp_norm THEN
-        RAISE EXCEPTION 'v95_guard: % constraint mismatch: %', t, exp->>'name';
-      END IF;
-    END LOOP;
-
-    missing := (
-      SELECT string_agg(e->>'name', ',' ORDER BY 1)
-      FROM jsonb_array_elements(expected->'indexes') e
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM pg_catalog.pg_index i
-        JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
-        WHERE i.indrelid = t_oid
-          AND ic.relname = e->>'name'
-          AND NOT EXISTS (
-            SELECT 1 FROM pg_catalog.pg_constraint co
-            WHERE co.conrelid = t_oid AND co.conindid = i.indexrelid
-          )
-      )
-    );
-    IF missing IS NOT NULL THEN
-      RAISE EXCEPTION 'v95_guard: % independent index missing: %', t, missing;
-    END IF;
-    extra := (
-      SELECT string_agg(ic.relname, ',' ORDER BY 1)
-      FROM pg_catalog.pg_index i
-      JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
-      WHERE i.indrelid = t_oid
-        AND NOT EXISTS (
-          SELECT 1 FROM pg_catalog.pg_constraint co
-          WHERE co.conrelid = t_oid AND co.conindid = i.indexrelid
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM jsonb_array_elements(expected->'indexes') e
-          WHERE e->>'name' = ic.relname
-        )
-    );
-    IF extra IS NOT NULL THEN
-      RAISE EXCEPTION 'v95_guard: % extra independent index: %', t, extra;
-    END IF;
-
-    FOR exp IN
-      SELECT elem FROM jsonb_array_elements(expected->'indexes') AS elem
-    LOOP
-      SELECT pg_get_indexdef(i.indexrelid, 0, false)
-      INTO live_def
-      FROM pg_catalog.pg_index i
-      JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
-      WHERE i.indrelid = t_oid AND ic.relname = exp->>'name';
-
-      n := btrim(regexp_replace(coalesce(live_def, ''), '\s+', ' ', 'g'));
-      exp_norm := btrim(regexp_replace(coalesce(exp->>'def', ''), '\s+', ' ', 'g'));
-
-      IF n IS DISTINCT FROM exp_norm THEN
-        RAISE EXCEPTION 'v95_guard: % index mismatch: %', t, exp->>'name';
-      END IF;
-    END LOOP;
-  END LOOP;
-
-  FOREACH t IN ARRAY ARRAY[
+    'match_contracts',
     'provider_trip_state',
     'contract_allocations',
     'contract_state_projections',
@@ -230,22 +41,8 @@ BEGIN
     'safety_checklist_acceptances',
     'safety_checklist_acceptance_items'
   ] LOOP
-    t_oid := to_regclass('public.' || t);
-    IF t_oid IS NULL THEN
+    IF to_regclass('public.' || t) IS NULL THEN
       RAISE EXCEPTION 'v95_guard: table missing: %', t;
-    END IF;
-    SELECT c.relkind, c.relrowsecurity, c.relforcerowsecurity
-    INTO live_kind, live_rls, live_force
-    FROM pg_catalog.pg_class c
-    WHERE c.oid = t_oid;
-    IF live_kind IS DISTINCT FROM 'r' THEN
-      RAISE EXCEPTION 'v95_guard: % is not a base table', t;
-    END IF;
-    IF live_rls IS DISTINCT FROM TRUE THEN
-      RAISE EXCEPTION 'v95_guard: % RLS is not enabled', t;
-    END IF;
-    IF live_force IS DISTINCT FROM FALSE THEN
-      RAISE EXCEPTION 'v95_guard: % FORCE RLS must stay off', t;
     END IF;
     EXECUTE format('SELECT count(*) FROM public.%I', t) INTO live_n;
     IF live_n IS DISTINCT FROM 0 THEN
@@ -347,8 +144,600 @@ BEGIN
     RAISE EXCEPTION 'v95_guard: leftover matching rpc exists';
   END IF;
 
-  RAISE EXCEPTION
-    'v95_guard: post-v94 live catalog fixture missing; run corrected 20260911000003_v95_preapply_catalog_inventory.verify.sql and export CSV. v95 is not executable.';
+  FOR r IN
+    WITH
+    target AS (
+  SELECT * FROM (
+    VALUES
+      (1, 'match_contact_invitations'),
+      (2, 'contact_grants'),
+      (3, 'match_requests'),
+      (4, 'match_contracts'),
+      (5, 'provider_trip_state'),
+      (6, 'contract_allocations'),
+      (7, 'contract_state_projections'),
+      (8, 'contract_events'),
+      (9, 'safety_checklist_acceptances'),
+      (10, 'safety_checklist_acceptance_items')
+  ) AS t(table_ord, table_name)
+),
+cls AS (
+  SELECT
+    t.table_ord,
+    t.table_name,
+    n.nspname AS schema_name,
+    c.oid AS relid,
+    c.relkind,
+    c.relrowsecurity,
+    c.relforcerowsecurity,
+    c.relowner,
+    c.relacl
+  FROM target t
+  JOIN pg_catalog.pg_class c
+    ON c.relname = t.table_name
+  JOIN pg_catalog.pg_namespace n
+    ON n.oid = c.relnamespace
+   AND n.nspname = 'public'
+),
+counts AS (
+  SELECT 1 AS table_ord, count(*) AS row_count FROM public.match_contact_invitations
+  UNION ALL SELECT 2, count(*) FROM public.contact_grants
+  UNION ALL SELECT 3, count(*) FROM public.match_requests
+  UNION ALL SELECT 4, count(*) FROM public.match_contracts
+  UNION ALL SELECT 5, count(*) FROM public.provider_trip_state
+  UNION ALL SELECT 6, count(*) FROM public.contract_allocations
+  UNION ALL SELECT 7, count(*) FROM public.contract_state_projections
+  UNION ALL SELECT 8, count(*) FROM public.contract_events
+  UNION ALL SELECT 9, count(*) FROM public.safety_checklist_acceptances
+  UNION ALL SELECT 10, count(*) FROM public.safety_checklist_acceptance_items
+),
+roles AS (
+  SELECT
+    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'anon') AS anon_oid,
+    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') AS authenticated_oid,
+    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'service_role') AS service_role_oid
+),
+privs AS (
+  SELECT * FROM (
+    VALUES
+      (1, 'SELECT'),
+      (2, 'INSERT'),
+      (3, 'UPDATE'),
+      (4, 'DELETE'),
+      (5, 'TRUNCATE'),
+      (6, 'REFERENCES'),
+      (7, 'TRIGGER')
+  ) AS p(priv_ord, privilege)
+),
+grantees AS (
+  SELECT * FROM (
+    VALUES
+      (1, 'PUBLIC', NULL::oid),
+      (2, 'anon', (SELECT anon_oid FROM roles)),
+      (3, 'authenticated', (SELECT authenticated_oid FROM roles)),
+      (4, 'service_role', (SELECT service_role_oid FROM roles))
+  ) AS g(grantee_ord, grantee_name, grantee_oid)
+),
+expected_ext AS (
+  SELECT * FROM (
+    VALUES
+      (1, 'pgcrypto'),
+      (2, 'postgis')
+  ) AS e(ext_ord, extname)
+),
+inventory AS (
+  SELECT
+    'table_fingerprint'::text AS scope,
+    'table'::text AS object_kind,
+    cls.schema_name,
+    cls.table_name,
+    cls.table_name AS object_name,
+    cls.table_ord AS object_order,
+    'table:' || cls.schema_name || '.' || cls.table_name AS object_identity,
+    cls.relkind::text AS object_type,
+    NULL::integer AS attnum,
+    NULL::text AS format_type,
+    NULL::boolean AS not_null,
+    NULL::text AS default_expr,
+    NULL::text AS attidentity,
+    NULL::text AS attgenerated,
+    NULL::boolean AS condeferrable,
+    NULL::boolean AS condeferred,
+    NULL::boolean AS convalidated,
+    NULL::boolean AS index_unique,
+    NULL::boolean AS index_valid,
+    NULL::boolean AS index_ready,
+    NULL::text AS policy_permissive,
+    NULL::text AS policy_roles,
+    NULL::text AS policy_cmd,
+    NULL::text AS policy_using,
+    NULL::text AS policy_with_check,
+    NULL::text AS acl_grantee,
+    NULL::text AS acl_privilege,
+    NULL::text AS acl_status,
+    NULL::text AS trigger_enabled,
+    NULL::text AS depend_type,
+    NULL::text AS language_name,
+    NULL::text AS volatility,
+    NULL::boolean AS security_definer,
+    NULL::text AS proconfig,
+    cls.relrowsecurity,
+    cls.relforcerowsecurity,
+    cnt.row_count,
+    concat_ws(
+      ' | ',
+      'relkind=' || cls.relkind::text,
+      'rls=' || cls.relrowsecurity::text,
+      'force_rls=' || cls.relforcerowsecurity::text,
+      'empty=' || (cnt.row_count = 0)::text,
+      'relacl=' || coalesce(cls.relacl::text, '')
+    ) AS object_definition
+  FROM cls
+  JOIN counts cnt ON cnt.table_ord = cls.table_ord
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'column', cls.schema_name, cls.table_name, a.attname,
+    a.attnum, 'column:' || cls.table_name || '.' || a.attname,
+    format_type(a.atttypid, a.atttypmod), a.attnum,
+    format_type(a.atttypid, a.atttypmod), a.attnotnull,
+    pg_get_expr(ad.adbin, ad.adrelid),
+    a.attidentity::text, a.attgenerated::text,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    concat_ws(
+      ' | ',
+      format_type(a.atttypid, a.atttypmod),
+      CASE WHEN a.attnotnull THEN 'NOT NULL' ELSE 'NULLABLE' END,
+      'identity=' || coalesce(nullif(a.attidentity::text, ''), 'none'),
+      'generated=' || coalesce(nullif(a.attgenerated::text, ''), 'none'),
+      coalesce(pg_get_expr(ad.adbin, ad.adrelid), '')
+    )
+  FROM cls
+  JOIN pg_catalog.pg_attribute a
+    ON a.attrelid = cls.relid AND a.attnum > 0 AND NOT a.attisdropped
+  LEFT JOIN pg_catalog.pg_attrdef ad
+    ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+
+  UNION ALL
+  SELECT
+    'table_fingerprint',
+    CASE c.contype
+      WHEN 'p' THEN 'primary_key'
+      WHEN 'u' THEN 'unique'
+      WHEN 'c' THEN 'check'
+      WHEN 'f' THEN 'foreign_key'
+      ELSE 'constraint'
+    END,
+    cls.schema_name, cls.table_name, c.conname, 0,
+    'constraint:' || cls.table_name || '.' || c.conname,
+    c.contype::text, NULL, NULL, NULL, NULL, NULL, NULL,
+    c.condeferrable, c.condeferred, c.convalidated,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    concat_ws(
+      ' | ',
+      pg_get_constraintdef(c.oid, false),
+      'deferrable=' || c.condeferrable::text,
+      'initially_deferred=' || c.condeferred::text,
+      'validated=' || c.convalidated::text
+    )
+  FROM cls
+  JOIN pg_catalog.pg_constraint c
+    ON c.conrelid = cls.relid AND c.contype IN ('p', 'u', 'c', 'f')
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'independent_index', cls.schema_name, cls.table_name,
+    ic.relname, 0, 'index:' || cls.table_name || '.' || ic.relname,
+    'i', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    i.indisunique, i.indisvalid, i.indisready,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    concat_ws(
+      ' | ',
+      pg_get_indexdef(i.indexrelid, 0, false),
+      'unique=' || i.indisunique::text,
+      'valid=' || i.indisvalid::text,
+      'ready=' || i.indisready::text
+    )
+  FROM cls
+  JOIN pg_catalog.pg_index i ON i.indrelid = cls.relid
+  JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint co
+    WHERE co.conrelid = cls.relid AND co.conindid = i.indexrelid
+  )
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'rls_policy_count', cls.schema_name, cls.table_name,
+    cls.table_name, 0, 'rls_policy_count:' || cls.table_name,
+    'count', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    (
+      SELECT count(*)::text
+      FROM pg_catalog.pg_policy p
+      WHERE p.polrelid = cls.relid
+    )
+  FROM cls
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'rls_policy', cls.schema_name, cls.table_name, p.polname,
+    0, 'rls_policy:' || cls.table_name || '.' || p.polname,
+    CASE WHEN p.polpermissive THEN 'permissive' ELSE 'restrictive' END,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    CASE WHEN p.polpermissive THEN 'permissive' ELSE 'restrictive' END,
+    (
+      SELECT string_agg(labeled.role_label, ',' ORDER BY labeled.role_label COLLATE "C")
+      FROM (
+        SELECT
+          CASE
+            WHEN role_oid = 0 THEN 'PUBLIC'
+            WHEN r.rolname IS NOT NULL THEN r.rolname
+            ELSE 'missing_oid:' || role_oid::text
+          END AS role_label
+        FROM unnest(p.polroles) AS role_oid
+        LEFT JOIN pg_catalog.pg_roles r ON r.oid = role_oid
+      ) labeled
+    ),
+    p.polcmd::text,
+    pg_get_expr(p.polqual, p.polrelid),
+    pg_get_expr(p.polwithcheck, p.polrelid),
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    concat_ws(
+      ' | ',
+      'cmd=' || p.polcmd::text,
+      'using=' || coalesce(pg_get_expr(p.polqual, p.polrelid), ''),
+      'with_check=' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')
+    )
+  FROM cls
+  JOIN pg_catalog.pg_policy p ON p.polrelid = cls.relid
+
+  UNION ALL
+  SELECT
+    'table_fingerprint',
+    'table_acl',
+    cls.schema_name,
+    cls.table_name,
+    g.grantee_name || ':' || priv.privilege,
+    g.grantee_ord * 10 + priv.priv_ord,
+    'acl:' || cls.table_name || '.' || g.grantee_name || '.' || priv.privilege,
+    'acl',
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL,
+    g.grantee_name,
+    priv.privilege,
+    CASE
+      WHEN g.grantee_name = 'PUBLIC' THEN
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM aclexplode(
+              COALESCE(cls.relacl, acldefault('r'::"char", cls.relowner))
+            ) a
+            WHERE a.grantee = 0
+              AND a.privilege_type = priv.privilege
+          ) THEN 'true'
+          ELSE 'false'
+        END
+      WHEN g.grantee_oid IS NULL THEN 'role_missing'
+      WHEN has_table_privilege(g.grantee_oid, cls.relid, priv.privilege) THEN 'true'
+      ELSE 'false'
+    END,
+    NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL,
+    CASE
+      WHEN g.grantee_name = 'PUBLIC' THEN
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM aclexplode(
+              COALESCE(cls.relacl, acldefault('r'::"char", cls.relowner))
+            ) a
+            WHERE a.grantee = 0
+              AND a.privilege_type = priv.privilege
+          ) THEN 'direct_acl=true'
+          ELSE 'direct_acl=false'
+        END
+      WHEN g.grantee_oid IS NULL THEN 'role_missing'
+      WHEN has_table_privilege(g.grantee_oid, cls.relid, priv.privilege) THEN 'true'
+      ELSE 'false'
+    END
+  FROM cls
+  CROSS JOIN grantees g
+  CROSS JOIN privs priv
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'trigger_count', cls.schema_name, cls.table_name,
+    cls.table_name, 0, 'trigger_count:' || cls.table_name,
+    'count', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    (
+      SELECT count(*)::text
+      FROM pg_catalog.pg_trigger tr
+      WHERE tr.tgrelid = cls.relid AND NOT tr.tgisinternal
+    )
+  FROM cls
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'trigger', cls.schema_name, cls.table_name, tr.tgname,
+    0, 'trigger:' || cls.table_name || '.' || tr.tgname,
+    'trigger', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    CASE
+      WHEN tr.tgenabled = 'O' THEN 'origin'
+      WHEN tr.tgenabled = 'D' THEN 'disabled'
+      WHEN tr.tgenabled = 'R' THEN 'replica'
+      WHEN tr.tgenabled = 'A' THEN 'always'
+      ELSE tr.tgenabled::text
+    END,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    pg_get_triggerdef(tr.oid, false)
+  FROM cls
+  JOIN pg_catalog.pg_trigger tr
+    ON tr.tgrelid = cls.relid AND NOT tr.tgisinternal
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'owned_sequence_count', cls.schema_name, cls.table_name,
+    cls.table_name, 0, 'owned_sequence_count:' || cls.table_name,
+    'count', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    (
+      SELECT count(*)::text
+      FROM pg_catalog.pg_depend d
+      JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+      WHERE d.classid = 'pg_catalog.pg_class'::regclass
+        AND d.refclassid = 'pg_catalog.pg_class'::regclass
+        AND d.refobjid = cls.relid
+        AND d.deptype IN ('a', 'i')
+    )
+  FROM cls
+
+  UNION ALL
+  SELECT
+    'table_fingerprint', 'owned_sequence', cls.schema_name, cls.table_name,
+    ns.nspname || '.' || s.relname, 0,
+    'owned_sequence:' || cls.table_name || '.' || a.attname || '.' || d.deptype::text,
+    d.deptype::text, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    d.deptype::text, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    concat_ws(
+      ' | ',
+      'sequence=' || ns.nspname || '.' || s.relname,
+      'column=' || a.attname,
+      'deptype=' || d.deptype::text
+    )
+  FROM cls
+  JOIN pg_catalog.pg_depend d
+    ON d.refobjid = cls.relid
+   AND d.classid = 'pg_catalog.pg_class'::regclass
+   AND d.refclassid = 'pg_catalog.pg_class'::regclass
+   AND d.deptype IN ('a', 'i')
+  JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+  JOIN pg_catalog.pg_namespace ns ON ns.oid = s.relnamespace
+  JOIN pg_catalog.pg_attribute a
+    ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid AND NOT a.attisdropped
+
+  UNION ALL
+  SELECT
+    'function_boundary', 'expected_function_set', 'public', '',
+    'v93_v94_expected_function_set', 0,
+    'function_set:v93_v94',
+    'empty', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    'expected function set empty'
+
+  UNION ALL
+  SELECT
+    'prerequisite', 'extension', coalesce(n.nspname, ''), '',
+    e.extname, e.ext_ord, 'extension:' || e.extname,
+    CASE WHEN ext.oid IS NULL THEN 'missing' ELSE 'present' END,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    CASE
+      WHEN ext.oid IS NULL THEN 'missing'
+      ELSE concat_ws(
+        ' | ',
+        'schema=' || n.nspname,
+        'version=' || ext.extversion
+      )
+    END
+  FROM expected_ext e
+  LEFT JOIN pg_catalog.pg_extension ext ON ext.extname = e.extname
+  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = ext.extnamespace
+),
+    canon AS (
+      SELECT
+        CASE object_kind
+          WHEN 'table' THEN 'tables'
+          WHEN 'column' THEN 'columns'
+          WHEN 'primary_key' THEN 'constraints'
+          WHEN 'unique' THEN 'constraints'
+          WHEN 'check' THEN 'constraints'
+          WHEN 'foreign_key' THEN 'constraints'
+          WHEN 'constraint' THEN 'constraints'
+          WHEN 'independent_index' THEN 'indexes'
+          WHEN 'rls_policy_count' THEN 'policies'
+          WHEN 'rls_policy' THEN 'policies'
+          WHEN 'table_acl' THEN 'acl'
+          WHEN 'trigger_count' THEN 'triggers'
+          WHEN 'trigger' THEN 'triggers'
+          WHEN 'owned_sequence_count' THEN 'sequences'
+          WHEN 'owned_sequence' THEN 'sequences'
+          WHEN 'expected_function_set' THEN 'functions'
+          WHEN 'extension' THEN 'prerequisites'
+          ELSE 'unknown'
+        END AS region,
+        CASE scope
+          WHEN 'table_fingerprint' THEN 1
+          WHEN 'function_boundary' THEN 2
+          WHEN 'prerequisite' THEN 3
+          ELSE 4
+        END AS scope_ord,
+        table_name,
+        CASE object_kind
+          WHEN 'table' THEN 1
+          WHEN 'column' THEN 2
+          WHEN 'primary_key' THEN 3
+          WHEN 'unique' THEN 4
+          WHEN 'check' THEN 5
+          WHEN 'foreign_key' THEN 6
+          WHEN 'independent_index' THEN 7
+          WHEN 'rls_policy_count' THEN 8
+          WHEN 'rls_policy' THEN 9
+          WHEN 'table_acl' THEN 10
+          WHEN 'trigger_count' THEN 11
+          WHEN 'trigger' THEN 12
+          WHEN 'owned_sequence_count' THEN 13
+          WHEN 'owned_sequence' THEN 14
+          WHEN 'expected_function_set' THEN 15
+          WHEN 'extension' THEN 16
+          ELSE 17
+        END AS kind_ord,
+        object_order,
+        object_identity,
+        (
+          CASE WHEN scope IS NULL THEN 'n' ELSE 't:' || scope END
+      || chr(31) || CASE WHEN object_kind IS NULL THEN 'n' ELSE 't:' || object_kind END
+      || chr(31) || CASE WHEN schema_name IS NULL THEN 'n' ELSE 't:' || schema_name END
+      || chr(31) || CASE WHEN table_name IS NULL THEN 'n' ELSE 't:' || table_name END
+      || chr(31) || CASE WHEN object_name IS NULL THEN 'n' ELSE 't:' || object_name END
+      || chr(31) || CASE WHEN object_order IS NULL THEN 'n' ELSE 'i:' || object_order::text END
+      || chr(31) || CASE WHEN object_identity IS NULL THEN 'n' ELSE 't:' || object_identity END
+      || chr(31) || CASE WHEN object_type IS NULL THEN 'n' ELSE 't:' || object_type END
+      || chr(31) || CASE WHEN attnum IS NULL THEN 'n' ELSE 'i:' || attnum::text END
+      || chr(31) || CASE WHEN format_type IS NULL THEN 'n' ELSE 't:' || format_type END
+      || chr(31) || CASE WHEN not_null IS NULL THEN 'n' WHEN not_null THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN default_expr IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(default_expr, '\s+', ' ', 'g')) END
+      || chr(31) || CASE WHEN attidentity IS NULL THEN 'n' ELSE 't:' || attidentity END
+      || chr(31) || CASE WHEN attgenerated IS NULL THEN 'n' ELSE 't:' || attgenerated END
+      || chr(31) || CASE WHEN condeferrable IS NULL THEN 'n' WHEN condeferrable THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN condeferred IS NULL THEN 'n' WHEN condeferred THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN convalidated IS NULL THEN 'n' WHEN convalidated THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN index_unique IS NULL THEN 'n' WHEN index_unique THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN index_valid IS NULL THEN 'n' WHEN index_valid THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN index_ready IS NULL THEN 'n' WHEN index_ready THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN policy_permissive IS NULL THEN 'n' ELSE 't:' || policy_permissive END
+      || chr(31) || CASE WHEN policy_roles IS NULL THEN 'n' ELSE 't:' || policy_roles END
+      || chr(31) || CASE WHEN policy_cmd IS NULL THEN 'n' ELSE 't:' || policy_cmd END
+      || chr(31) || CASE WHEN policy_using IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(policy_using, '\s+', ' ', 'g')) END
+      || chr(31) || CASE WHEN policy_with_check IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(policy_with_check, '\s+', ' ', 'g')) END
+      || chr(31) || CASE WHEN acl_grantee IS NULL THEN 'n' ELSE 't:' || acl_grantee END
+      || chr(31) || CASE WHEN acl_privilege IS NULL THEN 'n' ELSE 't:' || acl_privilege END
+      || chr(31) || CASE WHEN acl_status IS NULL THEN 'n' ELSE 't:' || acl_status END
+      || chr(31) || CASE WHEN trigger_enabled IS NULL THEN 'n' ELSE 't:' || trigger_enabled END
+      || chr(31) || CASE WHEN depend_type IS NULL THEN 'n' ELSE 't:' || depend_type END
+      || chr(31) || CASE WHEN language_name IS NULL THEN 'n' ELSE 't:' || language_name END
+      || chr(31) || CASE WHEN volatility IS NULL THEN 'n' ELSE 't:' || volatility END
+      || chr(31) || CASE WHEN security_definer IS NULL THEN 'n' WHEN security_definer THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN proconfig IS NULL THEN 'n' ELSE 't:' || proconfig END
+      || chr(31) || CASE WHEN relrowsecurity IS NULL THEN 'n' WHEN relrowsecurity THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN relforcerowsecurity IS NULL THEN 'n' WHEN relforcerowsecurity THEN 'b:true' ELSE 'b:false' END
+      || chr(31) || CASE WHEN row_count IS NULL THEN 'n' ELSE 'i:' || row_count::text END
+      || chr(31) || CASE WHEN object_definition IS NULL THEN 'n' ELSE 't:' || btrim(regexp_replace(object_definition, '\s+', ' ', 'g')) END
+        ) AS line
+      FROM inventory
+    ),
+    hashed AS (
+      SELECT
+        region,
+        count(*)::bigint AS n,
+        encode(
+          extensions.digest(
+            convert_to(
+              coalesce(
+                string_agg(
+                  line,
+                  E'\n'
+                  ORDER BY
+                    scope_ord,
+                    table_name COLLATE "C",
+                    kind_ord,
+                    object_order,
+                    object_identity COLLATE "C"
+                ),
+                ''
+              ),
+              'UTF8'
+            ),
+            'sha256'
+          ),
+          'hex'
+        ) AS digest
+      FROM canon
+      GROUP BY region
+    ),
+    overall AS (
+      SELECT
+        'overall'::text AS region,
+        count(*)::bigint AS n,
+        encode(
+          extensions.digest(
+            convert_to(
+              coalesce(
+                string_agg(
+                  line,
+                  E'\n'
+                  ORDER BY
+                    scope_ord,
+                    table_name COLLATE "C",
+                    kind_ord,
+                    object_order,
+                    object_identity COLLATE "C"
+                ),
+                ''
+              ),
+              'UTF8'
+            ),
+            'sha256'
+          ),
+          'hex'
+        ) AS digest
+      FROM canon
+    )
+    SELECT region, n, digest FROM hashed
+    UNION ALL
+    SELECT region, n, digest FROM overall
+  LOOP
+    IF r.region = 'unknown' THEN
+      RAISE EXCEPTION 'v95_guard: extra';
+    END IF;
+    exp := expected->r.region;
+    IF exp IS NULL THEN
+      RAISE EXCEPTION 'v95_guard: extra';
+    END IF;
+    IF r.n < (exp->>'count')::bigint THEN
+      RAISE EXCEPTION 'v95_guard: % missing', r.region;
+    END IF;
+    IF r.n > (exp->>'count')::bigint THEN
+      RAISE EXCEPTION 'v95_guard: % extra', r.region;
+    END IF;
+    IF r.digest IS DISTINCT FROM (exp->>'digest') THEN
+      RAISE EXCEPTION 'v95_guard: % mismatch', r.region;
+    END IF;
+    seen := array_append(seen, r.region);
+  END LOOP;
+
+  FOREACH want IN ARRAY ARRAY[
+    'tables', 'columns', 'constraints', 'indexes', 'policies', 'acl',
+    'triggers', 'sequences', 'functions', 'prerequisites', 'overall'
+  ] LOOP
+    IF NOT want = ANY (seen) THEN
+      RAISE EXCEPTION 'v95_guard: % missing', want;
+    END IF;
+  END LOOP;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════

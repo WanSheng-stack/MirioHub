@@ -2,6 +2,8 @@
 -- MANUAL APPLY of the sibling migration first. Do not run as a migration.
 -- Do not execute the writer. Do not create business rows.
 -- Do not output function source, posts, phones, GPS, addresses, or codes.
+-- Pre-apply guard is bound to the live post-v94 catalog fingerprint.
+-- This file does not claim a remote v95 apply has succeeded.
 -- EXPECT: single result set with check_order, area, check_name, result, observed, expected, overall_pass
 
 WITH

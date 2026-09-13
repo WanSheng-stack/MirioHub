@@ -9,6 +9,9 @@
 > Git 基线：`feature/home-bottomsheet-fix` @ `a3945a54a6f6d379f0ab23020da34acb91667a5b`
 >
 > 目的：在不执行 SQL、不修改代码的前提下，确定 v95 重写边界和后续实施顺序
+>
+> 实施更新（PHASE 6.7C.1B.3）：v95 仍未执行。guard 已绑定真实 post-v94
+> catalog fingerprint，结构上可执行，但必须先经审核再由用户决定是否 apply。
 
 ---
 

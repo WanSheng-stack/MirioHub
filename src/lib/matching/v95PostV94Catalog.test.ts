@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.3A — collision-free catalog fingerprint encoding v2.
+ * PHASE 6.7C.1B.3A.3 — collision-free encoding v2 + guard generator lock.
  * Recomputes digests from frozen typed rows. Does not copy hashes
  * out of the migration and compare them to themselves.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/v95PostV94Catalog.test.ts
@@ -22,6 +22,7 @@ import {
   TARGET_TABLES,
   buildCatalogFingerprint,
   cloneInventoryRows,
+  declareAliasCollisions,
   decodeInventoryRows,
   digestRows,
   ENCODING_VERSION,
@@ -29,8 +30,12 @@ import {
   encodeCanonicalRow,
   encodeHexTextFields,
   encodeLegacyRawTextFields,
+  extractDeclareNames,
+  extractSqlAliases,
   type InventoryRow,
+  normalizeGuardEol,
   parseCsvRecords,
+  renderV95CatalogGuardDoBlock,
   sortInventoryRows,
   sqlCanonicalLineExpr,
   utf8Hex,
@@ -545,6 +550,51 @@ const guardEnd = migration.indexOf("END $$;", guardStart);
 assert.ok(guardStart > 0);
 assert.ok(guardEnd > guardStart);
 assert.ok(firstDdl > guardEnd);
+
+const renderedGuard = renderV95CatalogGuardDoBlock(inventorySql, recomputed);
+assert.equal(/\br record\b/.test(renderedGuard), false);
+assert.equal(/\bFOR r IN\b/.test(renderedGuard), false);
+assert.equal(/\bt text;/.test(renderedGuard), false);
+assert.equal(/\bFOREACH t IN\b/.test(renderedGuard), false);
+assert.ok(/\bv_fingerprint_row record\b/.test(renderedGuard));
+assert.ok(/\bFOR v_fingerprint_row IN\b/.test(renderedGuard));
+assert.ok(/\bv_target_table text\b/.test(renderedGuard));
+assert.ok(/\bFOREACH v_target_table IN\b/.test(renderedGuard));
+assert.equal(normalizeGuardEol(renderedGuard), normalizeGuardEol(guard));
+assert.deepEqual(declareAliasCollisions(renderedGuard), []);
+assert.deepEqual(
+  declareAliasCollisions(`
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT 1 FROM pg_catalog.pg_roles r
+  LOOP
+    NULL;
+  END LOOP;
+END $$;
+`),
+  ["r"],
+);
+assert.deepEqual(
+  declareAliasCollisions(`
+DO $$
+DECLARE
+  v_fingerprint_row record;
+BEGIN
+  FOR v_fingerprint_row IN
+    SELECT 1 FROM pg_catalog.pg_roles r
+  LOOP
+    NULL;
+  END LOOP;
+END $$;
+`),
+  [],
+);
+assert.equal(extractDeclareNames(renderedGuard).includes("r"), false);
+assert.equal(extractDeclareNames(renderedGuard).includes("t"), false);
+assert.ok(extractSqlAliases(renderedGuard).includes("r"));
 
 assert.equal(guard.includes("post-v94 live catalog fixture missing"), false);
 assert.ok(guard.includes("encoding_version"));

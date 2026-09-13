@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.1B.3A.2 — v95 boundary + guard record/alias collision fix.
+ * PHASE 6.7C.1B.3A.3 — v95 boundary + collision-free guard generator.
  * Static catalog checks. Inventory SQL has not been executed against PostgreSQL.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/matching/matchRequestBoundaryV95.test.ts
  */
@@ -17,11 +17,20 @@ import {
   transactionControls,
   verifyIsSingleResultSet,
 } from "@/lib/matching/allocationEventFoundationV94.contract";
+import {
+  buildCatalogFingerprint,
+  declareAliasCollisions,
+  extractDeclareNames,
+  extractSqlAliases,
+  normalizeGuardEol,
+  renderV95CatalogGuardDoBlock,
+  type InventoryRow,
+} from "@/lib/matching/v95PostV94Catalog";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
-const PHASE_BASELINE = "1a74cb3fb7d5a019fa8a7fec51d632241810b827";
+const PHASE_BASELINE = "085498d37cbb2e6db7a6a833683284d84f07334c";
 const INVENTORY_RESULT_COLUMNS = 38;
 const INVENTORY_UNION_BRANCHES = 13;
 const V95_REL =
@@ -78,207 +87,6 @@ assert.equal(hasBareCall("digest(", "digest"), true);
 assert.equal(hasBareCall("encode(digest(convert_to(", "digest"), true);
 assert.equal(hasBareCall("extensions.digest(", "digest"), false);
 assert.equal(hasBareCall("encode(extensions.digest(convert_to(", "digest"), false);
-
-const SQL_ALIAS_STOP = new Set([
-  "all",
-  "and",
-  "as",
-  "asc",
-  "between",
-  "by",
-  "case",
-  "collate",
-  "cross",
-  "desc",
-  "distinct",
-  "else",
-  "end",
-  "false",
-  "fetch",
-  "for",
-  "from",
-  "full",
-  "group",
-  "having",
-  "in",
-  "inner",
-  "into",
-  "is",
-  "join",
-  "lateral",
-  "left",
-  "limit",
-  "loop",
-  "natural",
-  "not",
-  "null",
-  "nulls",
-  "offset",
-  "on",
-  "only",
-  "or",
-  "order",
-  "outer",
-  "right",
-  "select",
-  "set",
-  "then",
-  "true",
-  "union",
-  "using",
-  "values",
-  "when",
-  "where",
-  "window",
-  "with",
-]);
-
-function stripSqlLiteralsAndComments(sql: string): string {
-  let out = "";
-  let i = 0;
-  while (i < sql.length) {
-    const rest = sql.slice(i);
-    const dollar = rest.match(/^\$[A-Za-z0-9_]*\$/);
-    if (dollar) {
-      const tag = dollar[0];
-      const end = sql.indexOf(tag, i + tag.length);
-      if (end >= 0) {
-        out += " ";
-        i = end + tag.length;
-        continue;
-      }
-    }
-    if (sql[i] === "-" && sql[i + 1] === "-") {
-      const nl = sql.indexOf("\n", i);
-      i = nl < 0 ? sql.length : nl;
-      out += "\n";
-      continue;
-    }
-    if (sql[i] === "/" && sql[i + 1] === "*") {
-      const end = sql.indexOf("*/", i + 2);
-      i = end < 0 ? sql.length : end + 2;
-      out += " ";
-      continue;
-    }
-    const eString = (sql[i] === "E" || sql[i] === "e") && sql[i + 1] === "'";
-    if (sql[i] === "'" || eString) {
-      i = eString ? i + 2 : i + 1;
-      while (i < sql.length) {
-        if (sql[i] === "\\" && eString) {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'" && sql[i + 1] === "'") {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'") {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      out += " ";
-      continue;
-    }
-    if (sql[i] === '"') {
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === '"' && sql[i + 1] === '"') {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === '"') {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      out += " ";
-      continue;
-    }
-    out += sql[i];
-    i += 1;
-  }
-  return out;
-}
-
-function plpgsqlBody(sql: string): string {
-  const start = sql.search(/\$\$/);
-  if (start < 0) return sql;
-  const innerStart = start + 2;
-  const end = sql.lastIndexOf("END $$");
-  return end > innerStart ? sql.slice(innerStart, end) : sql.slice(innerStart);
-}
-
-function extractDeclareNames(sql: string): string[] {
-  const cleaned = stripSqlLiteralsAndComments(plpgsqlBody(sql));
-  const block = cleaned.match(/\bDECLARE\b([\s\S]*?)\bBEGIN\b/i);
-  if (!block) return [];
-  const names: string[] = [];
-  for (const line of block[1]!.split("\n")) {
-    const matched = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\b/);
-    if (matched) names.push(matched[1]!.toLowerCase());
-  }
-  return names;
-}
-
-function nextIdent(
-  tokens: string[],
-  index: number,
-): string | null {
-  const token = tokens[index];
-  return token && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token)
-    ? token.toLowerCase()
-    : null;
-}
-
-function extractSqlAliases(sql: string): string[] {
-  const cleaned = stripSqlLiteralsAndComments(plpgsqlBody(sql));
-  const aliases = new Set<string>();
-  for (const matched of cleaned.matchAll(
-    /\b([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(/gi,
-  )) {
-    aliases.add(matched[1]!.toLowerCase());
-  }
-  const tokens = cleaned
-    .replace(/[(),]/g, " ")
-    .split(/\s+/)
-    .filter((token) => token.length > 0);
-
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i]!.toLowerCase();
-    if (token === "as") {
-      const alias = nextIdent(tokens, i + 1);
-      if (alias && !SQL_ALIAS_STOP.has(alias)) aliases.add(alias);
-      continue;
-    }
-    if (token !== "from" && token !== "join") continue;
-    let j = i + 1;
-    if (nextIdent(tokens, j) === "only") j += 1;
-    if (nextIdent(tokens, j) === "lateral") j += 1;
-    const relation = tokens[j];
-    if (
-      !relation ||
-      !/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(relation) ||
-      SQL_ALIAS_STOP.has(relation.toLowerCase())
-    ) {
-      continue;
-    }
-    j += 1;
-    if (nextIdent(tokens, j) === "as") j += 1;
-    const alias = nextIdent(tokens, j);
-    if (alias && !SQL_ALIAS_STOP.has(alias)) aliases.add(alias);
-  }
-  return [...aliases];
-}
-
-function declareAliasCollisions(sql: string): string[] {
-  const declared = new Set(extractDeclareNames(sql));
-  return extractSqlAliases(sql)
-    .filter((name) => declared.has(name))
-    .sort();
-}
 
 const collidingGuard = `
 DO $$
@@ -782,12 +590,30 @@ assert.equal(hashBody, dollarBody(baselineMigration, "hash"));
 const fixture = JSON.parse(
   read("src/lib/matching/v95PostV94Catalog.fixture.json"),
 ) as {
+  source: string;
   encoding_version: number;
   row_count: number;
-  rows: unknown[];
+  rows: InventoryRow[];
   regions: unknown;
   overall: unknown;
 };
+const renderedGuard = renderV95CatalogGuardDoBlock(
+  inventorySql,
+  buildCatalogFingerprint(fixture.rows, fixture.source),
+);
+assert.equal(/\br record\b/.test(renderedGuard), false);
+assert.equal(/\bFOR r IN\b/.test(renderedGuard), false);
+assert.equal(/\bt text;/.test(renderedGuard), false);
+assert.equal(/\bFOREACH t IN\b/.test(renderedGuard), false);
+assert.ok(/\bv_fingerprint_row record\b/.test(renderedGuard));
+assert.ok(/\bFOR v_fingerprint_row IN\b/.test(renderedGuard));
+assert.ok(/\bv_target_table text\b/.test(renderedGuard));
+assert.ok(/\bFOREACH v_target_table IN\b/.test(renderedGuard));
+assert.equal(
+  normalizeGuardEol(renderedGuard),
+  normalizeGuardEol(guard),
+);
+assert.deepEqual(declareAliasCollisions(renderedGuard), []);
 const baselineFixture = JSON.parse(
   gitShow("src/lib/matching/v95PostV94Catalog.fixture.json"),
 ) as typeof fixture;
@@ -798,7 +624,7 @@ assert.deepEqual(fixture.regions, baselineFixture.regions);
 assert.deepEqual(fixture.overall, baselineFixture.overall);
 assert.deepEqual(fixture.rows, baselineFixture.rows);
 assert.equal(gitDiff("src/lib/matching/v95PostV94Catalog.fixture.json"), "");
-assert.equal(gitDiff("src/lib/matching/v95PostV94Catalog.ts"), "");
+assert.notEqual(gitDiff("src/lib/matching/v95PostV94Catalog.ts"), "");
 assert.equal(gitDiff(INVENTORY_REL), "");
 
 const inventoryStatements = sqlBody(inventorySql)
@@ -1028,7 +854,7 @@ assert.equal(freezeLegacyDirectMatchIntercept().status, 409);
 for (const path of FROZEN_PATHS) {
   assert.equal(gitDiff(path), "", path);
 }
-assert.notEqual(gitDiff(V95_REL), "");
+assert.equal(gitDiff(V95_REL), "");
 assert.equal(gitDiff(V95_VERIFY_REL), "");
 assert.equal(gitDiff("scripts/generate-v95-post-v94-catalog.ts"), "");
 

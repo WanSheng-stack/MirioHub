@@ -676,9 +676,9 @@ export function renderV95CatalogGuardDoBlock(
 -- safe because hex text cannot emit those bytes; this does not assume
 -- catalog values lack control characters.
 DECLARE
-  t text;
+  v_target_table text;
   live_n bigint;
-  r record;
+  v_fingerprint_row record;
   expected jsonb := $v95_fp$${expected}$v95_fp$::jsonb;
   exp jsonb;
   seen text[] := ARRAY[]::text[];
@@ -688,15 +688,15 @@ BEGIN
   IF (expected->>'encoding_version')::int IS DISTINCT FROM ${ENCODING_VERSION} THEN
     RAISE EXCEPTION 'v95_guard: % mismatch', 'encoding';
   END IF;
-  FOREACH t IN ARRAY ARRAY[
+  FOREACH v_target_table IN ARRAY ARRAY[
 ${tables}
   ] LOOP
-    IF to_regclass('public.' || t) IS NULL THEN
-      RAISE EXCEPTION 'v95_guard: table missing: %', t;
+    IF to_regclass('public.' || v_target_table) IS NULL THEN
+      RAISE EXCEPTION 'v95_guard: table missing: %', v_target_table;
     END IF;
-    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO live_n;
+    EXECUTE format('SELECT count(*) FROM public.%I', v_target_table) INTO live_n;
     IF live_n IS DISTINCT FROM 0 THEN
-      RAISE EXCEPTION 'v95_guard: % must still be empty', t;
+      RAISE EXCEPTION 'v95_guard: % must still be empty', v_target_table;
     END IF;
   END LOOP;
 
@@ -794,7 +794,7 @@ ${tables}
     RAISE EXCEPTION 'v95_guard: leftover matching rpc exists';
   END IF;
 
-  FOR r IN
+  FOR v_fingerprint_row IN
     WITH
     ${cte},
     canon AS (
@@ -913,23 +913,23 @@ ${tables}
     UNION ALL
     SELECT region, n, digest FROM overall
   LOOP
-    IF r.region = 'unknown' THEN
+    IF v_fingerprint_row.region = 'unknown' THEN
       RAISE EXCEPTION 'v95_guard: extra';
     END IF;
-    exp := expected->r.region;
+    exp := expected->v_fingerprint_row.region;
     IF exp IS NULL THEN
       RAISE EXCEPTION 'v95_guard: extra';
     END IF;
-    IF r.n < (exp->>'count')::bigint THEN
-      RAISE EXCEPTION 'v95_guard: % missing', r.region;
+    IF v_fingerprint_row.n < (exp->>'count')::bigint THEN
+      RAISE EXCEPTION 'v95_guard: % missing', v_fingerprint_row.region;
     END IF;
-    IF r.n > (exp->>'count')::bigint THEN
-      RAISE EXCEPTION 'v95_guard: % extra', r.region;
+    IF v_fingerprint_row.n > (exp->>'count')::bigint THEN
+      RAISE EXCEPTION 'v95_guard: % extra', v_fingerprint_row.region;
     END IF;
-    IF r.digest IS DISTINCT FROM (exp->>'digest') THEN
-      RAISE EXCEPTION 'v95_guard: % mismatch', r.region;
+    IF v_fingerprint_row.digest IS DISTINCT FROM (exp->>'digest') THEN
+      RAISE EXCEPTION 'v95_guard: % mismatch', v_fingerprint_row.region;
     END IF;
-    seen := array_append(seen, r.region);
+    seen := array_append(seen, v_fingerprint_row.region);
   END LOOP;
 
   FOREACH want IN ARRAY ARRAY[
@@ -941,4 +941,206 @@ ${tables}
     END IF;
   END LOOP;
 END $$;`;
+}
+
+export function normalizeGuardEol(sql: string): string {
+  return sql.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+const SQL_ALIAS_STOP = new Set([
+  "all",
+  "and",
+  "as",
+  "asc",
+  "between",
+  "by",
+  "case",
+  "collate",
+  "cross",
+  "desc",
+  "distinct",
+  "else",
+  "end",
+  "false",
+  "fetch",
+  "for",
+  "from",
+  "full",
+  "group",
+  "having",
+  "in",
+  "inner",
+  "into",
+  "is",
+  "join",
+  "lateral",
+  "left",
+  "limit",
+  "loop",
+  "natural",
+  "not",
+  "null",
+  "nulls",
+  "offset",
+  "on",
+  "only",
+  "or",
+  "order",
+  "outer",
+  "right",
+  "select",
+  "set",
+  "then",
+  "true",
+  "union",
+  "using",
+  "values",
+  "when",
+  "where",
+  "window",
+  "with",
+]);
+
+function stripSqlLiteralsAndComments(sql: string): string {
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const rest = sql.slice(i);
+    const dollar = rest.match(/^\$[A-Za-z0-9_]*\$/);
+    if (dollar) {
+      const tag = dollar[0];
+      const end = sql.indexOf(tag, i + tag.length);
+      if (end >= 0) {
+        out += " ";
+        i = end + tag.length;
+        continue;
+      }
+    }
+    if (sql[i] === "-" && sql[i + 1] === "-") {
+      const nl = sql.indexOf("\n", i);
+      i = nl < 0 ? sql.length : nl;
+      out += "\n";
+      continue;
+    }
+    if (sql[i] === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? sql.length : end + 2;
+      out += " ";
+      continue;
+    }
+    const eString = (sql[i] === "E" || sql[i] === "e") && sql[i + 1] === "'";
+    if (sql[i] === "'" || eString) {
+      i = eString ? i + 2 : i + 1;
+      while (i < sql.length) {
+        if (sql[i] === "\\" && eString) {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === "'") {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      out += " ";
+      continue;
+    }
+    if (sql[i] === '"') {
+      i += 1;
+      while (i < sql.length) {
+        if (sql[i] === '"' && sql[i + 1] === '"') {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === '"') {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      out += " ";
+      continue;
+    }
+    out += sql[i]!;
+    i += 1;
+  }
+  return out;
+}
+
+function plpgsqlBody(sql: string): string {
+  const start = sql.search(/\$\$/);
+  if (start < 0) return sql;
+  const innerStart = start + 2;
+  const end = sql.lastIndexOf("END $$");
+  return end > innerStart ? sql.slice(innerStart, end) : sql.slice(innerStart);
+}
+
+export function extractDeclareNames(sql: string): string[] {
+  const cleaned = stripSqlLiteralsAndComments(plpgsqlBody(sql));
+  const block = cleaned.match(/\bDECLARE\b([\s\S]*?)\bBEGIN\b/i);
+  if (!block) return [];
+  const names: string[] = [];
+  for (const line of block[1]!.split("\n")) {
+    const matched = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\b/);
+    if (matched) names.push(matched[1]!.toLowerCase());
+  }
+  return names;
+}
+
+function nextIdent(tokens: string[], index: number): string | null {
+  const token = tokens[index];
+  return token && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token)
+    ? token.toLowerCase()
+    : null;
+}
+
+export function extractSqlAliases(sql: string): string[] {
+  const cleaned = stripSqlLiteralsAndComments(plpgsqlBody(sql));
+  const aliases = new Set<string>();
+  for (const matched of cleaned.matchAll(
+    /\b([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(/gi,
+  )) {
+    aliases.add(matched[1]!.toLowerCase());
+  }
+  const tokens = cleaned
+    .replace(/[(),]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]!.toLowerCase();
+    if (token === "as") {
+      const alias = nextIdent(tokens, i + 1);
+      if (alias && !SQL_ALIAS_STOP.has(alias)) aliases.add(alias);
+      continue;
+    }
+    if (token !== "from" && token !== "join") continue;
+    let j = i + 1;
+    if (nextIdent(tokens, j) === "only") j += 1;
+    if (nextIdent(tokens, j) === "lateral") j += 1;
+    const relation = tokens[j];
+    if (
+      !relation ||
+      !/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(relation) ||
+      SQL_ALIAS_STOP.has(relation.toLowerCase())
+    ) {
+      continue;
+    }
+    j += 1;
+    if (nextIdent(tokens, j) === "as") j += 1;
+    const alias = nextIdent(tokens, j);
+    if (alias && !SQL_ALIAS_STOP.has(alias)) aliases.add(alias);
+  }
+  return [...aliases];
+}
+
+export function declareAliasCollisions(sql: string): string[] {
+  const declared = new Set(extractDeclareNames(sql));
+  return extractSqlAliases(sql)
+    .filter((name) => declared.has(name))
+    .sort();
 }

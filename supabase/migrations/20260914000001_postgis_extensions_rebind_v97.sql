@@ -1,12 +1,28 @@
 -- MirioHub v97: rebind application routines after Supabase Support moves
 -- PostGIS from public to extensions.
 -- DO NOT RUN before Support confirms the move is complete.
+-- Structurally executable, not applied in this phase.
+-- CREATE OR REPLACE uses extensions.geography after the move. Type OIDs do
+-- not change when ALTER EXTENSION SET SCHEMA moves PostGIS, so argument type
+-- OIDs still match the existing pg_proc row and PostgreSQL replaces it rather
+-- than adding an overload. Pre/post guards require to_regprocedure(identity)
+-- and exactly one public.proname row per routine. If REPLACE had created a
+-- second overload, the post count would be 2 and the migration fail-closes.
+-- Do not ALTER GPS columns or rebuild GiST indexes. No GRANT/REVOKE/COMMENT.
+-- Explicit BEGIN/COMMIT. If a statement fails, execute ROLLBACK.
+
 BEGIN;
 
-DO $guard$
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 0. Fail-fast: PostGIS must already live in extensions
+-- ═══════════════════════════════════════════════════════════════════════════
+
+DO $$
 DECLARE
   v_postgis_schema text;
   v_creation_enabled boolean;
+  v_name text;
+  v_count integer;
 BEGIN
   SELECT n.nspname INTO v_postgis_schema
   FROM pg_catalog.pg_extension e
@@ -20,6 +36,10 @@ BEGIN
   IF to_regtype('extensions.geography') IS NULL
      OR to_regtype('extensions.geometry') IS NULL THEN
     RAISE EXCEPTION 'v97_guard: extensions PostGIS types missing';
+  END IF;
+  IF to_regtype('public.geometry') IS NOT NULL
+     OR to_regtype('public.geography') IS NOT NULL THEN
+    RAISE EXCEPTION 'v97_guard: public PostGIS types still present';
   END IF;
   IF to_regclass('public.posts') IS NULL THEN
     RAISE EXCEPTION 'v97_guard: public.posts missing';
@@ -48,21 +68,37 @@ BEGIN
     RAISE EXCEPTION 'v97_guard: matching request creation must remain false';
   END IF;
 
-  IF (
-    SELECT count(*)
+  IF to_regprocedure(
+    'public.match_request_admission_post_facts_v95(uuid,uuid,text,text,text,date,text,text,text,integer,integer,integer,integer,integer,integer,text,text,jsonb,extensions.geography,extensions.geography)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'v97_guard: facts helper identity missing';
+  END IF;
+  IF to_regprocedure(
+    'public.read_match_request_candidate_snapshot_v95(uuid,uuid)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'v97_guard: snapshot identity missing';
+  END IF;
+  IF to_regprocedure(
+    'public.nearby_local_posts(double precision,double precision,integer)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'v97_guard: nearby identity missing';
+  END IF;
+
+  FOREACH v_name IN ARRAY ARRAY[
+    'match_request_admission_post_facts_v95',
+    'read_match_request_candidate_snapshot_v95',
+    'nearby_local_posts'
+  ] LOOP
+    SELECT count(*) INTO v_count
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public'
-      AND p.proname IN (
-        'match_request_admission_post_facts_v95',
-        'read_match_request_candidate_snapshot_v95',
-        'nearby_local_posts'
-      )
-  ) IS DISTINCT FROM 3 THEN
-    RAISE EXCEPTION 'v97_guard: expected application routine set mismatch';
-  END IF;
-END;
-$guard$;
+    WHERE n.nspname = 'public' AND p.proname = v_name;
+    IF v_count IS DISTINCT FROM 1 THEN
+      RAISE EXCEPTION 'v97_guard: overload or missing routine % count=%',
+        v_name, COALESCE(v_count, 0);
+    END IF;
+  END LOOP;
+END $$;
 
 CREATE OR REPLACE FUNCTION public.match_request_admission_post_facts_v95(
   p_id uuid,
@@ -111,14 +147,16 @@ AS $facts$
     'origin_address', p_origin_address,
     'destination_address', p_destination_address,
     'waypoints', p_waypoints,
-    'origin_gps_ewkb', CASE
-      WHEN p_origin_gps IS NULL THEN NULL
-      ELSE encode(extensions.st_asewkb(p_origin_gps::extensions.geometry), 'hex')
-    END,
-    'destination_gps_ewkb', CASE
-      WHEN p_destination_gps IS NULL THEN NULL
-      ELSE encode(extensions.st_asewkb(p_destination_gps::extensions.geometry), 'hex')
-    END
+    'origin_gps_ewkb',
+      CASE
+        WHEN p_origin_gps IS NULL THEN NULL
+        ELSE encode(extensions.st_asewkb(p_origin_gps::extensions.geometry), 'hex')
+      END,
+    'destination_gps_ewkb',
+      CASE
+        WHEN p_destination_gps IS NULL THEN NULL
+        ELSE encode(extensions.st_asewkb(p_destination_gps::extensions.geometry), 'hex')
+      END
   );
 $facts$;
 
@@ -128,26 +166,54 @@ CREATE OR REPLACE FUNCTION public.read_match_request_candidate_snapshot_v95(
 )
 RETURNS TABLE (
   admission_facts_hash text,
-  left_id uuid, left_user_id uuid, left_post_type text, left_category text,
-  left_status text, left_departure_date text, left_departure_time_window text,
-  left_service_time_window text, left_transport_mode text,
-  left_escort_seats integer, left_max_companions integer,
-  left_count_small integer, left_count_medium integer, left_count_large integer,
-  left_count_xlarge integer, left_origin_address text,
-  left_destination_address text, left_waypoints jsonb,
-  left_origin_gps_ewkb text, left_destination_gps_ewkb text,
-  left_origin_lat double precision, left_origin_lng double precision,
-  left_destination_lat double precision, left_destination_lng double precision,
-  right_id uuid, right_user_id uuid, right_post_type text, right_category text,
-  right_status text, right_departure_date text, right_departure_time_window text,
-  right_service_time_window text, right_transport_mode text,
-  right_escort_seats integer, right_max_companions integer,
-  right_count_small integer, right_count_medium integer, right_count_large integer,
-  right_count_xlarge integer, right_origin_address text,
-  right_destination_address text, right_waypoints jsonb,
-  right_origin_gps_ewkb text, right_destination_gps_ewkb text,
-  right_origin_lat double precision, right_origin_lng double precision,
-  right_destination_lat double precision, right_destination_lng double precision
+  left_id uuid,
+  left_user_id uuid,
+  left_post_type text,
+  left_category text,
+  left_status text,
+  left_departure_date text,
+  left_departure_time_window text,
+  left_service_time_window text,
+  left_transport_mode text,
+  left_escort_seats integer,
+  left_max_companions integer,
+  left_count_small integer,
+  left_count_medium integer,
+  left_count_large integer,
+  left_count_xlarge integer,
+  left_origin_address text,
+  left_destination_address text,
+  left_waypoints jsonb,
+  left_origin_gps_ewkb text,
+  left_destination_gps_ewkb text,
+  left_origin_lat double precision,
+  left_origin_lng double precision,
+  left_destination_lat double precision,
+  left_destination_lng double precision,
+  right_id uuid,
+  right_user_id uuid,
+  right_post_type text,
+  right_category text,
+  right_status text,
+  right_departure_date text,
+  right_departure_time_window text,
+  right_service_time_window text,
+  right_transport_mode text,
+  right_escort_seats integer,
+  right_max_companions integer,
+  right_count_small integer,
+  right_count_medium integer,
+  right_count_large integer,
+  right_count_xlarge integer,
+  right_origin_address text,
+  right_destination_address text,
+  right_waypoints jsonb,
+  right_origin_gps_ewkb text,
+  right_destination_gps_ewkb text,
+  right_origin_lat double precision,
+  right_origin_lng double precision,
+  right_destination_lat double precision,
+  right_destination_lng double precision
 )
 LANGUAGE sql
 STABLE
@@ -155,12 +221,27 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $snap$
   WITH pair AS MATERIALIZED (
-    SELECT p.id, p.user_id, p.post_type, p.category, p.status,
-      p.departure_date, p.departure_time_window, p.service_time_window,
-      p.transport_mode, p.escort_seats, p.max_companions,
-      p.count_small, p.count_medium, p.count_large, p.count_xlarge,
-      p.origin_address, p.destination_address, p.waypoints,
-      p.origin_gps, p.destination_gps
+    SELECT
+      p.id,
+      p.user_id,
+      p.post_type,
+      p.category,
+      p.status,
+      p.departure_date,
+      p.departure_time_window,
+      p.service_time_window,
+      p.transport_mode,
+      p.escort_seats,
+      p.max_companions,
+      p.count_small,
+      p.count_medium,
+      p.count_large,
+      p.count_xlarge,
+      p.origin_address,
+      p.destination_address,
+      p.waypoints,
+      p.origin_gps,
+      p.destination_gps
     FROM public.posts p
     WHERE p_left_post_id IS NOT NULL
       AND p_right_post_id IS NOT NULL
@@ -168,14 +249,29 @@ AS $snap$
       AND p.id IN (p_left_post_id, p_right_post_id)
   ),
   decorated AS MATERIALIZED (
-    SELECT p.*,
+    SELECT
+      p.*,
       public.match_request_admission_post_facts_v95(
-        p.id, p.user_id, p.post_type, p.category, p.status,
-        p.departure_date, p.departure_time_window, p.service_time_window,
-        p.transport_mode, p.escort_seats, p.max_companions,
-        p.count_small, p.count_medium, p.count_large, p.count_xlarge,
-        p.origin_address, p.destination_address, p.waypoints,
-        p.origin_gps, p.destination_gps
+        p.id,
+        p.user_id,
+        p.post_type,
+        p.category,
+        p.status,
+        p.departure_date,
+        p.departure_time_window,
+        p.service_time_window,
+        p.transport_mode,
+        p.escort_seats,
+        p.max_companions,
+        p.count_small,
+        p.count_medium,
+        p.count_large,
+        p.count_xlarge,
+        p.origin_address,
+        p.destination_address,
+        p.waypoints,
+        p.origin_gps,
+        p.destination_gps
       ) AS fact
     FROM pair p
   )
@@ -183,22 +279,50 @@ AS $snap$
     public.match_request_admission_facts_hash_v95(
       (SELECT jsonb_agg(d.fact ORDER BY d.id) FROM decorated d)
     ),
-    l.id, l.user_id, l.post_type, l.category, l.status,
-    l.departure_date::text, l.departure_time_window, l.service_time_window,
-    l.transport_mode, l.escort_seats, l.max_companions,
-    l.count_small, l.count_medium, l.count_large, l.count_xlarge,
-    l.origin_address, l.destination_address, l.waypoints,
-    l.fact->>'origin_gps_ewkb', l.fact->>'destination_gps_ewkb',
+    l.id,
+    l.user_id,
+    l.post_type,
+    l.category,
+    l.status,
+    l.departure_date::text,
+    l.departure_time_window,
+    l.service_time_window,
+    l.transport_mode,
+    l.escort_seats,
+    l.max_companions,
+    l.count_small,
+    l.count_medium,
+    l.count_large,
+    l.count_xlarge,
+    l.origin_address,
+    l.destination_address,
+    l.waypoints,
+    l.fact->>'origin_gps_ewkb',
+    l.fact->>'destination_gps_ewkb',
     extensions.st_y(l.origin_gps::extensions.geometry),
     extensions.st_x(l.origin_gps::extensions.geometry),
     extensions.st_y(l.destination_gps::extensions.geometry),
     extensions.st_x(l.destination_gps::extensions.geometry),
-    r.id, r.user_id, r.post_type, r.category, r.status,
-    r.departure_date::text, r.departure_time_window, r.service_time_window,
-    r.transport_mode, r.escort_seats, r.max_companions,
-    r.count_small, r.count_medium, r.count_large, r.count_xlarge,
-    r.origin_address, r.destination_address, r.waypoints,
-    r.fact->>'origin_gps_ewkb', r.fact->>'destination_gps_ewkb',
+    r.id,
+    r.user_id,
+    r.post_type,
+    r.category,
+    r.status,
+    r.departure_date::text,
+    r.departure_time_window,
+    r.service_time_window,
+    r.transport_mode,
+    r.escort_seats,
+    r.max_companions,
+    r.count_small,
+    r.count_medium,
+    r.count_large,
+    r.count_xlarge,
+    r.origin_address,
+    r.destination_address,
+    r.waypoints,
+    r.fact->>'origin_gps_ewkb',
+    r.fact->>'destination_gps_ewkb',
     extensions.st_y(r.origin_gps::extensions.geometry),
     extensions.st_x(r.origin_gps::extensions.geometry),
     extensions.st_y(r.destination_gps::extensions.geometry),
@@ -218,14 +342,13 @@ RETURNS TABLE (id uuid, distance_m double precision)
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-SET search_path = pg_catalog, public
+SET search_path = public
 AS $nearby$
-  SELECT p.id,
+  SELECT
+    p.id,
     extensions.st_distance(
       COALESCE(p.origin_gps, p.destination_gps),
-      extensions.st_setsrid(
-        extensions.st_makepoint(p_lng, p_lat), 4326
-      )::extensions.geography
+      extensions.st_setsrid(extensions.st_makepoint(p_lng, p_lat), 4326)::extensions.geography
     ) AS distance_m
   FROM public.posts p
   WHERE p.status = 'active'
@@ -233,13 +356,48 @@ AS $nearby$
     AND COALESCE(p.origin_gps, p.destination_gps) IS NOT NULL
     AND extensions.st_dwithin(
       COALESCE(p.origin_gps, p.destination_gps),
-      extensions.st_setsrid(
-        extensions.st_makepoint(p_lng, p_lat), 4326
-      )::extensions.geography,
+      extensions.st_setsrid(extensions.st_makepoint(p_lng, p_lat), 4326)::extensions.geography,
       50000
     )
   ORDER BY distance_m ASC
   LIMIT greatest(1, least(COALESCE(p_limit, 60), 200));
 $nearby$;
+
+DO $$
+DECLARE
+  v_name text;
+  v_count integer;
+BEGIN
+  IF to_regprocedure(
+    'public.match_request_admission_post_facts_v95(uuid,uuid,text,text,text,date,text,text,text,integer,integer,integer,integer,integer,integer,text,text,jsonb,extensions.geography,extensions.geography)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'v97_post: facts helper identity missing after replace';
+  END IF;
+  IF to_regprocedure(
+    'public.read_match_request_candidate_snapshot_v95(uuid,uuid)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'v97_post: snapshot identity missing after replace';
+  END IF;
+  IF to_regprocedure(
+    'public.nearby_local_posts(double precision,double precision,integer)'
+  ) IS NULL THEN
+    RAISE EXCEPTION 'v97_post: nearby identity missing after replace';
+  END IF;
+
+  FOREACH v_name IN ARRAY ARRAY[
+    'match_request_admission_post_facts_v95',
+    'read_match_request_candidate_snapshot_v95',
+    'nearby_local_posts'
+  ] LOOP
+    SELECT count(*) INTO v_count
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = v_name;
+    IF v_count IS DISTINCT FROM 1 THEN
+      RAISE EXCEPTION 'v97_post: leftover overload % count=%',
+        v_name, COALESCE(v_count, 0);
+    END IF;
+  END LOOP;
+END $$;
 
 COMMIT;

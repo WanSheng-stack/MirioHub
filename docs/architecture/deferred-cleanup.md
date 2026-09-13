@@ -322,3 +322,54 @@ OWNER against PostGIS.
   `MATCH_CONTACT_CODE_PEPPER` is server-only and at least 32 characters.
 - **Risk if wired early:** Treating an invitation as an order, or returning
   phone numbers from `disclosure_mode` alone.
+
+## 15. PostGIS extensions rebind (v97, unapplied)
+
+- **Current state:** PHASE POSTGIS-RELOCATION-PREP.1 audited the Codex
+  v97 pair. The migration only rebinds three already-deployed functions
+  after Support moves PostGIS from `public` to `extensions`:
+  `match_request_admission_post_facts_v95`,
+  `read_match_request_candidate_snapshot_v95`, and
+  `nearby_local_posts`. Signatures, return columns, SECURITY
+  DEFINER/INVOKER, STABLE, and search_path stay as deployed
+  (`pg_catalog, public` for the v95 helpers; `public` for nearby).
+  Business SQL is unchanged except PostGIS schema qualification.
+  CREATE OR REPLACE is safe after a real `ALTER EXTENSION postgis SET
+  SCHEMA extensions` because type OIDs do not change; argument type
+  OIDs therefore still match and PostgreSQL replaces the existing
+  `pg_proc` row. Pre/post guards require exact `to_regprocedure`
+  identity and `count(*) = 1` per `proname`; a leftover overload
+  fail-closes. The migration still fail-closes before DDL if PostGIS
+  is not already in `extensions`, if `public.geometry` /
+  `public.geography` remain, or if `to_regprocedure` cannot see the
+  exact identity. No GRANT/REVOKE/COMMENT/ALTER TABLE
+  / index rebuild. GPS typmod and the two GiST indexes are observed,
+  not rewritten. `matching_request_creation_enabled` stays false.
+  pgcrypto stays in `extensions`. `spatial_ref_sys` is checked as an
+  `extensions` PostGIS member that is nonempty; the row count is
+  not locked to 8500 because Support's move does not guarantee that
+  catalog size. A pre-move field count would be required to assert an
+  exact number. Verify remains one statement, one seven-column result
+  set, catalog-only, no production writer. Verify string literals must
+  not embed `;` or the static single-statement checker fragments.
+  Named missing relations fail at parse/plan time. PUBLIC function ACL
+  uses `aclexplode` / `grantee = 0`, never `has_function_privilege`
+  OID 0. Catalog `"char"` values are `::text` before they enter the
+  UNION. Identity arguments are checked by exact
+  `to_regprocedure(...) = oid` plus normalized identity text.
+  v97 is not applied. Support has not been asked to start the move.
+- **Still unresolved / later phases:** user backup, Support PostGIS
+  move, user-run v97 apply + verify, and the later admission-hash
+  writer/snapshot that adds the v96 subtype/night fields. That later
+  writer is not this v97 file and must not patch the already-deployed
+  v95 hash helper in place.
+- **Future replacement:** none; this is a one-shot post-move rebind.
+- **Earliest safe production use:** After Support confirms PostGIS
+  lives in `extensions` and the user applies v97 themselves. Not this
+  phase.
+- **Preconditions:** v95/v96 already applied; PostGIS already in
+  `extensions`; creation stays false; MatchRequestSheet stays
+  unmounted.
+- **Risk if wired early:** applying v97 before the move fail-closes on
+  the first guard; skipping the post-move rebind leaves
+  `public.st_*` / `public.geography` bodies that no longer resolve.

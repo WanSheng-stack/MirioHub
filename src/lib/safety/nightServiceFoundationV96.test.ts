@@ -20,6 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 const PHASE_BASELINE = "6991f93a8192510ddcbb56e2e2b9f9e9c6216ed2";
+const V96_DDL_BASELINE = "eee56e7d10753692a322c1b0b26fe820d387fd2a";
 const V96_REL =
   "supabase/migrations/20260913000001_service_subtype_night_safety_foundation_v96.sql";
 const V96_VERIFY_REL =
@@ -47,11 +48,95 @@ const payload = read("src/lib/post-payload.ts");
 const ledger = read("docs/architecture/deferred-cleanup.md");
 const guard = extractDoBlock(migration);
 
-function gitDiff(path: string): string {
-  return execFileSync("git", ["diff", PHASE_BASELINE, "--", path], {
+function gitDiff(path: string, baseline = PHASE_BASELINE): string {
+  return execFileSync("git", ["diff", baseline, "--", path], {
     cwd: repoRoot,
     encoding: "utf8",
   });
+}
+
+type IndexContract = {
+  name: string;
+  primary: boolean;
+  unique: boolean;
+  keys: string;
+  predTokens: string[] | null;
+};
+
+const INDEX_CONTRACTS: readonly IndexContract[] = [
+  {
+    name: "night_service_policies_pkey",
+    primary: true,
+    unique: true,
+    keys: "id",
+    predTokens: null,
+  },
+  {
+    name: "night_service_policies_lookup_idx",
+    primary: false,
+    unique: false,
+    keys: "country_code,region_code,enabled",
+    predTokens: null,
+  },
+  {
+    name: "night_service_policies_effective_idx",
+    primary: false,
+    unique: false,
+    keys: "effective_from,effective_until",
+    predTokens: null,
+  },
+  {
+    name: "night_service_policies_country_default_open_uidx",
+    primary: false,
+    unique: true,
+    keys: "country_code",
+    predTokens: ["region_code IS NULL", "effective_until IS NULL"],
+  },
+  {
+    name: "night_service_policies_region_open_uidx",
+    primary: false,
+    unique: true,
+    keys: "country_code,region_code",
+    predTokens: ["region_code IS NOT NULL", "effective_until IS NULL"],
+  },
+  {
+    name: "night_service_policies_country_default_version_uidx",
+    primary: false,
+    unique: true,
+    keys: "country_code,policy_version",
+    predTokens: ["region_code IS NULL"],
+  },
+  {
+    name: "night_service_policies_region_version_uidx",
+    primary: false,
+    unique: true,
+    keys: "country_code,region_code,policy_version",
+    predTokens: ["region_code IS NOT NULL"],
+  },
+];
+
+function indexContractPasses(
+  observed: {
+    name: string;
+    primary: boolean;
+    unique: boolean;
+    keys: string;
+    pred: string | null;
+  },
+  expected: IndexContract,
+): boolean {
+  if (observed.name !== expected.name) return false;
+  if (observed.primary !== expected.primary) return false;
+  if (observed.unique !== expected.unique) return false;
+  if (observed.keys !== expected.keys) return false;
+  if (expected.predTokens == null) return observed.pred == null;
+  if (observed.pred == null) return false;
+  return expected.predTokens.every((token) => observed.pred!.includes(token));
+}
+
+function extraUserIndexFails(names: readonly string[]): boolean {
+  const allowed = new Set(INDEX_CONTRACTS.map((row) => row.name));
+  return names.some((name) => !allowed.has(name));
 }
 
 assert.deepEqual(transactionControls(migration), ["BEGIN;", "COMMIT;"]);
@@ -139,7 +224,30 @@ assert.ok(verifySql.includes("night_service_policies_country_default_version_uid
 assert.ok(verifySql.includes("night_service_policies_region_version_uidx"));
 assert.ok(verifySql.includes("aclexplode"));
 assert.ok(verifySql.includes("grantee = 0"));
+assert.ok(verifySql.includes("NULL::oid"));
+assert.ok(verifySql.includes("'PUBLIC'::text"));
+assert.ok(verifySql.includes("anon_oid, 'anon'::text"));
+assert.ok(verifySql.includes("authenticated_oid, 'authenticated'::text"));
+assert.ok(verifySql.includes("service_role_oid, 'service_role'::text"));
+assert.equal(/\(\s*0\s*,\s*'PUBLIC'/.test(verifySql), false);
+assert.equal(/VALUES\s*\(\s*0\s*,/.test(verifySql), false);
 assert.equal(/has_table_privilege\s*\(\s*0\s*,/.test(verifySql), false);
+assert.equal(/has_table_privilege\s*\(\s*0\b/.test(verifySql), false);
+assert.equal(/has_table_privilege\s*\(\s*'PUBLIC'/i.test(verifySql), false);
+assert.equal(/has_table_privilege\s*\(\s*"PUBLIC"/i.test(verifySql), false);
+assert.ok(verifySql.includes("WHEN r.role_name = 'PUBLIC' THEN"));
+assert.ok(verifySql.includes("FROM public_acl"));
+assert.ok(verifySql.includes("unnest(i.indkey)"));
+assert.ok(verifySql.includes("i.keys IS NOT DISTINCT FROM e.keys"));
+assert.ok(verifySql.includes("i.indisprimary IS NOT DISTINCT FROM e.is_primary"));
+assert.ok(verifySql.includes("'country_code,region_code,enabled'"));
+assert.ok(verifySql.includes("'effective_from,effective_until'"));
+assert.ok(verifySql.includes("'country_code,policy_version'"));
+assert.ok(verifySql.includes("'country_code,region_code,policy_version'"));
+assert.ok(verifySql.includes("no extra user indexes"));
+assert.ok(verifySql.includes("relation does not exist"));
+assert.ok(verifySql.includes("fail-closed"));
+assert.ok(ledger.includes("errors at parse/plan time"));
 assert.ok(verifySql.includes("'SELECT'"));
 assert.ok(verifySql.includes("'INSERT'"));
 assert.ok(verifySql.includes("'UPDATE'"));
@@ -184,6 +292,117 @@ assert.deepEqual(v96Files, [
 for (const path of FROZEN_PATHS) {
   assert.equal(gitDiff(path), "", path);
 }
+
+assert.equal(gitDiff(V96_REL, V96_DDL_BASELINE), "", "v96 migration must stay frozen");
+assert.equal(
+  gitDiff("src/lib/safety/nightServicePolicy.ts", V96_DDL_BASELINE),
+  "",
+);
+assert.equal(
+  gitDiff("src/lib/safety/nightServicePolicy.test.ts", V96_DDL_BASELINE),
+  "",
+);
+
+const inventorySql = read(
+  "supabase/migrations/20260911000003_v95_preapply_catalog_inventory.verify.sql",
+);
+assert.equal(/has_table_privilege\s*\(\s*0\b/.test(inventorySql), false);
+assert.equal(/has_table_privilege\s*\(\s*'PUBLIC'/i.test(inventorySql), false);
+assert.ok(inventorySql.includes("a.grantee = 0"));
+assert.ok(inventorySql.includes("WHEN role_oid = 0 THEN 'PUBLIC'"));
+assert.ok(inventorySql.includes("aclexplode("));
+
+const lookup = INDEX_CONTRACTS.find((row) => row.name.endsWith("lookup_idx"));
+const version = INDEX_CONTRACTS.find((row) =>
+  row.name.endsWith("country_default_version_uidx"),
+);
+const openEnded = INDEX_CONTRACTS.find((row) =>
+  row.name.endsWith("country_default_open_uidx"),
+);
+assert.ok(lookup && version && openEnded);
+assert.equal(
+  indexContractPasses(
+    {
+      name: lookup.name,
+      primary: false,
+      unique: false,
+      keys: "country_code,enabled",
+      pred: null,
+    },
+    lookup,
+  ),
+  false,
+  "lookup missing region_code must fail",
+);
+assert.equal(
+  indexContractPasses(
+    {
+      name: version.name,
+      primary: false,
+      unique: true,
+      keys: "country_code,enabled",
+      pred: "region_code IS NULL",
+    },
+    version,
+  ),
+  false,
+  "version index swapping policy_version for enabled must fail",
+);
+assert.equal(
+  indexContractPasses(
+    {
+      name: openEnded.name,
+      primary: false,
+      unique: true,
+      keys: "country_code",
+      pred: "region_code IS NULL",
+    },
+    openEnded,
+  ),
+  false,
+  "open-ended missing effective_until IS NULL must fail",
+);
+assert.equal(
+  indexContractPasses(
+    {
+      name: lookup.name,
+      primary: false,
+      unique: false,
+      keys: "enabled,region_code,country_code",
+      pred: null,
+    },
+    lookup,
+  ),
+  false,
+  "reversed lookup keys must fail",
+);
+assert.equal(
+  extraUserIndexFails([
+    ...INDEX_CONTRACTS.map((row) => row.name),
+    "night_service_policies_ghost_idx",
+  ]),
+  true,
+  "unknown extra index must fail",
+);
+assert.equal(
+  extraUserIndexFails(INDEX_CONTRACTS.map((row) => row.name)),
+  false,
+);
+assert.equal(
+  indexContractPasses(
+    {
+      name: lookup.name,
+      primary: lookup.primary,
+      unique: lookup.unique,
+      keys: lookup.keys,
+      pred: null,
+    },
+    lookup,
+  ),
+  true,
+);
+assert.equal(/\(\s*0\s*,\s*'PUBLIC'/.test(verifySql), false, "PUBLIC must not use OID 0");
+assert.ok(verifySql.includes("(NULL::oid, 'PUBLIC'::text)"));
 
 console.log("nightServiceFoundationV96.test.ts: ok");
 console.log("v96 SQL is not applied remotely.");

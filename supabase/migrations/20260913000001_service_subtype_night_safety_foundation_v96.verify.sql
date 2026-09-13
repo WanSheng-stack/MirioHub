@@ -4,7 +4,12 @@
 -- Do not output post content, phones, GPS, addresses, codes, or prosrc.
 -- This file does not claim a remote v96 apply has succeeded.
 -- EXPECT: single result set with check_order, area, check_name, result, observed, expected, overall_pass
--- PUBLIC ACL uses aclexplode(grantee = 0). Never call table privilege with OID 0.
+-- PUBLIC ACL uses aclexplode(grantee = 0). Never pass PUBLIC or OID 0 to has_table_privilege.
+-- This statement names public.night_service_policies directly. If that relation
+-- is completely absent, PostgreSQL errors at parse/plan time (relation does not exist).
+-- That is fail-closed, not a manufactured NULL row. If the table exists but inner
+-- objects are missing or drifted, those checks return FAIL/NULL. Neither path can
+-- yield overall PASS. Do not add dynamic SQL.
 
 WITH
 posts_oid AS (
@@ -74,7 +79,15 @@ pol_idx AS (
     i.indisready,
     i.indisprimary,
     pg_get_indexdef(i.indexrelid) AS def,
-    pg_get_expr(i.indpred, i.indrelid) AS pred
+    pg_get_expr(i.indpred, i.indrelid) AS pred,
+    (
+      SELECT string_agg(a.attname, ',' ORDER BY x.ord)
+      FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
+      JOIN pg_catalog.pg_attribute a
+        ON a.attrelid = i.indrelid
+       AND a.attnum = x.attnum
+      WHERE x.attnum > 0
+    ) AS keys
   FROM pg_catalog.pg_index i
   JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
   WHERE i.indrelid = (SELECT oid FROM pol_cls)
@@ -192,14 +205,14 @@ pol_check_expected AS (
 ),
 idx_expected AS (
   SELECT * FROM (VALUES
-    (230, 'night_service_policies_pkey', true, NULL::text),
-    (231, 'night_service_policies_lookup_idx', false, NULL::text),
-    (232, 'night_service_policies_effective_idx', false, NULL::text),
-    (233, 'night_service_policies_country_default_open_uidx', true, 'region_code IS NULL'),
-    (234, 'night_service_policies_region_open_uidx', true, 'region_code IS NOT NULL'),
-    (235, 'night_service_policies_country_default_version_uidx', true, 'region_code IS NULL'),
-    (236, 'night_service_policies_region_version_uidx', true, 'region_code IS NOT NULL')
-  ) AS v(check_order, relname, is_unique, pred_token)
+    (230, 'night_service_policies_pkey', true, true, 'id', NULL::text, NULL::text),
+    (231, 'night_service_policies_lookup_idx', false, false, 'country_code,region_code,enabled', NULL::text, NULL::text),
+    (232, 'night_service_policies_effective_idx', false, false, 'effective_from,effective_until', NULL::text, NULL::text),
+    (233, 'night_service_policies_country_default_open_uidx', false, true, 'country_code', 'region_code IS NULL', 'effective_until IS NULL'),
+    (234, 'night_service_policies_region_open_uidx', false, true, 'country_code,region_code', 'region_code IS NOT NULL', 'effective_until IS NULL'),
+    (235, 'night_service_policies_country_default_version_uidx', false, true, 'country_code,policy_version', 'region_code IS NULL', NULL::text),
+    (236, 'night_service_policies_region_version_uidx', false, true, 'country_code,region_code,policy_version', 'region_code IS NOT NULL', NULL::text)
+  ) AS v(check_order, relname, is_primary, is_unique, keys, pred_a, pred_b)
 ),
 privs AS (
   SELECT * FROM (VALUES
@@ -214,14 +227,14 @@ privs AS (
 ),
 acl_roles AS (
   SELECT * FROM (VALUES
-    (0, 'PUBLIC')
+    (NULL::oid, 'PUBLIC'::text)
   ) AS v(role_oid, role_name)
   UNION ALL
-  SELECT anon_oid, 'anon' FROM roles
+  SELECT anon_oid, 'anon'::text FROM roles
   UNION ALL
-  SELECT authenticated_oid, 'authenticated' FROM roles
+  SELECT authenticated_oid, 'authenticated'::text FROM roles
   UNION ALL
-  SELECT service_role_oid, 'service_role' FROM roles
+  SELECT service_role_oid, 'service_role'::text FROM roles
 ),
 all_checks AS (
   SELECT
@@ -449,13 +462,26 @@ all_checks AS (
     CASE
       WHEN (SELECT oid FROM pol_cls) IS NULL THEN NULL
       WHEN i.relname IS NULL THEN 'FAIL'
-      WHEN i.indisunique IS NOT DISTINCT FROM e.is_unique
+      WHEN i.indisprimary IS NOT DISTINCT FROM e.is_primary
+        AND i.indisunique IS NOT DISTINCT FROM e.is_unique
         AND i.indisvalid IS TRUE
         AND i.indisready IS TRUE
+        AND i.keys IS NOT DISTINCT FROM e.keys
         AND i.def IS NOT NULL
         AND (
-          (e.pred_token IS NULL AND i.pred IS NULL)
-          OR (e.pred_token IS NOT NULL AND i.pred LIKE ('%' || e.pred_token || '%'))
+          (
+            e.pred_a IS NULL
+            AND e.pred_b IS NULL
+            AND i.pred IS NULL
+          )
+          OR (
+            e.pred_a IS NOT NULL
+            AND i.pred LIKE ('%' || e.pred_a || '%')
+            AND (
+              e.pred_b IS NULL
+              OR i.pred LIKE ('%' || e.pred_b || '%')
+            )
+          )
         )
       THEN 'PASS'
       ELSE 'FAIL'
@@ -464,18 +490,26 @@ all_checks AS (
       WHEN (SELECT oid FROM pol_cls) IS NULL THEN NULL
       WHEN i.relname IS NULL THEN NULL
       ELSE format(
-        'unique=%s valid=%s ready=%s pred=%s def=%s',
+        'primary=%s unique=%s valid=%s ready=%s keys=%s pred=%s def=%s',
+        i.indisprimary::text,
         i.indisunique::text,
         i.indisvalid::text,
         i.indisready::text,
+        coalesce(i.keys, 'none'),
         coalesce(i.pred, 'none'),
         i.def
       )
     END,
     format(
-      'unique=%s valid=true ready=true pred=%s',
+      'primary=%s unique=%s valid=true ready=true keys=%s pred=%s',
+      e.is_primary::text,
       e.is_unique::text,
-      coalesce(e.pred_token, 'none')
+      e.keys,
+      CASE
+        WHEN e.pred_a IS NULL THEN 'none'
+        WHEN e.pred_b IS NULL THEN e.pred_a
+        ELSE e.pred_a || ' AND ' || e.pred_b
+      END
     )
   FROM idx_expected e
   LEFT JOIN pol_idx i ON i.relname = e.relname

@@ -287,6 +287,9 @@ OWNER against PostGIS.
   add those four fields to server admission facts; do not patch the
   deployed v95 hash helper. Creation stays false. MatchRequestSheet
   stays unmounted. Night policy stays disabled.
+  v96 verify names `public.night_service_policies` directly: a missing
+  table errors at parse/plan time and fail-closes; a present table with
+  drifted inner objects returns FAIL/NULL. Neither path can overall PASS.
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading

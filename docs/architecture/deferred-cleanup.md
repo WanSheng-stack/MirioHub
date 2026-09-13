@@ -290,6 +290,8 @@ OWNER against PostGIS.
   v96 verify names `public.night_service_policies` directly: a missing
   table errors at parse/plan time and fail-closes; a present table with
   drifted inner objects returns FAIL/NULL. Neither path can overall PASS.
+  v96 verify VALUES aliases must not use reserved identifiers such as
+  `notnull` (PostgreSQL 42601).
   The candidate snapshot is a single SQL statement: one MATERIALIZED
   `posts` read feeds both returned fields and `admission_facts_hash`.
   Shared helpers build jsonb facts and hash them without rereading

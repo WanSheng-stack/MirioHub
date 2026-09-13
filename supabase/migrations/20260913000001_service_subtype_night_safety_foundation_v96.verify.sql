@@ -191,7 +191,13 @@ pol_col_expected AS (
     (210, 'effective_until', 'timestamp with time zone', false, NULL),
     (211, 'created_at', 'timestamp with time zone', true, 'now()'),
     (212, 'updated_at', 'timestamp with time zone', true, 'now()')
-  ) AS v(check_order, attname, typ, notnull, def)
+  ) AS v(
+    check_order,
+    attname,
+    expected_type,
+    expected_not_null,
+    expected_default
+  )
 ),
 pol_check_expected AS (
   SELECT * FROM (VALUES
@@ -338,9 +344,9 @@ all_checks AS (
     CASE
       WHEN (SELECT oid FROM pol_cls) IS NULL THEN NULL
       WHEN o.attname IS NULL THEN 'FAIL'
-      WHEN o.typ = e.typ
-        AND o.attnotnull IS NOT DISTINCT FROM e.notnull
-        AND o.def IS NOT DISTINCT FROM e.def
+      WHEN o.typ = e.expected_type
+        AND o.attnotnull IS NOT DISTINCT FROM e.expected_not_null
+        AND o.def IS NOT DISTINCT FROM e.expected_default
         AND coalesce(nullif(o.attidentity, ''), 'none') = 'none'
         AND coalesce(nullif(o.attgenerated, ''), 'none') = 'none'
       THEN 'PASS'
@@ -360,9 +366,9 @@ all_checks AS (
     END,
     format(
       'type=%s notnull=%s default=%s identity=none generated=none',
-      e.typ,
-      e.notnull::text,
-      coalesce(e.def, 'none')
+      e.expected_type,
+      e.expected_not_null::text,
+      coalesce(e.expected_default, 'none')
     )
   FROM pol_col_expected e
   LEFT JOIN pol_col_obs o ON o.attname = e.attname

@@ -207,6 +207,63 @@ assert.ok(migration.includes("TIME '06:00'"));
 assert.ok(migration.includes("false"));
 assert.ok(helper.includes("Europe/Belgrade") || migration.includes("enabled=false") || migration.includes("enabled boolean NOT NULL DEFAULT false"));
 
+const DANGEROUS_VALUES_ALIASES = new Set([
+  "notnull",
+  "default",
+  "constraint",
+  "primary",
+  "references",
+  "user",
+  "current",
+  "check",
+  "trigger",
+  "role",
+  "policy",
+  "type",
+]);
+
+function valuesAliasListIsDangerous(aliasCsv: string): boolean {
+  return aliasCsv
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .some((name) => DANGEROUS_VALUES_ALIASES.has(name));
+}
+
+assert.equal(
+  valuesAliasListIsDangerous("check_order, attname, typ, notnull, def"),
+  true,
+  "old alias list is dangerous",
+);
+assert.equal(
+  valuesAliasListIsDangerous(
+    "check_order, attname, expected_type, expected_not_null, expected_default",
+  ),
+  false,
+  "new alias list is safe",
+);
+assert.equal(
+  verifySql.includes("AS v(check_order, attname, typ, notnull, def)"),
+  false,
+);
+assert.ok(verifySql.includes("expected_type"));
+assert.ok(verifySql.includes("expected_not_null"));
+assert.ok(verifySql.includes("expected_default"));
+assert.ok(verifySql.includes("e.expected_type"));
+assert.ok(verifySql.includes("e.expected_not_null"));
+assert.ok(verifySql.includes("e.expected_default"));
+
+const valuesAliasLists = [...verifySql.matchAll(/AS\s+v\s*\(([^)]+)\)/gi)].map(
+  (match) => match[1],
+);
+assert.ok(valuesAliasLists.length > 0);
+for (const aliasCsv of valuesAliasLists) {
+  assert.equal(
+    valuesAliasListIsDangerous(aliasCsv),
+    false,
+    `VALUES aliases must stay safe: ${aliasCsv}`,
+  );
+}
+
 assert.equal(verifyIsSingleResultSet(verifySql), true);
 assert.ok(verifySql.includes("creation enabled still false"));
 assert.ok(verifySql.includes("RS country default"));

@@ -264,6 +264,162 @@ for (const aliasCsv of valuesAliasLists) {
   );
 }
 
+const FROZEN_NIGHT_POLICY_VERSION_CHECK =
+  "CHECK (((night_policy_version IS NULL) OR (night_policy_version > 0)))";
+const FROZEN_EFFECTIVE_RANGE_CHECK =
+  "CHECK (((effective_until IS NULL) OR (effective_until > effective_from)))";
+
+function foldConstraintWs(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function exactNamedCheckResult(input: {
+  tableExists: boolean;
+  expectedName: string;
+  actualName: string | null;
+  contype: string | null;
+  defs: string[];
+  expectedDef: string;
+}): "PASS" | "FAIL" | null {
+  if (!input.tableExists) return null;
+  if (input.actualName == null || input.actualName !== input.expectedName) {
+    return "FAIL";
+  }
+  if (input.contype !== "c") return "FAIL";
+  if (input.defs.length === 0) return "FAIL";
+  if (input.defs.length !== 1) return "FAIL";
+  return foldConstraintWs(input.defs[0]) === foldConstraintWs(input.expectedDef)
+    ? "PASS"
+    : "FAIL";
+}
+
+const versionExact = {
+  tableExists: true,
+  expectedName: "posts_night_policy_version_check",
+  actualName: "posts_night_policy_version_check",
+  contype: "c",
+  expectedDef: FROZEN_NIGHT_POLICY_VERSION_CHECK,
+} as const;
+const rangeExact = {
+  tableExists: true,
+  expectedName: "night_service_policies_effective_range_check",
+  actualName: "night_service_policies_effective_range_check",
+  contype: "c",
+  expectedDef: FROZEN_EFFECTIVE_RANGE_CHECK,
+} as const;
+
+assert.equal(
+  exactNamedCheckResult({ ...versionExact, defs: [FROZEN_NIGHT_POLICY_VERSION_CHECK] }),
+  "PASS",
+);
+assert.equal(
+  exactNamedCheckResult({ ...rangeExact, defs: [FROZEN_EFFECTIVE_RANGE_CHECK] }),
+  "PASS",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...versionExact,
+    defs: ["CHECK ((night_policy_version > 0))"],
+  }),
+  "FAIL",
+  "dropping IS NULL must fail",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...rangeExact,
+    defs: [
+      "CHECK (((effective_until IS NULL) AND (effective_until > effective_from)))",
+    ],
+  }),
+  "FAIL",
+  "OR to AND must fail",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...versionExact,
+    defs: [
+      "CHECK (((night_policy_version IS NULL) OR (night_policy_version >= 0)))",
+    ],
+  }),
+  "FAIL",
+  "changed comparator must fail",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...rangeExact,
+    defs: [
+      "CHECK (((effective_until IS NULL) OR (effective_until > created_at)))",
+    ],
+  }),
+  "FAIL",
+  "changed comparison column must fail",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...versionExact,
+    actualName: "posts_night_policy_version_chk",
+    defs: [FROZEN_NIGHT_POLICY_VERSION_CHECK],
+  }),
+  "FAIL",
+  "renamed constraint must fail",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...versionExact,
+    actualName: null,
+    defs: [],
+  }),
+  "FAIL",
+  "missing constraint must fail",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...rangeExact,
+    defs: [FROZEN_EFFECTIVE_RANGE_CHECK, FROZEN_EFFECTIVE_RANGE_CHECK],
+  }),
+  "FAIL",
+  "duplicate constraint must fail",
+);
+assert.equal(
+  exactNamedCheckResult({ ...versionExact, tableExists: false, defs: [] }),
+  null,
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...versionExact,
+    defs: [
+      "CHECK (((night_policy_version IS NULL) OR\n  (night_policy_version > 0)))",
+    ],
+  }),
+  "PASS",
+  "whitespace-only change must pass",
+);
+assert.equal(
+  exactNamedCheckResult({
+    ...versionExact,
+    defs: ["CHECK ((night_policy_version IS NULL OR night_policy_version > 0))"],
+  }),
+  "FAIL",
+  "parenthesis change must not be normalized away",
+);
+
+assert.ok(verifySql.includes(FROZEN_NIGHT_POLICY_VERSION_CHECK));
+assert.ok(verifySql.includes(FROZEN_EFFECTIVE_RANGE_CHECK));
+assert.ok(verifySql.includes("constraint_count"));
+assert.ok(verifySql.includes("c.contype = 'c'"));
+assert.equal(
+  verifySql.includes(
+    "night_policy_version IS NULL OR night_policy_version > 0'",
+  ),
+  false,
+);
+assert.equal(
+  verifySql.includes(
+    "effective_until IS NULL OR effective_until > effective_from'",
+  ),
+  false,
+);
+
 assert.equal(verifyIsSingleResultSet(verifySql), true);
 assert.ok(verifySql.includes("creation enabled still false"));
 assert.ok(verifySql.includes("RS country default"));

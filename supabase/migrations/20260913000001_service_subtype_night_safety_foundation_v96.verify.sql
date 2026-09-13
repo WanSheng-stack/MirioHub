@@ -173,7 +173,6 @@ post_check_expected AS (
   SELECT * FROM (VALUES
     (110, 'posts_origin_country_code_check', 'origin_country_code ~ ''^[A-Z]{2}$'''),
     (111, 'posts_origin_timezone_check', 'origin_timezone = btrim(origin_timezone)'),
-    (112, 'posts_night_policy_version_check', 'night_policy_version IS NULL OR night_policy_version > 0'),
     (120, 'posts_service_subtype_category_check', 'service_subtype IS NULL')
   ) AS v(check_order, conname, token)
 ),
@@ -205,9 +204,46 @@ pol_check_expected AS (
     (222, 'night_service_policies_region_code_check', 'region_code = btrim(region_code)'),
     (223, 'night_service_policies_timezone_name_check', 'timezone_name = btrim(timezone_name)'),
     (224, 'night_service_policies_blocked_window_check', 'blocked_start_local IS DISTINCT FROM blocked_end_local'),
-    (225, 'night_service_policies_policy_version_check', 'policy_version > 0'),
-    (226, 'night_service_policies_effective_range_check', 'effective_until IS NULL OR effective_until > effective_from')
+    (225, 'night_service_policies_policy_version_check', 'policy_version > 0')
   ) AS v(check_order, conname, token)
+),
+exact_check_expected AS (
+  SELECT * FROM (VALUES
+    (
+      112,
+      'posts'::text,
+      'posts_night_policy_version_check'::text,
+      'CHECK (((night_policy_version IS NULL) OR (night_policy_version > 0)))'::text
+    ),
+    (
+      226,
+      'night_service_policies'::text,
+      'night_service_policies_effective_range_check'::text,
+      'CHECK (((effective_until IS NULL) OR (effective_until > effective_from)))'::text
+    )
+  ) AS v(check_order, relname, conname, expected_def)
+),
+exact_check_obs AS (
+  SELECT
+    e.check_order,
+    e.relname,
+    e.conname,
+    e.expected_def,
+    r.relid,
+    count(c.oid)::int AS constraint_count,
+    min(pg_get_constraintdef(c.oid, false)) AS def
+  FROM exact_check_expected e
+  JOIN LATERAL (
+    SELECT CASE e.relname
+      WHEN 'posts' THEN (SELECT oid FROM posts_oid)
+      WHEN 'night_service_policies' THEN (SELECT oid FROM pol_cls)
+    END AS relid
+  ) r ON true
+  LEFT JOIN pg_catalog.pg_constraint c
+    ON c.conrelid = r.relid
+   AND c.conname = e.conname
+   AND c.contype = 'c'
+  GROUP BY e.check_order, e.relname, e.conname, e.expected_def, r.relid
 ),
 idx_expected AS (
   SELECT * FROM (VALUES
@@ -290,6 +326,29 @@ all_checks AS (
     e.conname || ' ' || e.token
   FROM post_check_expected e
   LEFT JOIN post_checks c ON c.conname = e.conname
+
+  UNION ALL
+  SELECT
+    o.check_order,
+    CASE WHEN o.relname = 'posts' THEN 'posts' ELSE 'policy' END,
+    o.conname,
+    CASE
+      WHEN o.relid IS NULL THEN NULL
+      WHEN o.constraint_count = 0 THEN 'FAIL'
+      WHEN o.constraint_count <> 1 THEN 'FAIL'
+      WHEN regexp_replace(btrim(o.def), '\s+', ' ', 'g')
+        = regexp_replace(btrim(o.expected_def), '\s+', ' ', 'g')
+      THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    CASE
+      WHEN o.relid IS NULL THEN NULL
+      WHEN o.constraint_count = 0 THEN NULL
+      WHEN o.constraint_count <> 1 THEN 'constraint_count=' || o.constraint_count::text
+      ELSE o.def
+    END,
+    o.expected_def
+  FROM exact_check_obs o
 
   UNION ALL
   SELECT

@@ -25,9 +25,9 @@ DO $$
 -- safe because hex text cannot emit those bytes; this does not assume
 -- catalog values lack control characters.
 DECLARE
-  t text;
+  v_target_table text;
   live_n bigint;
-  r record;
+  v_fingerprint_row record;
   expected jsonb := $v95_fp${"encoding_version":2,"tables":{"count":10,"digest":"bf37bc0cfc96567e257e626746f8b6a2f491cff00b9cd963b3535339d1247150"},"columns":{"count":125,"digest":"478a41ed720765d9d770e964462848c89a29b43d9168574ebbc0e3d8bd86aa2c"},"constraints":{"count":120,"digest":"cd899194aedbe7a910c8e5f398327efb18b2420f96f83c7c65c4020e2598b0a6"},"indexes":{"count":22,"digest":"becbe9c835ac708b5421b721562485c57c8a78924f719b11b67acc4602a6f6d0"},"policies":{"count":10,"digest":"cdb4b2427bf05483b0128ea90f042a154f7ad5c4142cca91cf755cf49f55e92b"},"acl":{"count":280,"digest":"e52c57a915d5afaf340b80baf79b96be8d4d66b02b821c75b20a97c61f4d7d74"},"triggers":{"count":10,"digest":"cff75d96a3bd9ba9f5a5247925a6a7c67d947e900964b4768726aa68ef93c1a6"},"sequences":{"count":10,"digest":"d9fd938c44309e567b90e059be84766ce853d80b8e5d5e900102049ebac12aaf"},"functions":{"count":1,"digest":"46e863a263d2478e3d8cd76dc2133dafb411052c7734a424d38c73029f9e9fab"},"prerequisites":{"count":2,"digest":"b037c3de7dd10631a36d1065d74e35e98e7549f62541cfd3f896cfe6fee64c7c"},"overall":{"count":590,"digest":"0a1ff6c3bc3a2ff35b96e4adaf385def2795947a8a2d5dab3528dd123b9345f5"}}$v95_fp$::jsonb;
   exp jsonb;
   seen text[] := ARRAY[]::text[];
@@ -37,7 +37,7 @@ BEGIN
   IF (expected->>'encoding_version')::int IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'v95_guard: % mismatch', 'encoding';
   END IF;
-  FOREACH t IN ARRAY ARRAY[
+  FOREACH v_target_table IN ARRAY ARRAY[
     'match_contact_invitations',
     'contact_grants',
     'match_requests',
@@ -49,12 +49,12 @@ BEGIN
     'safety_checklist_acceptances',
     'safety_checklist_acceptance_items'
   ] LOOP
-    IF to_regclass('public.' || t) IS NULL THEN
-      RAISE EXCEPTION 'v95_guard: table missing: %', t;
+    IF to_regclass('public.' || v_target_table) IS NULL THEN
+      RAISE EXCEPTION 'v95_guard: table missing: %', v_target_table;
     END IF;
-    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO live_n;
+    EXECUTE format('SELECT count(*) FROM public.%I', v_target_table) INTO live_n;
     IF live_n IS DISTINCT FROM 0 THEN
-      RAISE EXCEPTION 'v95_guard: % must still be empty', t;
+      RAISE EXCEPTION 'v95_guard: % must still be empty', v_target_table;
     END IF;
   END LOOP;
 
@@ -152,7 +152,7 @@ BEGIN
     RAISE EXCEPTION 'v95_guard: leftover matching rpc exists';
   END IF;
 
-  FOR r IN
+  FOR v_fingerprint_row IN
     WITH
     target AS (
   SELECT * FROM (
@@ -719,23 +719,23 @@ inventory AS (
     UNION ALL
     SELECT region, n, digest FROM overall
   LOOP
-    IF r.region = 'unknown' THEN
+    IF v_fingerprint_row.region = 'unknown' THEN
       RAISE EXCEPTION 'v95_guard: extra';
     END IF;
-    exp := expected->r.region;
+    exp := expected->v_fingerprint_row.region;
     IF exp IS NULL THEN
       RAISE EXCEPTION 'v95_guard: extra';
     END IF;
-    IF r.n < (exp->>'count')::bigint THEN
-      RAISE EXCEPTION 'v95_guard: % missing', r.region;
+    IF v_fingerprint_row.n < (exp->>'count')::bigint THEN
+      RAISE EXCEPTION 'v95_guard: % missing', v_fingerprint_row.region;
     END IF;
-    IF r.n > (exp->>'count')::bigint THEN
-      RAISE EXCEPTION 'v95_guard: % extra', r.region;
+    IF v_fingerprint_row.n > (exp->>'count')::bigint THEN
+      RAISE EXCEPTION 'v95_guard: % extra', v_fingerprint_row.region;
     END IF;
-    IF r.digest IS DISTINCT FROM (exp->>'digest') THEN
-      RAISE EXCEPTION 'v95_guard: % mismatch', r.region;
+    IF v_fingerprint_row.digest IS DISTINCT FROM (exp->>'digest') THEN
+      RAISE EXCEPTION 'v95_guard: % mismatch', v_fingerprint_row.region;
     END IF;
-    seen := array_append(seen, r.region);
+    seen := array_append(seen, v_fingerprint_row.region);
   END LOOP;
 
   FOREACH want IN ARRAY ARRAY[

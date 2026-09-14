@@ -60,8 +60,10 @@ gps_indexes AS (
 ),
 app_functions AS (
   SELECT p.oid, p.proname, p.prosecdef, p.provolatile::text AS provolatile_text,
-         p.proconfig, p.prosrc, p.proacl, p.proowner,
+         p.proconfig, p.prosrc, p.proacl, p.proowner, p.pronargs,
          pg_catalog.pg_get_function_identity_arguments(p.oid) AS identity_args,
+         pg_catalog.oidvectortypes(p.proargtypes) AS arg_types,
+         p.proargnames AS arg_names,
          pg_catalog.pg_get_function_result(p.oid) AS result_def
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
@@ -178,7 +180,9 @@ checks AS (
         AND f.prosecdef IS TRUE
         AND f.provolatile_text='s'
         AND f.result_def LIKE 'TABLE(%admission_facts_hash text%'
-        AND replace(f.identity_args, ' ', '') = 'uuid,uuid'
+        AND f.pronargs = 2
+        AND replace(f.arg_types, ' ', '') = 'uuid,uuid'
+        AND f.arg_names[1:2] = ARRAY['p_left_post_id','p_right_post_id']::text[]
         AND to_regprocedure(
           'public.read_match_request_candidate_snapshot_v95(uuid,uuid)'
         ) = f.oid
@@ -190,18 +194,24 @@ checks AS (
         AND replace(replace(f.prosrc, 'extensions.st_', ''), 'public.st_', '')
           !~* '(^|[^a-z0-9_])st_[a-z0-9_]+'
     ) THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT concat_ws(' | ', 'identity='||identity_args, 'secdef='||prosecdef::text,
+    (SELECT concat_ws(' | ',
+      'identity='||identity_args,
+      'arg_types='||arg_types,
+      'in_names='||array_to_string(arg_names[1:pronargs], ','),
+      'secdef='||prosecdef::text,
       'vol='||provolatile_text)
       FROM app_functions WHERE proname='read_match_request_candidate_snapshot_v95'),
-    'one snapshot identity uuid,uuid definer stable'
+    'one snapshot identity uuid,uuid named p_left_post_id/p_right_post_id definer stable'
   UNION ALL SELECT 303, 'function', 'nearby identity',
     CASE WHEN EXISTS (
       SELECT 1 FROM app_functions f
       WHERE f.proname='nearby_local_posts'
         AND f.prosecdef IS FALSE
         AND f.provolatile_text='s'
-        AND replace(f.identity_args, ' ', '') =
+        AND f.pronargs = 3
+        AND replace(f.arg_types, ' ', '') =
           'doubleprecision,doubleprecision,integer'
+        AND f.arg_names[1:3] = ARRAY['p_lng','p_lat','p_limit']::text[]
         AND f.result_def LIKE 'TABLE(%id uuid%distance_m double precision%'
         AND to_regprocedure(
           'public.nearby_local_posts(double precision,double precision,integer)'
@@ -216,10 +226,14 @@ checks AS (
         AND replace(replace(f.prosrc, 'extensions.st_', ''), 'public.st_', '')
           !~* '(^|[^a-z0-9_])st_[a-z0-9_]+'
     ) THEN 'PASS' ELSE 'FAIL' END,
-    (SELECT concat_ws(' | ', 'identity='||identity_args, 'secdef='||prosecdef::text,
+    (SELECT concat_ws(' | ',
+      'identity='||identity_args,
+      'arg_types='||arg_types,
+      'in_names='||array_to_string(arg_names[1:pronargs], ','),
+      'secdef='||prosecdef::text,
       'vol='||provolatile_text)
       FROM app_functions WHERE proname='nearby_local_posts'),
-    'one nearby identity invoker stable extensions-qualified'
+    'one nearby identity double precision x2,integer named p_lng/p_lat/p_limit invoker stable'
   UNION ALL SELECT 304, 'function', 'search_path preserved',
     CASE WHEN (
       SELECT count(*) FROM app_functions f

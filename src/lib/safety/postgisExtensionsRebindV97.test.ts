@@ -345,8 +345,27 @@ assert.ok(verifySql.includes("provolatile::text"));
 assert.ok(verifySql.includes("relkind::text"));
 assert.ok(verifySql.includes("grantee = 0"));
 assert.ok(verifySql.includes("identity_args LIKE '%geography%'"));
-assert.ok(verifySql.includes("replace(f.identity_args, ' ', '') = 'uuid,uuid'"));
+assert.ok(verifySql.includes("oidvectortypes"));
+assert.ok(verifySql.includes("replace(f.arg_types, ' ', '') = 'uuid,uuid'"));
 assert.ok(verifySql.includes("'doubleprecision,doubleprecision,integer'"));
+assert.ok(
+  verifySql.includes(
+    "ARRAY['p_left_post_id','p_right_post_id']::text[]",
+  ),
+);
+assert.ok(verifySql.includes("ARRAY['p_lng','p_lat','p_limit']::text[]"));
+assert.equal(
+  verifySql.includes("replace(f.identity_args, ' ', '') = 'uuid,uuid'"),
+  false,
+  "must not compare named identity_args to type-only uuid,uuid",
+);
+assert.equal(
+  /replace\(f\.identity_args,\s*' ',\s*''\)\s*=\s*'doubleprecision/.test(
+    verifySql,
+  ),
+  false,
+  "must not compare named identity_args to type-only double precision list",
+);
 assert.equal(/array_to_string\([^)]*,\s*';'\)/.test(verifySql), false);
 assert.equal(
   verifyBody
@@ -397,6 +416,315 @@ assert.equal(
   "embedded semicolon must fail single-statement detection",
 );
 
+type IdentityCheckInput = {
+  proname: string;
+  prosecdef: boolean;
+  provolatile: string;
+  resultDef: string;
+  pronargs: number;
+  identityArgs: string;
+  argTypes: string;
+  argNames: string[];
+  regprocedureMatches: boolean;
+  prosrc: string;
+  expectSecdef: boolean;
+  expectVol: string;
+  expectResultLike: RegExp;
+  expectArgTypesFolded: string;
+  expectInNames: string[];
+  expectSrcIncludes: string[];
+  expectSrcExcludes: string[];
+};
+
+function foldedTypes(argTypes: string): string {
+  return argTypes.replace(/\s+/g, "");
+}
+
+function identityCheckPasses(input: IdentityCheckInput): boolean {
+  if (input.prosecdef !== input.expectSecdef) return false;
+  if (input.provolatile !== input.expectVol) return false;
+  if (!input.expectResultLike.test(input.resultDef)) return false;
+  if (input.pronargs !== input.expectInNames.length) return false;
+  if (foldedTypes(input.argTypes) !== input.expectArgTypesFolded) return false;
+  if (
+    input.argNames.slice(0, input.pronargs).join(",") !==
+    input.expectInNames.join(",")
+  ) {
+    return false;
+  }
+  if (!input.regprocedureMatches) return false;
+  for (const token of input.expectSrcIncludes) {
+    if (!input.prosrc.includes(token)) return false;
+  }
+  for (const token of input.expectSrcExcludes) {
+    if (input.prosrc.includes(token)) return false;
+  }
+  if (leftoverUnqualifiedPostgis(input.prosrc)) return false;
+  // Named identity_args must never be compared to type-only folded strings.
+  const foldedIdentity = input.identityArgs.replace(/\s+/g, "");
+  if (foldedIdentity === input.expectArgTypesFolded) {
+    // Only acceptable when identity had no names; still require argTypes path.
+  }
+  return true;
+}
+
+const fieldSnapshot = {
+  identityArgs: "p_left_post_id uuid, p_right_post_id uuid",
+  argTypes: "uuid, uuid",
+  argNames: [
+    "p_left_post_id",
+    "p_right_post_id",
+    "admission_facts_hash",
+    "left_id",
+  ],
+  prosrc:
+    "select extensions.st_x(g::extensions.geometry), extensions.st_y(g::extensions.geometry)",
+} as const;
+
+const fieldNearby = {
+  identityArgs: "p_lng double precision, p_lat double precision, p_limit integer",
+  argTypes: "double precision, double precision, integer",
+  argNames: ["p_lng", "p_lat", "p_limit", "id", "distance_m"],
+  prosrc:
+    "select extensions.st_distance(a, extensions.st_setsrid(extensions.st_makepoint(1,2),4326)::extensions.geography), extensions.st_dwithin(a,b,1)",
+} as const;
+
+assert.equal(
+  identityCheckPasses({
+    proname: "read_match_request_candidate_snapshot_v95",
+    prosecdef: true,
+    provolatile: "s",
+    resultDef: "TABLE(admission_facts_hash text, left_id uuid)",
+    pronargs: 2,
+    identityArgs: fieldSnapshot.identityArgs,
+    argTypes: fieldSnapshot.argTypes,
+    argNames: [...fieldSnapshot.argNames],
+    regprocedureMatches: true,
+    prosrc: fieldSnapshot.prosrc,
+    expectSecdef: true,
+    expectVol: "s",
+    expectResultLike: /TABLE\(.*admission_facts_hash text/i,
+    expectArgTypesFolded: "uuid,uuid",
+    expectInNames: ["p_left_post_id", "p_right_post_id"],
+    expectSrcIncludes: ["extensions.st_x(", "extensions.st_y(", "::extensions.geometry"],
+    expectSrcExcludes: ["public.st_", "::public.geometry"],
+  }),
+  true,
+  "field named identity args for snapshot must PASS via arg_types",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "nearby_local_posts",
+    prosecdef: false,
+    provolatile: "s",
+    resultDef: "TABLE(id uuid, distance_m double precision)",
+    pronargs: 3,
+    identityArgs: fieldNearby.identityArgs,
+    argTypes: fieldNearby.argTypes,
+    argNames: [...fieldNearby.argNames],
+    regprocedureMatches: true,
+    prosrc: fieldNearby.prosrc,
+    expectSecdef: false,
+    expectVol: "s",
+    expectResultLike: /TABLE\(id uuid.*distance_m double precision/i,
+    expectArgTypesFolded: "doubleprecision,doubleprecision,integer",
+    expectInNames: ["p_lng", "p_lat", "p_limit"],
+    expectSrcIncludes: [
+      "extensions.st_distance(",
+      "extensions.st_dwithin(",
+      "::extensions.geography",
+    ],
+    expectSrcExcludes: ["public.st_", "::public.geography"],
+  }),
+  true,
+  "field named identity args for nearby must PASS via arg_types",
+);
+assert.equal(
+  fieldSnapshot.identityArgs.replace(/\s+/g, "") === "uuid,uuid",
+  false,
+  "named identity_args must not equal type-only uuid,uuid",
+);
+assert.equal(
+  fieldNearby.identityArgs.replace(/\s+/g, "") ===
+    "doubleprecision,doubleprecision,integer",
+  false,
+  "named identity_args must not equal type-only double precision list",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "read_match_request_candidate_snapshot_v95",
+    prosecdef: true,
+    provolatile: "s",
+    resultDef: "TABLE(admission_facts_hash text, left_id uuid)",
+    pronargs: 2,
+    identityArgs: fieldSnapshot.identityArgs,
+    argTypes: "text, uuid",
+    argNames: [...fieldSnapshot.argNames],
+    regprocedureMatches: true,
+    prosrc: fieldSnapshot.prosrc,
+    expectSecdef: true,
+    expectVol: "s",
+    expectResultLike: /TABLE\(.*admission_facts_hash text/i,
+    expectArgTypesFolded: "uuid,uuid",
+    expectInNames: ["p_left_post_id", "p_right_post_id"],
+    expectSrcIncludes: ["extensions.st_x("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "arg type change must FAIL",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "read_match_request_candidate_snapshot_v95",
+    prosecdef: true,
+    provolatile: "s",
+    resultDef: "TABLE(admission_facts_hash text, left_id uuid)",
+    pronargs: 2,
+    identityArgs: "p_right_post_id uuid, p_left_post_id uuid",
+    argTypes: "uuid, uuid",
+    argNames: ["p_right_post_id", "p_left_post_id", "admission_facts_hash"],
+    regprocedureMatches: true,
+    prosrc: fieldSnapshot.prosrc,
+    expectSecdef: true,
+    expectVol: "s",
+    expectResultLike: /TABLE\(.*admission_facts_hash text/i,
+    expectArgTypesFolded: "uuid,uuid",
+    expectInNames: ["p_left_post_id", "p_right_post_id"],
+    expectSrcIncludes: ["extensions.st_x("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "arg name/order change must FAIL",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "nearby_local_posts",
+    prosecdef: false,
+    provolatile: "s",
+    resultDef: "TABLE(id uuid, distance_m double precision)",
+    pronargs: 3,
+    identityArgs: fieldNearby.identityArgs,
+    argTypes: "integer, double precision, double precision",
+    argNames: [...fieldNearby.argNames],
+    regprocedureMatches: true,
+    prosrc: fieldNearby.prosrc,
+    expectSecdef: false,
+    expectVol: "s",
+    expectResultLike: /TABLE\(id uuid.*distance_m double precision/i,
+    expectArgTypesFolded: "doubleprecision,doubleprecision,integer",
+    expectInNames: ["p_lng", "p_lat", "p_limit"],
+    expectSrcIncludes: ["extensions.st_distance("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "arg type order change must FAIL",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "nearby_local_posts",
+    prosecdef: false,
+    provolatile: "s",
+    resultDef: "TABLE(id uuid, distance_m double precision)",
+    pronargs: 3,
+    identityArgs: fieldNearby.identityArgs,
+    argTypes: fieldNearby.argTypes,
+    argNames: [...fieldNearby.argNames],
+    regprocedureMatches: false,
+    prosrc: fieldNearby.prosrc,
+    expectSecdef: false,
+    expectVol: "s",
+    expectResultLike: /TABLE\(id uuid.*distance_m double precision/i,
+    expectArgTypesFolded: "doubleprecision,doubleprecision,integer",
+    expectInNames: ["p_lng", "p_lat", "p_limit"],
+    expectSrcIncludes: ["extensions.st_distance("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "missing/mismatched to_regprocedure OID must FAIL",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "nearby_local_posts",
+    prosecdef: true,
+    provolatile: "s",
+    resultDef: "TABLE(id uuid, distance_m double precision)",
+    pronargs: 3,
+    identityArgs: fieldNearby.identityArgs,
+    argTypes: fieldNearby.argTypes,
+    argNames: [...fieldNearby.argNames],
+    regprocedureMatches: true,
+    prosrc: fieldNearby.prosrc,
+    expectSecdef: false,
+    expectVol: "s",
+    expectResultLike: /TABLE\(id uuid.*distance_m double precision/i,
+    expectArgTypesFolded: "doubleprecision,doubleprecision,integer",
+    expectInNames: ["p_lng", "p_lat", "p_limit"],
+    expectSrcIncludes: ["extensions.st_distance("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "secdef drift must FAIL",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "read_match_request_candidate_snapshot_v95",
+    prosecdef: true,
+    provolatile: "v",
+    resultDef: "TABLE(admission_facts_hash text, left_id uuid)",
+    pronargs: 2,
+    identityArgs: fieldSnapshot.identityArgs,
+    argTypes: fieldSnapshot.argTypes,
+    argNames: [...fieldSnapshot.argNames],
+    regprocedureMatches: true,
+    prosrc: fieldSnapshot.prosrc,
+    expectSecdef: true,
+    expectVol: "s",
+    expectResultLike: /TABLE\(.*admission_facts_hash text/i,
+    expectArgTypesFolded: "uuid,uuid",
+    expectInNames: ["p_left_post_id", "p_right_post_id"],
+    expectSrcIncludes: ["extensions.st_x("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "volatility drift must FAIL",
+);
+assert.equal(
+  identityCheckPasses({
+    proname: "nearby_local_posts",
+    prosecdef: false,
+    provolatile: "s",
+    resultDef: "TABLE(id uuid, distance_m double precision)",
+    pronargs: 3,
+    identityArgs: fieldNearby.identityArgs,
+    argTypes: fieldNearby.argTypes,
+    argNames: [...fieldNearby.argNames],
+    regprocedureMatches: true,
+    prosrc: "select st_distance(a, b)",
+    expectSecdef: false,
+    expectVol: "s",
+    expectResultLike: /TABLE\(id uuid.*distance_m double precision/i,
+    expectArgTypesFolded: "doubleprecision,doubleprecision,integer",
+    expectInNames: ["p_lng", "p_lat", "p_limit"],
+    expectSrcIncludes: ["extensions.st_distance("],
+    expectSrcExcludes: ["public.st_"],
+  }),
+  false,
+  "unqualified PostGIS body must FAIL",
+);
+assert.equal(
+  [{ proname: "nearby_local_posts" }, { proname: "nearby_local_posts" }].length ===
+    1,
+  false,
+);
+assert.equal(
+  [
+    { proname: "nearby_local_posts" },
+    { proname: "nearby_local_posts" },
+  ].filter((row) => row.proname === "nearby_local_posts").length === 1,
+  false,
+  "overload count > 1 must FAIL",
+);
+
 const checksCte = verifyBody.match(
   /checks AS \(\s*([\s\S]*?)\n\)\s*SELECT check_order/i,
 );
@@ -421,10 +749,12 @@ assert.ok(finalSelect);
 assert.ok(ledger.includes("6.7C.1B.3A"));
 assert.ok(ledger.includes("PostGIS"));
 assert.ok(ledger.includes("v97"));
-assert.ok(ledger.includes("not locked to 8500"));
-assert.ok(ledger.includes("nonempty"));
+assert.ok(ledger.includes("oidvectortypes"));
+assert.ok(ledger.includes("pg_get_function_identity_arguments()"));
+assert.ok(ledger.includes("false fails on checks 302/303"));
 assert.ok(ledger.includes("to_regprocedure"));
-assert.ok(ledger.includes("Support has not been asked"));
+assert.ok(ledger.includes("must not be"));
+assert.ok(ledger.includes("edited or re-run"));
 
 const v97Files = readdirSync(join(repoRoot, "supabase/migrations"))
   .filter((name) => name.includes("v97") || name.includes("v98"))

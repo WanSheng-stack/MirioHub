@@ -323,53 +323,34 @@ OWNER against PostGIS.
 - **Risk if wired early:** Treating an invitation as an order, or returning
   phone numbers from `disclosure_mode` alone.
 
-## 15. PostGIS extensions rebind (v97, unapplied)
+## 15. PostGIS extensions rebind (v97)
 
-- **Current state:** PHASE POSTGIS-RELOCATION-PREP.1 audited the Codex
-  v97 pair. The migration only rebinds three already-deployed functions
-  after Support moves PostGIS from `public` to `extensions`:
-  `match_request_admission_post_facts_v95`,
-  `read_match_request_candidate_snapshot_v95`, and
-  `nearby_local_posts`. Signatures, return columns, SECURITY
-  DEFINER/INVOKER, STABLE, and search_path stay as deployed
-  (`pg_catalog, public` for the v95 helpers; `public` for nearby).
-  Business SQL is unchanged except PostGIS schema qualification.
-  CREATE OR REPLACE is safe after a real `ALTER EXTENSION postgis SET
-  SCHEMA extensions` because type OIDs do not change; argument type
-  OIDs therefore still match and PostgreSQL replaces the existing
-  `pg_proc` row. Pre/post guards require exact `to_regprocedure`
-  identity and `count(*) = 1` per `proname`; a leftover overload
-  fail-closes. The migration still fail-closes before DDL if PostGIS
-  is not already in `extensions`, if `public.geometry` /
-  `public.geography` remain, or if `to_regprocedure` cannot see the
-  exact identity. No GRANT/REVOKE/COMMENT/ALTER TABLE
-  / index rebuild. GPS typmod and the two GiST indexes are observed,
-  not rewritten. `matching_request_creation_enabled` stays false.
-  pgcrypto stays in `extensions`. `spatial_ref_sys` is checked as an
-  `extensions` PostGIS member that is nonempty; the row count is
-  not locked to 8500 because Support's move does not guarantee that
-  catalog size. A pre-move field count would be required to assert an
-  exact number. Verify remains one statement, one seven-column result
-  set, catalog-only, no production writer. Verify string literals must
-  not embed `;` or the static single-statement checker fragments.
-  Named missing relations fail at parse/plan time. PUBLIC function ACL
-  uses `aclexplode` / `grantee = 0`, never `has_function_privilege`
-  OID 0. Catalog `"char"` values are `::text` before they enter the
-  UNION. Identity arguments are checked by exact
-  `to_regprocedure(...) = oid` plus normalized identity text.
-  v97 is not applied. Support has not been asked to start the move.
-- **Still unresolved / later phases:** user backup, Support PostGIS
-  move, user-run v97 apply + verify, and the later admission-hash
-  writer/snapshot that adds the v96 subtype/night fields. That later
-  writer is not this v97 file and must not patch the already-deployed
-  v95 hash helper in place.
+- **Current state:** PHASE POSTGIS-RELOCATION-PREP.1A. User applied v97;
+  Support PostGIS move and rebind succeeded. Official verify initially
+  reported 13/15 PASS with false fails on checks 302/303 only. Root cause:
+  `pg_get_function_identity_arguments()` returns named identity text such as
+  `p_left_post_id uuid, p_right_post_id uuid` and
+  `p_lng double precision, p_lat double precision, p_limit integer`, but
+  verify compared a whitespace-folded copy of that string to type-only
+  expectations `uuid,uuid` /
+  `doubleprecision,doubleprecision,integer`. Migration bodies, ACL,
+  search_path, PostGIS schema, GPS typmod/GiST, and creation=false were
+  already PASS. PREP.1A repairs verify only: types come from
+  `oidvectortypes(proargtypes)`, input names from `proargnames[1:pronargs]`,
+  and OID from `to_regprocedure(...) = oid`. Named identity text remains
+  observational. v97 main migration is applied history and must not be
+  edited or re-run. Verify remains one statement, one seven-column
+  result set. Support move already done for this project.
+- **Still unresolved / later phases:** user re-run of repaired v97 verify
+  only; later admission-hash writer/snapshot that adds the v96
+  subtype/night fields. That later writer is not this v97 file and must
+  not patch the already-deployed v95 hash helper in place.
 - **Future replacement:** none; this is a one-shot post-move rebind.
-- **Earliest safe production use:** After Support confirms PostGIS
-  lives in `extensions` and the user applies v97 themselves. Not this
-  phase.
+- **Earliest safe production use:** v97 migration already applied; after
+  repaired verify is 15/15 PASS. Creation stays false.
 - **Preconditions:** v95/v96 already applied; PostGIS already in
   `extensions`; creation stays false; MatchRequestSheet stays
   unmounted.
-- **Risk if wired early:** applying v97 before the move fail-closes on
-  the first guard; skipping the post-move rebind leaves
-  `public.st_*` / `public.geography` bodies that no longer resolve.
+- **Risk if wired early:** n/a for the move (already done). Do not re-run
+  the applied v97 migration. Do not trust a verify that folds named
+  `pg_get_function_identity_arguments()` into type-only strings.

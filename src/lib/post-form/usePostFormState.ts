@@ -307,6 +307,15 @@ function reducer(state: PostFormState, action: Action): PostFormState {
   }
 }
 
+/** Test/harness entry — production UI uses usePostFormState dispatch. */
+export type PostFormAction = Action;
+export function reducePostFormState(
+  state: PostFormState,
+  action: Action,
+): PostFormState {
+  return reducer(state, action);
+}
+
 export function usePostFormState() {
   const [state, dispatch] = useReducer(reducer, initialFormState);
 

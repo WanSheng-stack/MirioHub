@@ -161,6 +161,7 @@
     "shadow_draft_failed": "草稿暂存失败，请检查网络后重试",
     "invalid_bump_fee_boundary": "加急费无效。请使用 0 至 50.00 EUR 的整数分值。",
     "invalid_payload_numeric_values": "发布字段无效。件数、座位和时间缓冲不能为负数。",
+    "invalid_delivery_mode": "Deliver 需求请选择有效的交付方式（spot 或 door）。",
     "matching_temporarily_unavailable": "匹配功能正在准备中，请稍后再试。",
     "match_request_invalid_payload": "申请内容无效，请检查后重试。",
     "match_request_unknown_key": "申请包含无法识别的字段。",

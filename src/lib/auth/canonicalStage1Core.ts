@@ -210,8 +210,15 @@ export function normalizeCanonicalStage1(
 
   let share_mode: "share" | "private" | null =
     shareRaw === "share" || shareRaw === "private" ? shareRaw : null;
-  const delivery_mode: "spot" | "door" | null =
-    deliveryRaw === "spot" || deliveryRaw === "door" ? deliveryRaw : null;
+
+  let delivery_mode: "spot" | "door" | null = null;
+  if (category === "deliver" && post_type === "demand") {
+    if (deliveryRaw === "spot" || deliveryRaw === "door") {
+      delivery_mode = deliveryRaw;
+    } else if (deliveryRaw !== "") {
+      throw new CanonicalStage1Error("error.invalid_delivery_mode");
+    }
+  }
 
   const cleaned = cleanupFieldsForServiceSubtype({
     category,
@@ -260,8 +267,7 @@ export function normalizeCanonicalStage1(
     time_buffer,
     waypoints: normalizeWaypointList(raw.waypoints),
     share_mode,
-    delivery_mode:
-      category === "deliver" && post_type === "demand" ? delivery_mode : null,
+    delivery_mode,
     count_small,
     count_medium,
     count_large,

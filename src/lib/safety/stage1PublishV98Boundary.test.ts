@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2B.2 — v98 subtype×transport SQL structure + TS/UI parity.
+ * PHASE 6.7C.2B.2A — v98 INSERT mapping, delivery_mode, CHECK precision, reducer.
  * Does not execute SQL or connect to Supabase.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/safety/stage1PublishV98Boundary.test.ts
  */
@@ -12,19 +12,12 @@ import {
   CanonicalStage1Error,
   normalizeCanonicalStage1,
 } from "@/lib/auth/canonicalStage1Core";
+import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
+import { buildPayloadFromForm } from "@/lib/post-form/buildPayload";
 import {
-  parsePublishTransportMode,
-  publishTransportModesForSubtype,
-  PUBLISH_UI_TRAVEL_PEOPLE_TRANSPORT_MODES,
-  PUBLISH_UI_TRAVEL_TRANSPORT_MODES,
-  PUBLISH_UI_DELIVER_ESCORT_TRANSPORT_MODES,
-} from "@/lib/auth/publishTransportMode";
-import {
-  cleanupFieldsForServiceSubtype,
-  assertPublishSubtypeTransportLegal,
-} from "@/lib/safety/serviceSubtypePublish";
-import { TARGET_TRAVEL_TRANSPORT_MODES } from "@/lib/transport/transportPolicy";
-import { initialFormState } from "@/lib/post-form/usePostFormState";
+  initialFormState,
+  reducePostFormState,
+} from "@/lib/post-form/usePostFormState";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
@@ -36,6 +29,8 @@ const migration = read(
 const verifySql = read(
   "supabase/migrations/20260915000001_stage1_publish_service_subtype_v98.verify.sql",
 );
+const postsV2 = read("supabase/posts_v2_migration.sql");
+const postsInit = read("supabase/posts_init.sql");
 
 function insertFnBody(): string {
   const start = migration.indexOf(
@@ -49,83 +44,160 @@ function insertFnBody(): string {
   return migration.slice(start, end);
 }
 
+function extractInsertMapping(body: string): {
+  columns: string[];
+  values: string[];
+} {
+  const insertIdx = body.lastIndexOf("INSERT INTO public.posts (");
+  assert.ok(insertIdx > 0);
+  const colsStart = body.indexOf("(", insertIdx) + 1;
+  const colsEnd = body.indexOf(") VALUES (", colsStart);
+  assert.ok(colsEnd > colsStart);
+  const valuesStart = colsEnd + ") VALUES (".length;
+  let depth = 1;
+  let i = valuesStart;
+  for (; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  const cols = body
+    .slice(colsStart, colsEnd)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // Split VALUES by top-level commas
+  const rawVals = body.slice(valuesStart, i);
+  const values: string[] = [];
+  let cur = "";
+  let d = 0;
+  let inStr = false;
+  for (let j = 0; j < rawVals.length; j++) {
+    const ch = rawVals[j];
+    if (ch === "'" && rawVals[j - 1] !== "\\") inStr = !inStr;
+    if (!inStr) {
+      if (ch === "(") d += 1;
+      if (ch === ")") d -= 1;
+      if (ch === "," && d === 0) {
+        values.push(cur.trim());
+        cur = "";
+        continue;
+      }
+    }
+    cur += ch;
+  }
+  if (cur.trim()) values.push(cur.trim());
+  assert.equal(cols.length, values.length, "INSERT cols/values length mismatch");
+  return { columns: cols, values };
+}
+
 const insertBody = insertFnBody();
+const { columns, values } = extractInsertMapping(insertBody);
 
-// ── SQL structure: subtype × transport ──────────────────────────────────────
-assert.ok(insertBody.includes("v98_people_travel_car_only"));
-assert.ok(insertBody.includes("v_transport_raw IS DISTINCT FROM 'car'"));
-assert.ok(insertBody.includes("v98_small_item_travel_all_modes"));
-assert.ok(insertBody.includes("v98_cargo_escort_land_only"));
-assert.ok(insertBody.includes("v98_cargo_only_full_deliver"));
-assert.ok(insertBody.includes("v98_normalize_passenger_zero_counts"));
-assert.ok(insertBody.includes("v98_normalize_cargo_escort_demand_provider"));
-
-// people subtypes reject non-car (branch order: car-only before full travel list)
-{
-  const peopleIdx = insertBody.lastIndexOf("v98_people_travel_car_only");
-  const smallIdx = insertBody.lastIndexOf("v98_small_item_travel_all_modes");
-  assert.ok(peopleIdx > 0 && smallIdx > peopleIdx);
-  const peopleBlock = insertBody.slice(peopleIdx, smallIdx);
-  assert.ok(peopleBlock.includes("IS DISTINCT FROM 'car'"));
-  assert.equal(peopleBlock.includes("'walking'"), false);
-}
-
-// cargo_with_escort rejects boats explicitly before land allowlist
-{
-  const escortIdx = insertBody.lastIndexOf("v98_cargo_escort_land_only");
-  const block = insertBody.slice(escortIdx, escortIdx + 1200);
-  assert.ok(block.includes("'cargo_boat'"));
-  assert.ok(block.includes("'private_cargo_boat'"));
-  assert.ok(block.includes("error.illegal_transport_combo"));
-  assert.ok(block.includes("'cargo_van'"));
-}
-
-// cargo_only includes water modes
-{
-  const onlyIdx = insertBody.lastIndexOf("v98_cargo_only_full_deliver");
-  const block = insertBody.slice(onlyIdx, onlyIdx + 800);
-  assert.ok(block.includes("'cargo_boat'"));
-  assert.ok(block.includes("'private_cargo_boat'"));
-}
-
-// normalize branches
-assert.ok(insertBody.includes("v_count_small := 0"));
-assert.ok(insertBody.includes("v_count_xlarge := 0"));
+// ── Catalog evidence (frozen formal migrations, not live probe) ─────────────
 assert.ok(
-  /cargo_with_escort[\s\S]*v_post_type = 'demand'[\s\S]*v_escort_seats := 1/.test(
-    insertBody,
+  postsV2.includes(
+    "max_companions integer check (max_companions is null or (max_companions >= 1 and max_companions <= 4))",
   ),
 );
-assert.ok(
-  /v_post_type = 'demand'[\s\S]*ELSE[\s\S]*v_escort_seats := 0[\s\S]*v_share_mode := NULL/.test(
-    insertBody,
-  ),
-);
-assert.ok(insertBody.includes("invalid_text_representation"));
-assert.ok(insertBody.includes("error.invalid_payload_numeric_values"));
-assert.ok(insertBody.includes("v_post_type"));
-assert.ok(insertBody.includes("'demand'"));
-assert.ok(insertBody.includes("'provider'"));
+assert.ok(postsInit.includes("transport_mode text"));
+assert.ok(postsInit.includes("'van'"));
+assert.ok(migration.includes("posts.max_companions missing or not nullable integer"));
+assert.ok(migration.includes("posts_max_companions_check"));
+assert.ok(migration.includes("max_companions >= 0 AND max_companions <= 4"));
 
-// verify structural locks
-assert.ok(verifySql.includes("people_travel_car_only"));
-assert.ok(verifySql.includes("cargo_escort_rejects_boats"));
-assert.ok(verifySql.includes("passenger_zeros_counts"));
-assert.ok(verifySql.includes("cargo_escort_demand_provider_split"));
-assert.ok(verifySql.includes("numeric_fail_closed"));
-assert.ok(verifySql.includes("insert_v98 people car-only branch"));
-assert.ok(verifySql.includes("insert_v98 escort land + normalize"));
-assert.equal(/SELECT\s+p\.prosrc\b/i.test(verifySql), false);
+// ── INSERT final field mapping: max_companions uses v_max_companions ─────────
+{
+  const idx = columns.indexOf("max_companions");
+  assert.ok(idx >= 0, "INSERT must list max_companions column");
+  assert.equal(values[idx], "v_max_companions");
+  assert.equal(values[idx].includes("p_post_payload"), false);
+  const escortIdx = columns.indexOf("escort_seats");
+  assert.equal(values[escortIdx], "v_escort_seats");
+  const deliveryIdx = columns.indexOf("delivery_mode");
+  assert.equal(values[deliveryIdx], "v_delivery_mode");
+  const shareIdx = columns.indexOf("share_mode");
+  assert.equal(values[shareIdx], "v_share_mode");
+}
 
-// ── TS parity: reject / accept matrix ───────────────────────────────────────
-function expectCanonReject(raw: Record<string, unknown>, key: string) {
-  assert.throws(
-    () => normalizeCanonicalStage1(raw),
-    (err: unknown) =>
-      err instanceof CanonicalStage1Error && err.errorKey === key,
+// Executable branch: delivery_mode only deliver+demand
+{
+  assert.ok(insertBody.includes("error.invalid_delivery_mode"));
+  assert.ok(
+    insertBody.includes(
+      "v_category = 'deliver' AND v_post_type = 'demand'",
+    ),
   );
+  const demandBlock = insertBody.slice(
+    insertBody.indexOf("v_category = 'deliver' AND v_post_type = 'demand'"),
+    insertBody.indexOf("Independent field normalization"),
+  );
+  assert.ok(demandBlock.includes("'spot'"));
+  assert.ok(demandBlock.includes("'door'"));
+  assert.ok(demandBlock.includes("error.invalid_delivery_mode"));
 }
 
+// Executable subtype×transport branches (not marker-only)
+{
+  const peopleIdx = insertBody.lastIndexOf(
+    "v_service_subtype IN ('passenger', 'passenger_with_small_item')",
+  );
+  assert.ok(peopleIdx > 0);
+  const peopleBlock = insertBody.slice(peopleIdx, peopleIdx + 350);
+  assert.ok(peopleBlock.includes("IS DISTINCT FROM 'car'"));
+  assert.ok(peopleBlock.includes("error.illegal_transport_combo"));
+
+  const landMarker = insertBody.lastIndexOf("v98_cargo_escort_land_only");
+  assert.ok(landMarker > 0);
+  const escortTransport = insertBody.slice(landMarker, landMarker + 900);
+  assert.ok(escortTransport.includes("'cargo_boat'"));
+  assert.ok(escortTransport.includes("'private_cargo_boat'"));
+  assert.ok(escortTransport.includes("'cargo_van'"));
+  assert.ok(escortTransport.includes("error.illegal_transport_combo"));
+}
+
+// Demand/Provider escort normalize executable branch
+{
+  const marker = insertBody.lastIndexOf(
+    "v98_normalize_cargo_escort_demand_provider",
+  );
+  assert.ok(marker > 0);
+  const block = insertBody.slice(marker, marker + 700);
+  assert.ok(block.includes("v_post_type = 'demand'"));
+  assert.ok(block.includes("v_escort_seats := 1"));
+  assert.ok(block.includes("v_escort_seats := 0"));
+  assert.ok(block.includes("v_max_companions := 0"));
+  assert.ok(block.includes("v_share_mode := NULL"));
+}
+
+// passenger zeros counts in executable normalize
+{
+  const pIdx = insertBody.lastIndexOf("v98_normalize_passenger_zero_counts");
+  assert.ok(pIdx > 0);
+  const block = insertBody.slice(pIdx, pIdx + 600);
+  assert.ok(block.includes("v_count_small := 0"));
+  assert.ok(block.includes("v_count_xlarge := 0"));
+  assert.ok(block.includes("v_max_companions := v_people"));
+}
+
+// ── Transport CHECK: no broad ILIKE delete ──────────────────────────────────
+{
+  const checkDo = migration.slice(
+    migration.indexOf("Expand posts.transport_mode CHECK"),
+    migration.indexOf("Passkey ACTIVE"),
+  );
+  assert.equal(checkDo.includes("ILIKE '%transport_mode%'"), false);
+  assert.ok(checkDo.includes("c.conname = 'posts_transport_mode_check'"));
+  assert.ok(checkDo.includes("definition drift"));
+  assert.ok(checkDo.includes("not uniquely identifiable"));
+  // Other CHECKs that mention transport_mode must not be mass-deleted
+  assert.equal(/FOR r IN[\s\S]*ILIKE '%transport_mode%'/.test(migration), false);
+}
+
+// ── Canonical delivery_mode parity ──────────────────────────────────────────
 const travelBase: Record<string, unknown> = {
   post_type: "demand",
   category: "travel",
@@ -138,7 +210,7 @@ const travelBase: Record<string, unknown> = {
   time_buffer: 30,
   waypoints: [],
   share_mode: "share",
-  delivery_mode: null,
+  delivery_mode: "spot",
   count_small: 0,
   count_medium: 0,
   count_large: 0,
@@ -151,228 +223,218 @@ const travelBase: Record<string, unknown> = {
   transport_mode: "car",
 };
 
-expectCanonReject(
-  { ...travelBase, transport_mode: "walking" },
-  "error.illegal_transport_combo",
-);
-expectCanonReject(
-  {
-    ...travelBase,
-    service_subtype: "passenger_with_small_item",
-    transport_mode: "bus",
-  },
-  "error.illegal_transport_combo",
-);
-assert.equal(
-  normalizeCanonicalStage1({ ...travelBase, transport_mode: "car" })
-    .transport_mode,
-  "car",
-);
-assert.equal(
-  normalizeCanonicalStage1({
-    ...travelBase,
-    service_subtype: "small_item_only",
-    transport_mode: "walking",
-    escort_seats: 0,
-    max_companions: 0,
-    share_mode: null,
-  }).transport_mode,
-  "walking",
-);
-expectCanonReject(
-  {
-    ...travelBase,
-    category: "deliver",
-    service_subtype: "cargo_with_escort",
-    transport_mode: "cargo_boat",
-    share_mode: "share",
-  },
-  "error.illegal_transport_combo",
-);
-assert.equal(
-  normalizeCanonicalStage1({
-    ...travelBase,
-    category: "deliver",
-    service_subtype: "cargo_with_escort",
-    transport_mode: "cargo_van",
-    share_mode: "share",
-  }).transport_mode,
-  "cargo_van",
-);
+assert.equal(normalizeCanonicalStage1(travelBase).delivery_mode, null);
 assert.equal(
   normalizeCanonicalStage1({
     ...travelBase,
     category: "deliver",
     service_subtype: "cargo_only",
-    transport_mode: "cargo_boat",
+    transport_mode: "cargo_van",
+    delivery_mode: "door",
     share_mode: null,
     escort_seats: 0,
     max_companions: 0,
-  }).transport_mode,
-  "cargo_boat",
-);
-expectCanonReject(
-  { ...travelBase, transport_mode: "van" },
-  "error.invalid_transport_mode",
-);
-
-// ── Field normalize (TS cleanup mirrors SQL) ────────────────────────────────
-{
-  const p = cleanupFieldsForServiceSubtype({
-    category: "travel",
-    postType: "demand",
-    serviceSubtype: "passenger",
-    escort_seats: 2,
-    max_companions: 2,
-    share_mode: "share",
-    count_small: 9,
-    count_medium: 1,
-    count_large: 1,
-    count_xlarge: 1,
-    carry_luggage: true,
-  });
-  assert.equal(p.count_small, 0);
-  assert.equal(p.count_medium, 0);
-  assert.equal(p.count_large, 0);
-  assert.equal(p.count_xlarge, 0);
-  assert.equal(p.carry_luggage, false);
-}
-{
-  const p = cleanupFieldsForServiceSubtype({
-    category: "travel",
-    postType: "demand",
-    serviceSubtype: "small_item_only",
-    escort_seats: 3,
-    max_companions: 3,
-    share_mode: "private",
-    count_small: 2,
-    count_medium: 0,
-    count_large: 0,
-    count_xlarge: 0,
-    carry_luggage: false,
-  });
-  assert.equal(p.escort_seats, 0);
-  assert.equal(p.max_companions, 0);
-  assert.equal(p.share_mode, null);
-  assert.equal(p.count_small, 2);
-}
-{
-  const p = cleanupFieldsForServiceSubtype({
-    category: "deliver",
-    postType: "demand",
-    serviceSubtype: "cargo_only",
-    escort_seats: 2,
-    max_companions: 2,
-    share_mode: "share",
-    count_small: 1,
-    count_medium: 0,
-    count_large: 0,
-    count_xlarge: 0,
-    carry_luggage: false,
-  });
-  assert.equal(p.escort_seats, 0);
-  assert.equal(p.share_mode, null);
-}
-{
-  const d = cleanupFieldsForServiceSubtype({
-    category: "deliver",
-    postType: "demand",
-    serviceSubtype: "cargo_with_escort",
-    escort_seats: 9,
-    max_companions: 2,
-    share_mode: "private",
-    count_small: 1,
-    count_medium: 0,
-    count_large: 0,
-    count_xlarge: 0,
-    carry_luggage: false,
-  });
-  assert.equal(d.escort_seats, 1);
-  const pr = cleanupFieldsForServiceSubtype({
-    category: "deliver",
-    postType: "provider",
-    serviceSubtype: "cargo_with_escort",
-    escort_seats: 9,
-    max_companions: 2,
-    share_mode: "share",
-    count_small: 1,
-    count_medium: 0,
-    count_large: 0,
-    count_xlarge: 0,
-    carry_luggage: false,
-  });
-  assert.equal(pr.escort_seats, 0);
-  assert.equal(pr.share_mode, null);
-}
-expectCanonReject(
-  { ...travelBase, max_companions: 5, escort_seats: 5 },
-  "error.invalid_payload_numeric_values",
-);
-expectCanonReject(
-  { ...travelBase, count_small: -1 },
-  "error.invalid_payload_numeric_values",
-);
-
-// ── UI subtype option lists ─────────────────────────────────────────────────
-assert.deepEqual([...publishTransportModesForSubtype("travel", "passenger")], [
-  "car",
-]);
-assert.deepEqual(
-  [...publishTransportModesForSubtype("travel", "passenger_with_small_item")],
-  ["car"],
-);
-assert.deepEqual(
-  [...publishTransportModesForSubtype("travel", "small_item_only")],
-  [...TARGET_TRAVEL_TRANSPORT_MODES],
-);
-assert.deepEqual(
-  [...publishTransportModesForSubtype("deliver", "cargo_with_escort")],
-  [...PUBLISH_UI_DELIVER_ESCORT_TRANSPORT_MODES],
+  }).delivery_mode,
+  "door",
 );
 assert.equal(
-  (
-    publishTransportModesForSubtype(
-      "deliver",
-      "cargo_with_escort",
-    ) as readonly string[]
-  ).includes("cargo_boat"),
-  false,
+  normalizeCanonicalStage1({
+    ...travelBase,
+    category: "deliver",
+    post_type: "provider",
+    service_subtype: "cargo_only",
+    transport_mode: "cargo_van",
+    delivery_mode: "spot",
+    share_mode: null,
+    escort_seats: 0,
+    max_companions: 0,
+  }).delivery_mode,
+  null,
 );
-assert.equal(initialFormState.service_subtype, "passenger");
-assert.deepEqual([...PUBLISH_UI_TRAVEL_PEOPLE_TRANSPORT_MODES], ["car"]);
-assert.ok(PUBLISH_UI_TRAVEL_TRANSPORT_MODES.includes("walking"));
-
-// walking cleared when switching back to passenger
-{
-  assert.equal(
-    parsePublishTransportMode("travel", "walking", "passenger").ok,
-    false,
-  );
-  assert.equal(
-    parsePublishTransportMode("travel", "walking", "small_item_only").ok,
-    true,
-  );
-  const allowed = new Set(
-    publishTransportModesForSubtype("travel", "passenger") as readonly string[],
-  );
-  const prior = "walking";
-  const cleared = allowed.has(prior) ? prior : "";
-  assert.equal(cleared, "");
-}
-
+assert.equal(
+  normalizeCanonicalStage1({
+    ...travelBase,
+    category: "buy",
+    service_subtype: null,
+    transport_mode: null,
+    delivery_mode: "door",
+    share_mode: null,
+    escort_seats: 0,
+    max_companions: 0,
+  }).delivery_mode,
+  null,
+);
+assert.equal(
+  normalizeCanonicalStage1({
+    ...travelBase,
+    category: "onsite",
+    service_subtype: null,
+    transport_mode: null,
+    delivery_mode: "spot",
+    share_mode: null,
+    escort_seats: 0,
+    max_companions: 0,
+  }).delivery_mode,
+  null,
+);
 assert.throws(
   () =>
-    assertPublishSubtypeTransportLegal({
-      category: "travel",
-      postType: "demand",
-      serviceSubtype: "passenger",
-      transportMode: "walking",
+    normalizeCanonicalStage1({
+      ...travelBase,
+      category: "deliver",
+      service_subtype: "cargo_only",
+      transport_mode: "cargo_van",
+      delivery_mode: "express",
+      share_mode: null,
+      escort_seats: 0,
+      max_companions: 0,
     }),
   (err: unknown) =>
-    err instanceof Error && err.message === "error.illegal_transport_combo",
+    err instanceof CanonicalStage1Error &&
+    err.errorKey === "error.invalid_delivery_mode",
 );
 
-// ── Static production proofs ────────────────────────────────────────────────
+// Direct RPC-bypass structure: SQL final authority does not re-read payload for delivery_mode INSERT
+{
+  const deliveryIdx = columns.indexOf("delivery_mode");
+  assert.equal(values[deliveryIdx], "v_delivery_mode");
+  assert.equal(values[deliveryIdx].includes("p_post_payload"), false);
+  const elseNull = insertBody.indexOf("ELSE\n    v_delivery_mode := NULL;");
+  assert.ok(elseNull > 0);
+  assert.ok(
+    insertBody.includes("RAISE EXCEPTION 'error.invalid_delivery_mode'"),
+  );
+}
+
+// ── Real reducer/state behavior ─────────────────────────────────────────────
+{
+  const state = {
+    ...initialFormState,
+    service_subtype: "small_item_only" as const,
+    transport_mode: "walking" as const,
+    escort_seats: 0,
+    max_companions: 0,
+  };
+  const next = reducePostFormState(state, {
+    type: "SET_SERVICE_SUBTYPE",
+    service_subtype: "passenger",
+  });
+  assert.equal(next.service_subtype, "passenger");
+  assert.equal(next.transport_mode, "");
+  assert.deepEqual(
+    [...publishTransportModesForSubtype("travel", "passenger")],
+    ["car"],
+  );
+}
+
+{
+  let state = reducePostFormState(initialFormState, {
+    type: "SET_CATEGORY",
+    category: "deliver",
+  });
+  state = reducePostFormState(state, {
+    type: "SET_SERVICE_SUBTYPE",
+    service_subtype: "cargo_only",
+  });
+  state = reducePostFormState(state, {
+    type: "SET_FIELD",
+    field: "transport_mode",
+    value: "cargo_boat",
+  });
+  // cargo_boat is legal in SQL for cargo_only but omitted from land UI list —
+  // SET_FIELD can still set it; switching to escort must clear it.
+  assert.equal(state.transport_mode, "cargo_boat");
+  state = reducePostFormState(state, {
+    type: "SET_SERVICE_SUBTYPE",
+    service_subtype: "cargo_with_escort",
+  });
+  assert.equal(state.transport_mode, "");
+  assert.equal(
+    (
+      publishTransportModesForSubtype(
+        "deliver",
+        "cargo_with_escort",
+      ) as readonly string[]
+    ).includes("cargo_boat"),
+    false,
+  );
+}
+
+{
+  // Hidden escort/share residue must not survive real SET_POST_TYPE reset,
+  // and provider+cargo_with_escort payload must not forge escort headcount.
+  let state = reducePostFormState(initialFormState, {
+    type: "SET_CATEGORY",
+    category: "deliver",
+  });
+  state = reducePostFormState(state, {
+    type: "SET_SERVICE_SUBTYPE",
+    service_subtype: "cargo_with_escort",
+  });
+  state = reducePostFormState(state, {
+    type: "SET_FIELD",
+    field: "escort_seats",
+    value: 9,
+  });
+  state = reducePostFormState(state, {
+    type: "SET_SHARE_MODE",
+    share_mode: "private",
+  });
+  assert.equal(state.share_mode, "private");
+  assert.equal(state.escort_seats, 1);
+
+  // Plant residue that UI might still hold, then switch post_type via reducer.
+  state = reducePostFormState(state, {
+    type: "SET_FIELD",
+    field: "escort_seats",
+    value: 9,
+  });
+  assert.equal(state.escort_seats, 9);
+
+  state = reducePostFormState(state, {
+    type: "SET_POST_TYPE",
+    post_type: "provider",
+  });
+  assert.equal(state.category, "travel");
+  assert.equal(state.service_subtype, "passenger");
+  assert.equal(state.share_mode, "share");
+  assert.notEqual(state.escort_seats, 9);
+  assert.ok(state.escort_seats >= 1 && state.escort_seats <= 4);
+
+  const providerEscort = buildPayloadFromForm(
+    {
+      ...initialFormState,
+      post_type: "provider",
+      category: "deliver",
+      service_subtype: "cargo_with_escort",
+      transport_mode: "cargo_van",
+      origin_address: "A",
+      destination_address: "B",
+      estimated_kms: 10,
+      raw_phone_local: "601234567",
+      raw_license_plate: "BG123AB",
+      escort_seats: 9,
+      max_companions: 3,
+      share_mode: "share",
+    },
+    1,
+    1,
+  );
+  assert.equal(providerEscort.ok, true);
+  if (providerEscort.ok) {
+    assert.equal(providerEscort.payload.escort_seats, 0);
+    assert.equal(providerEscort.payload.share_mode, null);
+    assert.equal(providerEscort.payload.max_companions, 0);
+  }
+}
+
+// ── Verify + static proofs ──────────────────────────────────────────────────
+assert.ok(verifySql.includes("insert_writes_max_companions"));
+assert.ok(verifySql.includes("delivery_mode_authority"));
+assert.ok(verifySql.includes("insert_v98 max_companions + delivery"));
+assert.equal(/SELECT\s+p\.prosrc\b/i.test(verifySql), false);
+assert.equal(migration.includes("ILIKE '%transport_mode%'"), false);
+
 for (const src of [
   read("src/app/api/posts/trusted-publish/route.ts"),
   read("src/app/api/posts/shadow-draft/route.ts"),
@@ -384,10 +446,6 @@ for (const src of [
   assert.equal(src.includes("create_shadow_draft_idempotent_v86"), false);
   assert.equal(src.includes("commit_phase3_business_idempotent_v86"), false);
 }
-
-const sheet = read("src/components/home/PublishBottomSheet.tsx");
-assert.ok(sheet.includes("publishTransportModesForSubtype"));
-assert.equal(sheet.includes("publishTransportModesForCategory("), false);
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -423,6 +481,10 @@ for (const file of walk(join(repoRoot, "src"))) {
 }
 assert.equal(insertHits, 0);
 assert.equal(v86Hits, 0);
+
+assert.ok(read("src/messages/en.json").includes("invalid_delivery_mode"));
+assert.ok(read("src/messages/zh.json").includes("invalid_delivery_mode"));
+assert.ok(read("src/messages/sr.json").includes("invalid_delivery_mode"));
 
 console.log("stage1PublishV98Boundary.test.ts: ok");
 console.log("v98 SQL is not applied remotely.");

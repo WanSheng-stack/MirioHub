@@ -161,6 +161,7 @@
     "shadow_draft_failed": "Draft save failed. Please check your connection and retry.",
     "invalid_bump_fee_boundary": "Urgency fee is invalid. Use a whole-cent amount from 0 to 50.00 EUR.",
     "invalid_payload_numeric_values": "One or more publish fields are invalid. Counts, seats, and time buffer cannot be negative.",
+    "invalid_delivery_mode": "Choose a valid delivery mode (spot or door) for this Deliver demand.",
     "matching_temporarily_unavailable": "Matching is being prepared. Please try again later.",
     "match_request_invalid_payload": "This application is invalid. Please review and try again.",
     "match_request_unknown_key": "This application contains an unrecognized field.",

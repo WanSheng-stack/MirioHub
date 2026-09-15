@@ -64,7 +64,14 @@ fn AS (
       AND strpos(p.prosrc, 'v_escort_seats := 0') > 0
       AND strpos(p.prosrc, 'v_share_mode := NULL') > 0) AS cargo_escort_demand_provider_split,
     (strpos(p.prosrc, 'error.invalid_payload_numeric_values') > 0
-      AND strpos(p.prosrc, 'invalid_text_representation') > 0) AS numeric_fail_closed
+      AND strpos(p.prosrc, 'invalid_text_representation') > 0) AS numeric_fail_closed,
+    (strpos(p.prosrc, 'escort_seats, max_companions, bump_fee') > 0
+      AND strpos(p.prosrc, 'v_escort_seats,') > 0
+      AND strpos(p.prosrc, 'v_max_companions') > 0
+      AND strpos(p.prosrc, 'v_delivery_mode') > 0) AS insert_writes_max_companions,
+    (strpos(p.prosrc, 'error.invalid_delivery_mode') > 0
+      AND strpos(p.prosrc, 'v_category = ''deliver'' AND v_post_type = ''demand''') > 0
+      AND strpos(p.prosrc, 'v_delivery_mode := NULL') > 0) AS delivery_mode_authority
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
@@ -139,6 +146,8 @@ exact_resolved AS (
     f.passenger_zeros_counts,
     f.cargo_escort_demand_provider_split,
     f.numeric_fail_closed,
+    f.insert_writes_max_companions,
+    f.delivery_mode_authority,
     f.proowner,
     f.proacl
   FROM exact e
@@ -263,6 +272,18 @@ checks AS (
       'numeric='||COALESCE(numeric_fail_closed::text, 'null'))
       FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
     'cargo_with_escort land-only — passenger zeros counts — Demand/Provider escort split — numeric fail-closed'
+  UNION ALL SELECT 105, 'rpc', 'insert_v98 max_companions + delivery',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM exact_resolved r
+      WHERE r.proname = 'insert_stage1_post_v98'
+        AND r.insert_writes_max_companions IS TRUE
+        AND r.delivery_mode_authority IS TRUE
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT concat_ws(' | ',
+      'max_companions_col='||COALESCE(insert_writes_max_companions::text, 'null'),
+      'delivery_authority='||COALESCE(delivery_mode_authority::text, 'null'))
+      FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
+    'INSERT lists max_companions via v_max_companions — delivery_mode only deliver+demand'
   UNION ALL SELECT 110, 'rpc', 'publish_v98 identity',
     CASE WHEN EXISTS (
       SELECT 1 FROM exact_resolved r

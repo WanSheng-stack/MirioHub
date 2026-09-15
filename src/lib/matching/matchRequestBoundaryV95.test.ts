@@ -830,8 +830,11 @@ assert.notEqual(policyRolesFingerprint([{ oid: 4242, rolname: null }]), "");
 assert.equal(policyRolesFingerprint([{ oid: 4242, rolname: null }]), "missing_oid:4242");
 assert.equal(policyRolesFingerprint([{ oid: 4242, rolname: undefined }]), "missing_oid:4242");
 
-assert.ok(route.includes("create_match_request_v95"));
-assert.ok(route.includes("read_match_request_candidate_snapshot_v95"));
+assert.ok(route.includes("create_match_request_v99"));
+assert.ok(route.includes("read_match_request_candidate_snapshot_v99"));
+assert.ok(route.includes("inspect_match_request_v95"));
+assert.equal(route.includes("create_match_request_v95"), false);
+assert.equal(route.includes("read_match_request_candidate_snapshot_v95"), false);
 assert.equal(route.includes("p_proposal_digest"), false);
 assert.equal(
   /\.from\(\s*["'](match_requests|match_contracts|match_contact_invitations|contact_grants)["']/.test(

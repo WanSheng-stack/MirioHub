@@ -1,7 +1,7 @@
 /**
  * PHASE 6.7C.2C.1 / v99A — pure admission facts/hash helpers.
- * Mirrors unapplied SQL semantics for unit tests. Not wired to API/writer.
- * Production authority remains the v99 SQL functions after user apply.
+ * Mirrors SQL semantics for unit tests only. Not a PostgreSQL digest byte match.
+ * Production hash authority remains match_request_admission_facts_hash_v99.
  */
 
 import { createHash } from "node:crypto";

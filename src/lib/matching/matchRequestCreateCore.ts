@@ -11,6 +11,7 @@ import {
 } from "@/lib/matching/contactInvitationCodeCore";
 import {
   evaluateMatchAdmission,
+  postSatisfiesAdmissionAuthority,
   validateProposedSchedule,
   type MatchAdmissionPost,
   type MatchAdmissionRouteScore,
@@ -1080,6 +1081,13 @@ export function evaluateMatchRequestWriter(
   }
   if (initiator.category !== "travel" && initiator.category !== "deliver") {
     return { ok: false, errorKey: MATCH_REQUEST_ERROR.categoryNotSupported, state: next };
+  }
+  // Simulated writer mirrors SQL v99B fresh fail-closed authority (not a PG hash).
+  if (
+    !postSatisfiesAdmissionAuthority(initiator) ||
+    !postSatisfiesAdmissionAuthority(counterpart)
+  ) {
+    return { ok: false, errorKey: MATCH_REQUEST_ERROR.notEligible, state: next };
   }
   if (
     !/^[0-9a-f]{64}$/.test(input.admissionFactsHash) ||

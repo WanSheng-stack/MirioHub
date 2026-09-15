@@ -15,6 +15,7 @@ import {
   officialStartDeltaMinutes,
   officialTimeWindowsCompatible,
   pairHasCompatibleSchedule,
+  postSatisfiesAdmissionAuthority,
   validateProposedSchedule,
   type MatchAdmissionPost,
   type MatchAdmissionRouteScore,
@@ -48,6 +49,7 @@ function post(
     departure_date: "2026-09-12",
     departure_time_window: "14:00-14:15",
     transport_mode: "car",
+    service_subtype: "passenger",
     max_companions: 1,
     count_small: 0,
     count_medium: 0,
@@ -55,6 +57,9 @@ function post(
     count_xlarge: 0,
     origin_address: "Belgrade",
     destination_address: "Novi Sad",
+    origin_country_code: "RS",
+    origin_timezone: "Europe/Belgrade",
+    night_policy_version: 1,
     ...overrides,
   };
 }
@@ -369,6 +374,93 @@ assert.deepEqual(
     hashMatchAdmissionDigest(
       canonicalAdmissionFacts({ ...demand, destination_gps_ewkb: "02020000" }),
     ),
+  );
+}
+
+{
+  assert.equal(postSatisfiesAdmissionAuthority(demand), true);
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, service_subtype: null }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, service_subtype: "" }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      service_subtype: "cargo_only",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      transport_mode: "van",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, origin_country_code: null }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, origin_country_code: "rs" }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, origin_timezone: null }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, origin_timezone: "" }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, night_policy_version: null }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, night_policy_version: 0 }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      category: "buy",
+      service_subtype: null,
+      transport_mode: null,
+      origin_country_code: null,
+      origin_timezone: null,
+      night_policy_version: null,
+    }),
+    true,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      category: "buy",
+      service_subtype: "passenger",
+    }),
+    false,
+  );
+  const deliver = post({
+    id: DEMAND,
+    user_id: ACTOR,
+    post_type: "demand",
+    category: "deliver",
+    service_subtype: "cargo_with_escort",
+    transport_mode: "cargo_van",
+    escort_seats: 1,
+  });
+  assert.equal(postSatisfiesAdmissionAuthority(deliver), true);
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...deliver,
+      transport_mode: "cargo_boat",
+    }),
+    false,
   );
 }
 

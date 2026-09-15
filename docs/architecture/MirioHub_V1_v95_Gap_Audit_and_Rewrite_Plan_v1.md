@@ -10,11 +10,12 @@
 >
 > 目的：在不执行 SQL、不修改代码的前提下，确定 v95 重写边界和后续实施顺序
 >
-> 实施更新（PHASE 6.7C.2C.1 / v99A）：v95/v96/v97/v98 已由用户执行（v95
-> 69/69、v96 78/78、v97 15/15、v98 19/19 PASS）。PostGIS 位于 extensions。
-> v90–v98 视为已执行历史，不得再改。v99A（未 apply）仅新增只读
-> admission facts/hash/snapshot；不建 create_match_request_v99，不切换 API。
-> creation=false；夜间策略仍 enabled=false。国家/IANA 时区可信解析仍未实现。
+> 实施更新（PHASE 6.7C.2C.2 / v99B）：v95/v96/v97/v98/v99A 已由用户执行（v95
+> 69/69、v96 78/78、v97 15/15、v98 19/19、v99A 12/12 PASS）。PostGIS 位于
+> extensions。v90–v99A 视为已执行历史，不得再改。v99B（未 apply）新增
+> `create_match_request_v99` 并将 API snapshot/writer 切到 v99；保留
+> `inspect_match_request_v95`。creation=false；夜间策略仍 enabled=false。
+> 国家/IANA 时区可信解析仍未实现。
 > 下一阶段才是 create_match_request_v99 + API 切换。
 
 ---
@@ -390,8 +391,9 @@ Cursor 完成第一阶段后必须停止。产品负责人审阅 diff 和输出�
 | 6.7C.2A | posts.service_subtype + night_service_policies 基础 | v95 已验证 |
 | 6.7C.2A.1 | 收紧 v96：transportMode fail-closed、策略选择契约、verify catalog | 已 apply；78/78 |
 | 6.7C.2B | 发布 UI/canonical/v98 写入 service_subtype | 已 apply；19/19 |
-| 6.7C.2C.1 / v99A | 只读 admission facts/hash/snapshot（无 writer） | v98 已绿；v99 未 apply |
-| 6.7C.2 | 请求列表、contact DTO、新 MatchRequestSheet 挂载 | v95 已验证；writer/API 仍待后续 v99 |
+| 6.7C.2C.1 / v99A | 只读 admission facts/hash/snapshot（无 writer） | 已 apply；12/12 |
+| 6.7C.2C.2 / v99B | create_match_request_v99 + API snapshot/writer 切到 v99 | v99A 已绿；v99B 未 apply |
+| 6.7C.2 | 请求列表、contact DTO、新 MatchRequestSheet 挂载 | v95 已验证；creation 仍关 |
 | 6.7C.3 | revision 重发与拒绝 | 列表稳定 |
 | 6.7D.1 | accept 原子合同 + Demand 唯一性 | current revision 稳定 |
 | 6.7D.2 | Provider trip + 分段容量 | accept contract |

@@ -43,6 +43,10 @@ type SnapshotRow = {
   left_origin_lng: number | null;
   left_destination_lat: number | null;
   left_destination_lng: number | null;
+  left_service_subtype: string | null;
+  left_origin_country_code: string | null;
+  left_origin_timezone: string | null;
+  left_night_policy_version: number | null;
   right_id: string;
   right_user_id: string;
   right_post_type: string;
@@ -67,6 +71,10 @@ type SnapshotRow = {
   right_origin_lng: number | null;
   right_destination_lat: number | null;
   right_destination_lng: number | null;
+  right_service_subtype: string | null;
+  right_origin_country_code: string | null;
+  right_origin_timezone: string | null;
+  right_night_policy_version: number | null;
 };
 
 function postFromSnapshot(
@@ -99,6 +107,10 @@ function postFromSnapshot(
     waypoints: (p("waypoints") as string[] | null) ?? null,
     origin_gps_ewkb: (p("origin_gps_ewkb") as string | null) ?? null,
     destination_gps_ewkb: (p("destination_gps_ewkb") as string | null) ?? null,
+    service_subtype: (p("service_subtype") as string | null) ?? null,
+    origin_country_code: (p("origin_country_code") as string | null) ?? null,
+    origin_timezone: (p("origin_timezone") as string | null) ?? null,
+    night_policy_version: (p("night_policy_version") as number | null) ?? null,
     origin_gps:
       lat != null && lng != null ? { lat, lng } : null,
     destination_gps:
@@ -132,7 +144,7 @@ export async function POST(request: Request) {
     loadSnapshot: async (admin, ids) => {
       const client = admin as SupabaseClient;
       const { data, error } = await client.rpc(
-        "read_match_request_candidate_snapshot_v95",
+        "read_match_request_candidate_snapshot_v99",
         {
           p_left_post_id: ids.initiatorPostId,
           p_right_post_id: ids.counterpartPostId,
@@ -167,7 +179,7 @@ export async function POST(request: Request) {
     loadQuote: async () => buildProductionServerQuote(),
     callWriter: async (admin, args) => {
       const client = admin as SupabaseClient;
-      const { data, error } = await client.rpc("create_match_request_v95", {
+      const { data, error } = await client.rpc("create_match_request_v99", {
         p_actor_user_id: args.actorUserId,
         p_initiator_post_id: args.initiatorPostId,
         p_counterpart_post_id: args.counterpartPostId,

@@ -311,11 +311,10 @@ OWNER against PostGIS.
   result schema. Owned-sequence `object_identity` casts
   `pg_depend.deptype` to text before `||`. No live PostgreSQL/MVCC run
   was performed. Creation stays false. MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** admission-hash facts/snapshot owned by
-  6.7C.2C.1/v99A (unapplied until user applies); create_match_request_v99 +
-  API cutover later. Request list, resend, accept/reject, contact DTO,
-  MatchRequestSheet mount, country pricing, trusted location resolver, and
-  contract capacity/fulfillment remain later.
+- **Still unresolved / later phases:** create_match_request_v99 + API cutover
+  owned by 6.7C.2C.2/v99B (unapplied until user applies). Request list, resend,
+  accept/reject, contact DTO, MatchRequestSheet mount, country pricing,
+  trusted location resolver, and contract capacity/fulfillment remain later.
 - **Future replacement:** A later grant writer must re-check recipient
   settings and confirmed channels before any contact DTO.
 - **Earliest safe production use:** After v95 is applied, verify.sql is run
@@ -336,8 +335,9 @@ OWNER against PostGIS.
   `pg_get_function_identity_arguments()` to type-only strings, with OID
   locked by `to_regprocedure(...) = oid`. Creation stays false.
   MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** admission writer/API after v99A
-  snapshot apply. Do not patch the deployed v95 hash helper in place.
+- **Still unresolved / later phases:** none for PostGIS rebind itself.
+  Matching writer/API cutover is owned by v99B. Do not patch the deployed
+  v95 hash helper in place.
 - **Future replacement:** none; this is a one-shot post-move rebind.
 - **Earliest safe production use:** already applied and verify-green.
 - **Preconditions:** v95/v96 already applied; PostGIS in `extensions`.
@@ -368,31 +368,48 @@ OWNER against PostGIS.
 
 ## 17. Match admission authority facts/hash/snapshot (v99A)
 
-- **Current state:** PHASE 6.7C.2C.1 / v99A. Forward-only, **unapplied**
-  migration adds three SECURITY DEFINER helpers only:
+- **Current state:** PHASE 6.7C.2C.1 / v99A. Forward-only, **applied**
+  (verify 12/12 PASS). Adds three SECURITY DEFINER helpers only:
   `match_request_admission_post_facts_v99`,
   `match_request_admission_facts_hash_v99`,
   `read_match_request_candidate_snapshot_v99`. Does **not** create
-  `create_match_request_v99`, does not switch the matching API, does not
-  enable creation, does not enable night policy. PostGIS types/functions
+  `create_match_request_v99` inside v99A itself. PostGIS types/functions
   use `extensions.` (post-v97). Facts include `admission_schema_version=99`
   plus `service_subtype` / `origin_country_code` / `origin_timezone` /
   `night_policy_version`. Snapshot is one SQL statement with one
   MATERIALIZED `posts` read; hash order is post id ascending. NULL country /
   timezone / policy values may be returned and hashed as-is; they must not
   be inferred. v95 five formal functions remain untouched.
-- **Still unresolved / later phases:** user apply + verify of v99A; then
-  `create_match_request_v99` + API cutover. That future writer must fail
-  closed for new requests when `service_subtype` is NULL (legacy_unknown),
-  or when `origin_country_code` / `origin_timezone` /
-  `night_policy_version` is NULL. Trusted country/IANA timezone resolution
-  is still unimplemented.
+- **Still unresolved / later phases:** night runtime; trusted country/IANA
+  timezone resolver; enabling creation after fail-closed writer is verified.
 - **Future replacement:** later writers must not CREATE OR REPLACE the
-  deployed v95 helpers in place.
-- **Earliest safe production use:** never claim live until user applies
-  v99A and a later writer/API phase ships. This phase is read-only foundation
-  only.
+  deployed v95/v99A helpers in place.
+- **Earliest safe production use:** snapshot helpers are applied; production
+  matching still gated by creation=false and v99B writer apply.
 - **Preconditions:** v95–v98 applied; PostGIS in `extensions`;
   creation=false; night RS enabled=false.
-- **Risk if wired early:** treating unapplied snapshot helpers as production
-  matching authority, or enabling creation before the fail-closed writer.
+- **Risk if wired early:** enabling creation before the fail-closed writer.
+
+## 18. Match request writer + API cutover (v99B)
+
+- **Current state:** PHASE 6.7C.2C.2 / v99B. Forward-only, **unapplied**
+  migration adds `create_match_request_v99` only (no tables/policies/
+  triggers/sequences). POST `/api/matching/requests` loads
+  `read_match_request_candidate_snapshot_v99` and writes via
+  `create_match_request_v99`. `inspect_match_request_v95` remains for
+  exact-retry / limit hints. Exact retry still precedes creation flag /
+  posts lock / v99 hash. Fresh requests fail closed when subtype /
+  country / timezone / night_policy_version are missing or illegal, and
+  when subtype×transport violates the frozen v98 truth table. Creation
+  flag and RS night seed remain false. No UI mount, list, resend, accept,
+  contract, or night runtime.
+- **Still unresolved / later phases:** user apply + verify of v99B; trusted
+  country/timezone publish path; night runtime; enabling creation.
+- **Future replacement:** later writers must not CREATE OR REPLACE v99B
+  in place without a new forward-only version.
+- **Earliest safe production use:** never claim live until user applies
+  v99B verify and a later phase enables creation with non-NULL authority
+  fields on posts.
+- **Preconditions:** v99A applied; creation=false; night RS enabled=false.
+- **Risk if wired early:** treating unapplied writer as production authority,
+  or enabling creation while posts still carry NULL country/timezone/policy.

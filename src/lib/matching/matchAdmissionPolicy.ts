@@ -30,6 +30,7 @@ import type { PostCategory } from "@/lib/types";
 import { oppositePostType } from "@/lib/route/matchHall";
 import { validateTransportCapability } from "@/lib/transport/transportPolicy";
 import type { TransportServiceLane } from "@/lib/transport/transportPolicy";
+import { assertPublishSubtypeTransportLegal } from "@/lib/safety/serviceSubtypePublish";
 
 export const MATCH_ROUTE_DEFAULT_MAX_EXTRA_DETOUR_KM = 30;
 export const MATCH_ROUTE_DEFAULT_MAX_EXTRA_DETOUR_RATIO = 0.5;
@@ -55,6 +56,7 @@ export type MatchAdmissionPost = {
   departure_time_window?: string | null;
   service_time_window?: string | null;
   transport_mode?: string | null;
+  service_subtype?: string | null;
   escort_seats?: number | null;
   max_companions?: number | null;
   count_small?: number | null;
@@ -69,6 +71,9 @@ export type MatchAdmissionPost = {
   destination_gps?: unknown;
   origin_gps_ewkb?: string | null;
   destination_gps_ewkb?: string | null;
+  origin_country_code?: string | null;
+  origin_timezone?: string | null;
+  night_policy_version?: number | null;
 };
 
 export const ADMISSION_FACTS_FIELDS = [
@@ -299,6 +304,47 @@ export function postSatisfiesOfficialTransport(post: MatchAdmissionPost): boolea
   return validateTransportCapability(input).ok;
 }
 
+/**
+ * v99 first-send authority: subtype/country/timezone/policy from snapshot.
+ * Reuses publish subtype×transport truth table. Does not infer defaults.
+ */
+export function postSatisfiesAdmissionAuthority(post: MatchAdmissionPost): boolean {
+  const category = post.category;
+  const subtype = post.service_subtype ?? null;
+  const country = post.origin_country_code;
+  const timezone = post.origin_timezone;
+  const policy = post.night_policy_version;
+
+  if (category === "buy" || category === "onsite" || category === "errand") {
+    if (subtype != null && subtype !== "") return false;
+    return true;
+  }
+  if (category !== "travel" && category !== "deliver") return false;
+
+  // Travel/Deliver NULL subtype = legacy_unknown — not eligible for new matching.
+  if (subtype == null || subtype === "") return false;
+  if (country == null || country === "" || !/^[A-Z]{2}$/.test(country)) {
+    return false;
+  }
+  if (timezone == null || timezone === "") return false;
+  if (policy == null || !Number.isSafeInteger(policy) || policy <= 0) {
+    return false;
+  }
+
+  if (post.post_type !== "demand" && post.post_type !== "provider") return false;
+  try {
+    assertPublishSubtypeTransportLegal({
+      category,
+      postType: post.post_type,
+      serviceSubtype: subtype as never,
+      transportMode: post.transport_mode,
+    });
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 export function pairHasCompatibleRolesAndCategory(
   left: MatchAdmissionPost,
   right: MatchAdmissionPost,
@@ -328,6 +374,12 @@ export function evaluatePairCompatibility(
   if (
     !postSatisfiesOfficialTransport(left) ||
     !postSatisfiesOfficialTransport(right)
+  ) {
+    return { ok: false, reasons: ["incompatible_pair"] };
+  }
+  if (
+    !postSatisfiesAdmissionAuthority(left) ||
+    !postSatisfiesAdmissionAuthority(right)
   ) {
     return { ok: false, reasons: ["incompatible_pair"] };
   }

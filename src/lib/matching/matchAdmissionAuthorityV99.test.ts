@@ -148,12 +148,7 @@ const checkOrders = [...verifySql.matchAll(/SELECT\s+(\d+)\s*(?::integer)?\s*(?:
   .filter((n) => n >= 100);
 assert.ok(checkOrders.length >= 12, `expected many verify checks, got ${checkOrders.length}`);
 
-// ── No writer / API wiring ──────────────────────────────────────────────────
-const route = read("src/app/api/matching/requests/route.ts");
-assert.equal(route.includes("read_match_request_candidate_snapshot_v99"), false);
-assert.equal(route.includes("create_match_request_v99"), false);
-assert.ok(route.includes("read_match_request_candidate_snapshot_v95"));
-
+// ── v99A package itself has no writer; API cutover is owned by v99B ──────────
 for (const path of FROZEN) {
   assert.equal(gitDiff(path), "", `frozen path dirty: ${path}`);
 }
@@ -161,10 +156,11 @@ for (const path of FROZEN) {
 const v99Files = readdirSync(join(repoRoot, "supabase/migrations"))
   .filter((name) => name.includes("v99"))
   .sort();
-assert.deepEqual(v99Files, [
-  "20260916000001_match_admission_authority_v99.sql",
-  "20260916000001_match_admission_authority_v99.verify.sql",
-]);
+assert.ok(v99Files.includes("20260916000001_match_admission_authority_v99.sql"));
+assert.ok(v99Files.includes("20260916000001_match_admission_authority_v99.verify.sql"));
+assert.ok(v99Files.includes("20260916000002_match_request_writer_v99b.sql"));
+assert.ok(v99Files.includes("20260916000002_match_request_writer_v99b.verify.sql"));
+assert.equal(v99Files.some((n) => n.includes("v100")), false);
 
 // ── Pure hash helper semantics ──────────────────────────────────────────────
 const LEFT_ID = "11111111-1111-4111-8111-111111111111";

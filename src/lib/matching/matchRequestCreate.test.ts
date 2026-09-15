@@ -103,6 +103,7 @@ const demandPost = {
   departure_date: "2026-09-12",
   departure_time_window: "14:00-14:15",
   transport_mode: "car",
+  service_subtype: "passenger",
   escort_seats: 0,
   max_companions: 1,
   count_small: 0,
@@ -114,6 +115,9 @@ const demandPost = {
   waypoints: [] as string[],
   origin_gps_ewkb: "0101000020e6100000",
   destination_gps_ewkb: "0101000020e6100001",
+  origin_country_code: "RS",
+  origin_timezone: "Europe/Belgrade",
+  night_policy_version: 1,
 };
 const providerPost = {
   ...demandPost,
@@ -588,6 +592,28 @@ async function main() {
   assert.equal(
     evaluateMatchRequestEligibility({
       actorUserId: ACTOR,
+      initiator: { ...demandPost, service_subtype: null },
+      counterpart: providerPost,
+      route: { ok: true, score: 0.9, extraDetourKms: 2, baselineKms: 12 },
+      thresholds: { maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 },
+      proposal: validBody.proposal,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    evaluateMatchRequestEligibility({
+      actorUserId: ACTOR,
+      initiator: { ...demandPost, origin_country_code: null },
+      counterpart: providerPost,
+      route: { ok: true, score: 0.9, extraDetourKms: 2, baselineKms: 12 },
+      thresholds: { maxExtraDetourKm: 30, maxExtraDetourRatio: 0.5 },
+      proposal: validBody.proposal,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    evaluateMatchRequestEligibility({
+      actorUserId: ACTOR,
       initiator: demandPost,
       counterpart: { ...providerPost, departure_date: "2026-09-13" },
       route: { ok: true, score: 0.9, extraDetourKms: 2, baselineKms: 12 },
@@ -1054,8 +1080,11 @@ async function main() {
   assert.equal(httpStatusForMatchRequestError(MATCH_REQUEST_ERROR.openLimit), 429);
 
   const route = readFileSync(join(repoRoot, "src/app/api/matching/requests/route.ts"), "utf8");
-  assert.ok(route.includes("create_match_request_v95"));
-  assert.ok(route.includes("read_match_request_candidate_snapshot_v95"));
+  assert.ok(route.includes("create_match_request_v99"));
+  assert.ok(route.includes("read_match_request_candidate_snapshot_v99"));
+  assert.ok(route.includes("inspect_match_request_v95"));
+  assert.equal(route.includes("create_match_request_v95"), false);
+  assert.equal(route.includes("read_match_request_candidate_snapshot_v95"), false);
   assert.ok(route.includes("p_idempotency_payload_hash"));
   assert.equal(route.includes("p_proposal_digest"), false);
   assert.equal(route.includes("p_quote_digest"), false);

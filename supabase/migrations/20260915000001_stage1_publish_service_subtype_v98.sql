@@ -57,59 +57,8 @@ BEGIN
 END;
 $$;
 
--- Expand posts.max_companions CHECK so Stage-1 empty semantics may write 0.
--- Evidence (posts_v2_migration.sql): null OR (1..4). Writing 0 requires 0..4.
-DO $$
-DECLARE
-  v_conname text;
-  v_def text;
-  v_hits integer;
-BEGIN
-  SELECT count(*) INTO v_hits
-  FROM pg_catalog.pg_constraint c
-  JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
-  JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-  WHERE n.nspname = 'public'
-    AND t.relname = 'posts'
-    AND c.contype = 'c'
-    AND pg_catalog.pg_get_constraintdef(c.oid) ~* 'max_companions';
-
-  IF v_hits > 1 THEN
-    RAISE EXCEPTION 'multiple posts CHECK constraints reference max_companions — refuse v98';
-  END IF;
-
-  IF v_hits = 1 THEN
-    SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid)
-    INTO v_conname, v_def
-    FROM pg_catalog.pg_constraint c
-    JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
-    JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'posts'
-      AND c.contype = 'c'
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* 'max_companions';
-
-    -- Accept historical posts_v2 fingerprint (1..4) or already-expanded (0..4).
-    IF v_def !~* 'max_companions'
-       OR v_def !~* 'NULL'
-       OR (v_def !~* '>=\s*1' AND v_def !~* '>=\s*0')
-       OR v_def !~* '<=\s*4' THEN
-      RAISE EXCEPTION 'posts max_companions CHECK definition drift — refuse v98: %', v_def;
-    END IF;
-
-    EXECUTE format('ALTER TABLE public.posts DROP CONSTRAINT %I', v_conname);
-  END IF;
-
-  ALTER TABLE public.posts
-    DROP CONSTRAINT IF EXISTS posts_max_companions_check;
-
-  ALTER TABLE public.posts
-    ADD CONSTRAINT posts_max_companions_check CHECK (
-      max_companions IS NULL
-      OR (max_companions >= 0 AND max_companions <= 4)
-    );
-END;
-$$;
+-- posts.max_companions CHECK stays NULL OR 1..4 (posts_v2_migration.sql).
+-- v98 must NOT drop/recreate that constraint; empty semantics write NULL.
 
 CREATE FUNCTION public.insert_stage1_post_v98(
   p_user_id           uuid,
@@ -142,7 +91,7 @@ DECLARE
   v_count_large integer;
   v_count_xlarge integer;
   v_escort_seats integer;
-  v_max_companions integer;
+  v_max_companions integer; -- nullable: NULL OR 1..4 after normalize
   v_people integer;
   -- PHASE 6.7C.2B.2 markers (verify locks these branches; do not remove):
   -- v98_people_travel_car_only
@@ -295,20 +244,29 @@ BEGIN
     v_count_large := COALESCE((p_post_payload->>'count_large')::integer, 0);
     v_count_xlarge := COALESCE((p_post_payload->>'count_xlarge')::integer, 0);
     v_escort_seats := COALESCE((p_post_payload->>'escort_seats')::integer, 0);
-    v_max_companions := COALESCE(
-      NULLIF(p_post_payload->>'max_companions', '')::integer,
-      v_escort_seats
-    );
+    -- Form may send 0 for hidden controls; treat missing/empty/0 as unset (NULL).
+    IF NOT (p_post_payload ? 'max_companions')
+       OR jsonb_typeof(p_post_payload->'max_companions') = 'null'
+       OR NULLIF(btrim(COALESCE(p_post_payload->>'max_companions', '')), '') IS NULL
+       OR NULLIF(btrim(p_post_payload->>'max_companions'), '0') IS NULL THEN
+      v_max_companions := NULL;
+    ELSE
+      v_max_companions := (p_post_payload->>'max_companions')::integer;
+    END IF;
   EXCEPTION
     WHEN invalid_text_representation OR numeric_value_out_of_range THEN
       RAISE EXCEPTION 'error.invalid_payload_numeric_values';
   END;
 
   IF v_count_small < 0 OR v_count_medium < 0 OR v_count_large < 0 OR v_count_xlarge < 0
-     OR v_escort_seats < 0 OR v_max_companions < 0
+     OR v_escort_seats < 0
      OR v_count_small > 2147483647 OR v_count_medium > 2147483647
      OR v_count_large > 2147483647 OR v_count_xlarge > 2147483647
-     OR v_escort_seats > 2147483647 OR v_max_companions > 2147483647 THEN
+     OR v_escort_seats > 2147483647
+     OR (
+       v_max_companions IS NOT NULL
+       AND (v_max_companions < 0 OR v_max_companions > 2147483647)
+     ) THEN
     RAISE EXCEPTION 'error.invalid_payload_numeric_values';
   END IF;
 
@@ -337,12 +295,12 @@ BEGIN
       v_count_medium := 0;
       v_count_large := 0;
       v_count_xlarge := 0;
-      IF v_max_companions > 4 OR v_escort_seats > 4 THEN
+      IF COALESCE(v_max_companions, 0) > 4 OR v_escort_seats > 4 THEN
         RAISE EXCEPTION 'error.invalid_payload_numeric_values';
       END IF;
-      v_people := GREATEST(1, LEAST(4, COALESCE(NULLIF(v_max_companions, 0), NULLIF(v_escort_seats, 0), 1)));
+      v_people := GREATEST(1, LEAST(4, COALESCE(v_max_companions, NULLIF(v_escort_seats, 0), 1)));
       v_escort_seats := v_people;
-      v_max_companions := v_people;
+      v_max_companions := v_people; -- 1..4
       IF v_share_raw = 'private' THEN
         v_share_mode := 'private';
       ELSE
@@ -350,15 +308,15 @@ BEGIN
       END IF;
     ELSIF v_service_subtype = 'small_item_only' THEN
       v_escort_seats := 0;
-      v_max_companions := 0;
+      v_max_companions := NULL;
       v_share_mode := NULL;
     ELSIF v_service_subtype = 'passenger_with_small_item' THEN
-      IF v_max_companions > 4 OR v_escort_seats > 4 THEN
+      IF COALESCE(v_max_companions, 0) > 4 OR v_escort_seats > 4 THEN
         RAISE EXCEPTION 'error.invalid_payload_numeric_values';
       END IF;
-      v_people := GREATEST(1, LEAST(4, COALESCE(NULLIF(v_max_companions, 0), NULLIF(v_escort_seats, 0), 1)));
+      v_people := GREATEST(1, LEAST(4, COALESCE(v_max_companions, NULLIF(v_escort_seats, 0), 1)));
       v_escort_seats := v_people;
-      v_max_companions := v_people;
+      v_max_companions := v_people; -- 1..4
       IF v_share_raw = 'private' THEN
         v_share_mode := 'private';
       ELSE
@@ -371,11 +329,11 @@ BEGIN
     END IF;
     IF v_service_subtype = 'cargo_only' THEN
       v_escort_seats := 0;
-      v_max_companions := 0;
+      v_max_companions := NULL;
       v_share_mode := NULL;
     ELSIF v_service_subtype = 'cargo_with_escort' THEN
       -- v98_normalize_cargo_escort_demand_provider
-      v_max_companions := 0;
+      v_max_companions := NULL;
       IF v_post_type = 'demand' THEN
         v_escort_seats := 1;
         IF v_share_raw = 'private' THEN
@@ -395,7 +353,7 @@ BEGIN
     v_count_large := 0;
     v_count_xlarge := 0;
     v_escort_seats := 0;
-    v_max_companions := 0;
+    v_max_companions := NULL;
     v_share_mode := NULL;
     v_delivery_mode := NULL;
   END IF;
@@ -466,17 +424,24 @@ REVOKE ALL ON FUNCTION public.insert_stage1_post_v98(
 ) FROM service_role;
 
 -- Expand posts.transport_mode CHECK so target modes persist.
--- Evidence: supabase/posts_init.sql inline CHECK (V1 modes incl. van).
--- Prefer exact name posts_transport_mode_check; otherwise uniquely match
--- the posts_init V1 fingerprint. Never ILIKE-delete unrelated CHECKs.
+-- Evidence (frozen formal catalog): supabase/posts_init.sql V1 inline CHECK
+-- (walking/scooter/bicycle/motorbike/subway/bus/train/flight/car/van).
+-- Exact name posts_transport_mode_check only — no token-guess fallback.
 DO $$
 DECLARE
-  v_conname text;
   v_def text;
-  v_hits integer;
+  -- Frozen posts_init V1 definition as rendered by pg_get_constraintdef
+  -- (whitespace-normalized compare only).
+  v_expected text :=
+    'CHECK (((transport_mode IS NULL) OR (transport_mode = ANY '
+    || '(ARRAY[''walking''::text, ''scooter''::text, ''bicycle''::text, '
+    || '''motorbike''::text, ''subway''::text, ''bus''::text, ''train''::text, '
+    || '''flight''::text, ''car''::text, ''van''::text]))))';
+  v_norm text;
+  v_exp_norm text;
 BEGIN
-  SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid)
-  INTO v_conname, v_def
+  SELECT pg_catalog.pg_get_constraintdef(c.oid)
+  INTO v_def
   FROM pg_catalog.pg_constraint c
   JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
   JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
@@ -485,50 +450,21 @@ BEGIN
     AND c.contype = 'c'
     AND c.conname = 'posts_transport_mode_check';
 
-  IF v_conname IS NOT NULL THEN
-    -- Accept V1 posts_init fingerprint OR prior expanded v98 allowlist.
-    IF v_def !~* 'transport_mode'
-       OR v_def !~* '''van'''
-       OR (
-         v_def !~* '''walking'''
-         AND v_def !~* '''cargo_van'''
-       ) THEN
-      RAISE EXCEPTION 'posts_transport_mode_check definition drift — refuse v98: %', v_def;
-    END IF;
-  ELSE
-    SELECT count(*) INTO v_hits
-    FROM pg_catalog.pg_constraint c
-    JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
-    JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'posts'
-      AND c.contype = 'c'
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* 'transport_mode'
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* '''walking'''
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* '''van'''
-      AND pg_catalog.pg_get_constraintdef(c.oid) !~* '''cargo_van''';
-
-    IF v_hits <> 1 THEN
-      RAISE EXCEPTION
-        'posts transport_mode CHECK not uniquely identifiable (hits=%) — refuse v98',
-        v_hits;
-    END IF;
-
-    SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid)
-    INTO v_conname, v_def
-    FROM pg_catalog.pg_constraint c
-    JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
-    JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'posts'
-      AND c.contype = 'c'
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* 'transport_mode'
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* '''walking'''
-      AND pg_catalog.pg_get_constraintdef(c.oid) ~* '''van'''
-      AND pg_catalog.pg_get_constraintdef(c.oid) !~* '''cargo_van''';
+  IF v_def IS NULL THEN
+    RAISE EXCEPTION 'posts_transport_mode_check missing — refuse v98';
   END IF;
 
-  EXECUTE format('ALTER TABLE public.posts DROP CONSTRAINT %I', v_conname);
+  v_norm := btrim(regexp_replace(v_def, '\s+', ' ', 'g'));
+  v_exp_norm := btrim(regexp_replace(v_expected, '\s+', ' ', 'g'));
+
+  IF v_norm IS DISTINCT FROM v_exp_norm THEN
+    RAISE EXCEPTION
+      'posts_transport_mode_check definition drift — refuse v98: %',
+      v_def;
+  END IF;
+
+  ALTER TABLE public.posts
+    DROP CONSTRAINT posts_transport_mode_check;
 
   ALTER TABLE public.posts
     ADD CONSTRAINT posts_transport_mode_check CHECK (

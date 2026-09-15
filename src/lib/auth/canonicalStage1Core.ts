@@ -43,6 +43,7 @@ export type CanonicalStage1Payload = {
   count_large: number;
   count_xlarge: number;
   escort_seats: number;
+  max_companions: number | null;
   bump_fee_minor: number;
   currency: string;
   locale: "zh" | "en" | "sr";
@@ -157,10 +158,13 @@ export function normalizeCanonicalStage1(
   let count_large = requireSafeNonNegInt(raw.count_large, "count_large");
   let count_xlarge = requireSafeNonNegInt(raw.count_xlarge, "count_xlarge");
   let escort_seats = requireSafeNonNegInt(raw.escort_seats, "escort_seats");
-  const max_companions = requireSafeNonNegInt(
-    raw.max_companions ?? escort_seats,
-    "max_companions",
-  );
+  // Form may use 0 for hidden controls; canonical write path uses NULL.
+  const maxCompanionsRaw =
+    raw.max_companions === undefined || raw.max_companions === null
+      ? escort_seats
+      : requireSafeNonNegInt(raw.max_companions, "max_companions");
+  let max_companions: number | null =
+    maxCompanionsRaw === 0 ? null : maxCompanionsRaw;
 
   const time_buffer = requireSafeNonNegInt(raw.time_buffer, "time_buffer");
   if (time_buffer > 180) {
@@ -194,7 +198,7 @@ export function normalizeCanonicalStage1(
   if (
     (service_subtype === "passenger" ||
       service_subtype === "passenger_with_small_item") &&
-    (escort_seats > 4 || max_companions > 4)
+    ((max_companions != null && max_companions > 4) || escort_seats > 4)
   ) {
     throw new CanonicalStage1Error("error.invalid_payload_numeric_values");
   }
@@ -225,7 +229,7 @@ export function normalizeCanonicalStage1(
     postType: post_type as "demand" | "provider",
     serviceSubtype: service_subtype,
     escort_seats,
-    max_companions,
+    max_companions: max_companions ?? 0,
     share_mode,
     count_small,
     count_medium,
@@ -239,6 +243,15 @@ export function normalizeCanonicalStage1(
   count_large = cleaned.count_large;
   count_xlarge = cleaned.count_xlarge;
   share_mode = cleaned.share_mode;
+  // DB CHECK is NULL OR 1..4 — never write 0.
+  if (
+    service_subtype === "passenger" ||
+    service_subtype === "passenger_with_small_item"
+  ) {
+    max_companions = cleaned.max_companions;
+  } else {
+    max_companions = null;
+  }
 
   try {
     assertPublishSubtypeTransportLegal({
@@ -273,6 +286,7 @@ export function normalizeCanonicalStage1(
     count_large,
     count_xlarge,
     escort_seats,
+    max_companions,
     bump_fee_minor,
     currency: String(raw.currency ?? "EUR").trim().toUpperCase() || "EUR",
     locale,
@@ -325,6 +339,7 @@ export function hashCanonicalStage1(
     sm: payload.share_mode,
     dm: payload.delivery_mode,
     es: payload.escort_seats,
+    mc: payload.max_companions,
     tm: payload.transport_mode,
     sst: payload.service_subtype,
     wp: payload.waypoints.map((w) => w.toLowerCase()),
@@ -367,6 +382,7 @@ export function toRpcStage1Payload(
     count_large: payload.count_large,
     count_xlarge: payload.count_xlarge,
     escort_seats: payload.escort_seats,
+    max_companions: payload.max_companions,
     bump_fee_minor: payload.bump_fee_minor,
     currency: payload.currency,
     locale: payload.locale,

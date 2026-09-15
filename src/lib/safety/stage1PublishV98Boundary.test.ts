@@ -10,7 +10,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CanonicalStage1Error,
+  hashCanonicalStage1,
   normalizeCanonicalStage1,
+  toRpcStage1Payload,
 } from "@/lib/auth/canonicalStage1Core";
 import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
 import { buildPayloadFromForm } from "@/lib/post-form/buildPayload";
@@ -106,8 +108,30 @@ assert.ok(
 assert.ok(postsInit.includes("transport_mode text"));
 assert.ok(postsInit.includes("'van'"));
 assert.ok(migration.includes("posts.max_companions missing or not nullable integer"));
-assert.ok(migration.includes("posts_max_companions_check"));
-assert.ok(migration.includes("max_companions >= 0 AND max_companions <= 4"));
+assert.equal(migration.includes("posts_max_companions_check"), false);
+assert.equal(migration.includes("max_companions >= 0 AND max_companions <= 4"), false);
+assert.equal(
+  /DROP CONSTRAINT(?:\s+IF EXISTS)?\s+posts_max_companions_check/i.test(migration),
+  false,
+);
+assert.equal(
+  /DROP CONSTRAINT %I[\s\S]{0,200}max_companions/i.test(migration),
+  false,
+);
+assert.ok(migration.includes("v_max_companions := NULL"));
+assert.ok(migration.includes("v_max_companions := v_people"));
+
+// Frozen posts_init V1 transport CHECK definition (exact-name replace only)
+const frozenTransportCheckDef =
+  "CHECK (((transport_mode IS NULL) OR (transport_mode = ANY " +
+  "(ARRAY['walking'::text, 'scooter'::text, 'bicycle'::text, " +
+  "'motorbike'::text, 'subway'::text, 'bus'::text, 'train'::text, " +
+  "'flight'::text, 'car'::text, 'van'::text]))))";
+assert.ok(migration.includes("''walking''::text"));
+assert.ok(migration.includes("posts_transport_mode_check missing"));
+assert.ok(migration.includes("DROP CONSTRAINT posts_transport_mode_check"));
+assert.equal(migration.includes("not uniquely identifiable"), false);
+assert.equal(/~[*] 'transport_mode'/.test(migration), false);
 
 // ── INSERT final field mapping: max_companions uses v_max_companions ─────────
 {
@@ -121,6 +145,45 @@ assert.ok(migration.includes("max_companions >= 0 AND max_companions <= 4"));
   assert.equal(values[deliveryIdx], "v_delivery_mode");
   const shareIdx = columns.indexOf("share_mode");
   assert.equal(values[shareIdx], "v_share_mode");
+}
+
+// Executable max_companions write truth: passenger/PWSI → 1..4; else NULL
+{
+  const pIdx = insertBody.lastIndexOf("v98_normalize_passenger_zero_counts");
+  const pBlock = insertBody.slice(pIdx, pIdx + 700);
+  assert.ok(pBlock.includes("v_max_companions := v_people"));
+  assert.equal(pBlock.includes("v_max_companions := 0"), false);
+
+  const pwsiIdx = insertBody.lastIndexOf(
+    "v_service_subtype = 'passenger_with_small_item'",
+  );
+  const pwsiBlock = insertBody.slice(pwsiIdx, pwsiIdx + 500);
+  assert.ok(pwsiBlock.includes("v_max_companions := v_people"));
+
+  const smallIdx = insertBody.lastIndexOf(
+    "v_service_subtype = 'small_item_only'",
+  );
+  const smallBlock = insertBody.slice(smallIdx, smallIdx + 250);
+  assert.ok(smallBlock.includes("v_max_companions := NULL"));
+
+  const cargoOnly = insertBody.slice(
+    insertBody.lastIndexOf("v_service_subtype = 'cargo_only'"),
+    insertBody.lastIndexOf("v98_normalize_cargo_escort_demand_provider"),
+  );
+  assert.ok(cargoOnly.includes("v_max_companions := NULL"));
+
+  const escortNorm = insertBody.slice(
+    insertBody.lastIndexOf("v98_normalize_cargo_escort_demand_provider"),
+    insertBody.lastIndexOf("Buy/Onsite/Errand"),
+  );
+  assert.ok(escortNorm.includes("v_max_companions := NULL"));
+  assert.equal(escortNorm.includes("v_max_companions := 0"), false);
+
+  const buyBlock = insertBody.slice(
+    insertBody.lastIndexOf("Buy/Onsite/Errand"),
+    insertBody.lastIndexOf("INSERT INTO public.posts"),
+  );
+  assert.ok(buyBlock.includes("v_max_companions := NULL"));
 }
 
 // Executable branch: delivery_mode only deliver+demand
@@ -169,7 +232,7 @@ assert.ok(migration.includes("max_companions >= 0 AND max_companions <= 4"));
   assert.ok(block.includes("v_post_type = 'demand'"));
   assert.ok(block.includes("v_escort_seats := 1"));
   assert.ok(block.includes("v_escort_seats := 0"));
-  assert.ok(block.includes("v_max_companions := 0"));
+  assert.ok(block.includes("v_max_companions := NULL"));
   assert.ok(block.includes("v_share_mode := NULL"));
 }
 
@@ -183,7 +246,7 @@ assert.ok(migration.includes("max_companions >= 0 AND max_companions <= 4"));
   assert.ok(block.includes("v_max_companions := v_people"));
 }
 
-// ── Transport CHECK: no broad ILIKE delete ──────────────────────────────────
+// ── Transport CHECK: exact name + full frozen definition only ───────────────
 {
   const checkDo = migration.slice(
     migration.indexOf("Expand posts.transport_mode CHECK"),
@@ -191,10 +254,18 @@ assert.ok(migration.includes("max_companions >= 0 AND max_companions <= 4"));
   );
   assert.equal(checkDo.includes("ILIKE '%transport_mode%'"), false);
   assert.ok(checkDo.includes("c.conname = 'posts_transport_mode_check'"));
+  assert.ok(checkDo.includes("DROP CONSTRAINT posts_transport_mode_check"));
   assert.ok(checkDo.includes("definition drift"));
-  assert.ok(checkDo.includes("not uniquely identifiable"));
-  // Other CHECKs that mention transport_mode must not be mass-deleted
-  assert.equal(/FOR r IN[\s\S]*ILIKE '%transport_mode%'/.test(migration), false);
+  assert.ok(checkDo.includes("posts_transport_mode_check missing"));
+  assert.equal(checkDo.includes("not uniquely identifiable"), false);
+  assert.equal(checkDo.includes("cargo_van''"), false); // no token fallback search
+  assert.equal(/FOR r IN[\s\S]*transport_mode/.test(checkDo), false);
+  // Other CHECKs that mention transport_mode must not be delete targets
+  assert.equal(checkDo.includes("EXECUTE format('ALTER TABLE public.posts DROP CONSTRAINT"), false);
+  assert.ok(
+    checkDo.includes(frozenTransportCheckDef.replace(/'/g, "''")) ||
+      checkDo.includes("''walking''::text, ''scooter''::text"),
+  );
 }
 
 // ── Canonical delivery_mode parity ──────────────────────────────────────────
@@ -224,6 +295,31 @@ const travelBase: Record<string, unknown> = {
 };
 
 assert.equal(normalizeCanonicalStage1(travelBase).delivery_mode, null);
+assert.equal(normalizeCanonicalStage1(travelBase).max_companions, 1);
+assert.equal(
+  normalizeCanonicalStage1({
+    ...travelBase,
+    service_subtype: "small_item_only",
+    transport_mode: "walking",
+    max_companions: 0,
+    escort_seats: 0,
+    share_mode: null,
+  }).max_companions,
+  null,
+);
+assert.equal(
+  normalizeCanonicalStage1({
+    ...travelBase,
+    category: "deliver",
+    service_subtype: "cargo_only",
+    transport_mode: "cargo_van",
+    delivery_mode: "door",
+    share_mode: null,
+    escort_seats: 0,
+    max_companions: 0,
+  }).max_companions,
+  null,
+);
 assert.equal(
   normalizeCanonicalStage1({
     ...travelBase,
@@ -428,12 +524,36 @@ assert.throws(
   }
 }
 
+// Canonical hash uses final NULL max_companions (not form 0)
+{
+  const withZero = normalizeCanonicalStage1({
+    ...travelBase,
+    category: "deliver",
+    service_subtype: "cargo_only",
+    transport_mode: "cargo_van",
+    delivery_mode: "spot",
+    share_mode: null,
+    escort_seats: 0,
+    max_companions: 0,
+  });
+  assert.equal(withZero.max_companions, null);
+  const h1 = hashCanonicalStage1(withZero, 10, 100);
+  const h2 = hashCanonicalStage1({ ...withZero, max_companions: null }, 10, 100);
+  assert.equal(h1, h2);
+  assert.equal(toRpcStage1Payload(withZero, 100).max_companions, null);
+}
+
 // ── Verify + static proofs ──────────────────────────────────────────────────
 assert.ok(verifySql.includes("insert_writes_max_companions"));
 assert.ok(verifySql.includes("delivery_mode_authority"));
 assert.ok(verifySql.includes("insert_v98 max_companions + delivery"));
+assert.ok(verifySql.includes("posts.max_companions CHECK remains 1..4"));
+assert.ok(verifySql.includes("posts_transport_mode_check exact name"));
+assert.ok(verifySql.includes(">=\\s*1"));
+assert.ok(verifySql.includes("!~* '>=\\s*0'"));
 assert.equal(/SELECT\s+p\.prosrc\b/i.test(verifySql), false);
 assert.equal(migration.includes("ILIKE '%transport_mode%'"), false);
+assert.equal(migration.includes("posts_max_companions_check"), false);
 
 for (const src of [
   read("src/app/api/posts/trusted-publish/route.ts"),

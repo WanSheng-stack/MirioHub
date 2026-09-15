@@ -68,7 +68,9 @@ fn AS (
     (strpos(p.prosrc, 'escort_seats, max_companions, bump_fee') > 0
       AND strpos(p.prosrc, 'v_escort_seats,') > 0
       AND strpos(p.prosrc, 'v_max_companions') > 0
-      AND strpos(p.prosrc, 'v_delivery_mode') > 0) AS insert_writes_max_companions,
+      AND strpos(p.prosrc, 'v_delivery_mode') > 0
+      AND strpos(p.prosrc, 'v_max_companions := v_people') > 0
+      AND strpos(p.prosrc, 'v_max_companions := NULL') > 0) AS insert_writes_max_companions,
     (strpos(p.prosrc, 'error.invalid_delivery_mode') > 0
       AND strpos(p.prosrc, 'v_category = ''deliver'' AND v_post_type = ''demand''') > 0
       AND strpos(p.prosrc, 'v_delivery_mode := NULL') > 0) AS delivery_mode_authority
@@ -87,6 +89,26 @@ fn AS (
       'create_match_request_v95',
       'nearby_local_posts'
     )
+),
+max_companions_check AS (
+  SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid) AS def
+  FROM pg_catalog.pg_constraint c
+  JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'public'
+    AND t.relname = 'posts'
+    AND c.contype = 'c'
+    AND pg_catalog.pg_get_constraintdef(c.oid) ~* 'max_companions'
+),
+transport_mode_check AS (
+  SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid) AS def
+  FROM pg_catalog.pg_constraint c
+  JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+  WHERE n.nspname = 'public'
+    AND t.relname = 'posts'
+    AND c.contype = 'c'
+    AND c.conname = 'posts_transport_mode_check'
 ),
 exact AS (
   SELECT *
@@ -283,7 +305,34 @@ checks AS (
       'max_companions_col='||COALESCE(insert_writes_max_companions::text, 'null'),
       'delivery_authority='||COALESCE(delivery_mode_authority::text, 'null'))
       FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
-    'INSERT lists max_companions via v_max_companions — delivery_mode only deliver+demand'
+    'INSERT max_companions via v_max_companions (1..4 or NULL) — delivery_mode only deliver+demand'
+  UNION ALL SELECT 106, 'column', 'posts.max_companions CHECK remains 1..4',
+    CASE WHEN (
+      SELECT count(*) FROM max_companions_check
+    ) = 1
+    AND EXISTS (
+      SELECT 1 FROM max_companions_check m
+      WHERE m.def ~* 'max_companions'
+        AND m.def ~* 'NULL'
+        AND m.def ~* '>=\s*1'
+        AND m.def ~* '<=\s*4'
+        AND m.def !~* '>=\s*0'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT coalesce(string_agg(conname||':'||def, ' | '), 'missing')
+      FROM max_companions_check),
+    'exactly one max_companions CHECK: NULL OR 1..4 (not 0..4)'
+  UNION ALL SELECT 107, 'column', 'posts_transport_mode_check exact name',
+    CASE WHEN (
+      SELECT count(*) FROM transport_mode_check
+    ) = 1
+    AND EXISTS (
+      SELECT 1 FROM transport_mode_check t
+      WHERE t.conname = 'posts_transport_mode_check'
+        AND t.def ~* 'cargo_van'
+        AND t.def ~* 'walking'
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT coalesce(string_agg(conname, ','), 'missing') FROM transport_mode_check),
+    'exact posts_transport_mode_check present with expanded allowlist'
   UNION ALL SELECT 110, 'rpc', 'publish_v98 identity',
     CASE WHEN EXISTS (
       SELECT 1 FROM exact_resolved r

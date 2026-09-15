@@ -82,6 +82,7 @@ function gitDiffNames(baseline: string, paths: string[]): string {
 const baseRaw: Record<string, unknown> = {
   post_type: "demand",
   category: "travel",
+  service_subtype: "passenger",
   title: "Ride",
   origin_address: "Belgrade Center",
   destination_address: "Novi Sad",
@@ -96,6 +97,7 @@ const baseRaw: Record<string, unknown> = {
   count_large: 0,
   count_xlarge: 0,
   escort_seats: 1,
+  max_companions: 1,
   bump_fee: 0,
   currency: "EUR",
   locale: "en",
@@ -526,16 +528,27 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
 
 // TEST AB / AC / AD — hash binds transport and title, stable
 {
-  const a = normalizeCanonicalStage1(baseRaw);
-  const b = normalizeCanonicalStage1({ ...baseRaw, transport_mode: "van" });
-  const c = normalizeCanonicalStage1({ ...baseRaw, title: "Other" });
+  const travelItem: Record<string, unknown> = {
+    ...baseRaw,
+    service_subtype: "small_item_only",
+    escort_seats: 0,
+    max_companions: 0,
+    share_mode: null,
+  };
+  const a = normalizeCanonicalStage1({ ...travelItem, transport_mode: "walking" });
+  const b = normalizeCanonicalStage1({ ...travelItem, transport_mode: "bicycle" });
+  const c = normalizeCanonicalStage1({
+    ...travelItem,
+    transport_mode: "walking",
+    title: "Other",
+  });
   const fee = computeServerFeeMinor(40, a);
   const ha = hashCanonicalStage1(a, 40, fee);
   assert.notEqual(ha, hashCanonicalStage1(b, 40, computeServerFeeMinor(40, b)));
   assert.notEqual(ha, hashCanonicalStage1(c, 40, computeServerFeeMinor(40, c)));
   assert.equal(ha, hashCanonicalStage1(a, 40, fee));
-  const blank = normalizeCanonicalStage1({ ...baseRaw, transport_mode: "" });
-  const missing = { ...baseRaw };
+  const blank = normalizeCanonicalStage1({ ...travelItem, transport_mode: "" });
+  const missing = { ...travelItem };
   delete missing.transport_mode;
   assert.equal(
     hashCanonicalStage1(blank, 40, computeServerFeeMinor(40, blank)),
@@ -555,6 +568,12 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
   assert.ok(passkeySrc.includes("buildCanonicalStage1PublishContext"));
   assert.ok(trustedSrc.includes("buildCanonicalStage1PublishContext"));
   assert.ok(shadowSrc.includes("buildCanonicalStage1PublishContext"));
+  assert.ok(passkeySrc.includes("commit_phase3_business_idempotent_v98"));
+  assert.ok(trustedSrc.includes("publish_active_post_idempotent_v98"));
+  assert.ok(shadowSrc.includes("create_shadow_draft_idempotent_v98"));
+  assert.equal(passkeySrc.includes("commit_phase3_business_idempotent_v86"), false);
+  assert.equal(trustedSrc.includes("publish_active_post_idempotent_v86"), false);
+  assert.equal(shadowSrc.includes("create_shadow_draft_idempotent_v86"), false);
 }
 
 // TEST AF / AG / AH / AI — migration signature, write, allowlist, ACL

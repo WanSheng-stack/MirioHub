@@ -247,7 +247,7 @@ export async function POST(request: Request) {
         : dbKey!.credential_id;
 
     const { data: txData, error: txErr } = await supabase.rpc(
-      'commit_phase3_business_idempotent_v86',
+      'commit_phase3_business_idempotent_v98',
       {
         p_user_id: current_uid,
         p_challenge_id: challengeId,

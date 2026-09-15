@@ -15,6 +15,13 @@ import {
   parseV1TransportMode,
   type ValidV1TransportMode,
 } from "@/lib/auth/v1TransportMode";
+import type { ServiceSubtype } from "@/lib/safety/nightServicePolicy";
+import {
+  assertNoBrowserNightAuthorityFields,
+  assertPublishSubtypeTransportLegal,
+  cleanupFieldsForServiceSubtype,
+  parsePublishServiceSubtype,
+} from "@/lib/safety/serviceSubtypePublish";
 
 export const SERVER_MAX_BUMP_FEE_MINOR = 5000;
 
@@ -40,6 +47,7 @@ export type CanonicalStage1Payload = {
   currency: string;
   locale: "zh" | "en" | "sr";
   transport_mode: ValidV1TransportMode | null;
+  service_subtype: ServiceSubtype | null;
 };
 
 export type CanonicalStage1PublishContext = {
@@ -121,9 +129,22 @@ export function resolveBumpFeeMinor(raw: Record<string, unknown>): number {
   return 0;
 }
 
+function rethrowPublishKey(err: unknown): never {
+  if (err instanceof Error && err.message.startsWith("error.")) {
+    throw new CanonicalStage1Error(err.message);
+  }
+  throw err;
+}
+
 export function normalizeCanonicalStage1(
   raw: Record<string, unknown>,
 ): CanonicalStage1Payload {
+  try {
+    assertNoBrowserNightAuthorityFields(raw);
+  } catch (err) {
+    rethrowPublishKey(err);
+  }
+
   const post_type = String(raw.post_type ?? "").trim().toLowerCase();
   const category = String(raw.category ?? "").trim().toLowerCase();
   if (!POST_TYPES.has(post_type) || !CATEGORIES.has(category)) {
@@ -131,11 +152,15 @@ export function normalizeCanonicalStage1(
   }
 
   const bump_fee_minor = resolveBumpFeeMinor(raw);
-  const count_small = requireSafeNonNegInt(raw.count_small, "count_small");
-  const count_medium = requireSafeNonNegInt(raw.count_medium, "count_medium");
-  const count_large = requireSafeNonNegInt(raw.count_large, "count_large");
-  const count_xlarge = requireSafeNonNegInt(raw.count_xlarge, "count_xlarge");
-  const escort_seats = requireSafeNonNegInt(raw.escort_seats, "escort_seats");
+  let count_small = requireSafeNonNegInt(raw.count_small, "count_small");
+  let count_medium = requireSafeNonNegInt(raw.count_medium, "count_medium");
+  let count_large = requireSafeNonNegInt(raw.count_large, "count_large");
+  let count_xlarge = requireSafeNonNegInt(raw.count_xlarge, "count_xlarge");
+  let escort_seats = requireSafeNonNegInt(raw.escort_seats, "escort_seats");
+  const max_companions = requireSafeNonNegInt(
+    raw.max_companions ?? escort_seats,
+    "max_companions",
+  );
 
   const time_buffer = requireSafeNonNegInt(raw.time_buffer, "time_buffer");
   if (time_buffer > 180) {
@@ -164,6 +189,48 @@ export function normalizeCanonicalStage1(
     throw new CanonicalStage1Error(transport.errorKey);
   }
 
+  let service_subtype: ServiceSubtype | null;
+  try {
+    service_subtype = parsePublishServiceSubtype(category, raw.service_subtype);
+  } catch (err) {
+    rethrowPublishKey(err);
+  }
+
+  let share_mode: "share" | "private" | null =
+    shareRaw === "share" || shareRaw === "private" ? shareRaw : null;
+  const delivery_mode: "spot" | "door" | null =
+    deliveryRaw === "spot" || deliveryRaw === "door" ? deliveryRaw : null;
+
+  const cleaned = cleanupFieldsForServiceSubtype({
+    category,
+    serviceSubtype: service_subtype,
+    escort_seats,
+    max_companions,
+    share_mode,
+    count_small,
+    count_medium,
+    count_large,
+    count_xlarge,
+    carry_luggage: Boolean(raw.carry_luggage),
+  });
+  escort_seats = cleaned.escort_seats;
+  count_small = cleaned.count_small;
+  count_medium = cleaned.count_medium;
+  count_large = cleaned.count_large;
+  count_xlarge = cleaned.count_xlarge;
+  share_mode = cleaned.share_mode;
+
+  try {
+    assertPublishSubtypeTransportLegal({
+      category,
+      postType: post_type as "demand" | "provider",
+      serviceSubtype: service_subtype,
+      transportMode: transport.value,
+    });
+  } catch (err) {
+    rethrowPublishKey(err);
+  }
+
   return {
     post_type: post_type as CanonicalStage1Payload["post_type"],
     category: category as CanonicalStage1Payload["category"],
@@ -179,8 +246,9 @@ export function normalizeCanonicalStage1(
     departure_time_window,
     time_buffer,
     waypoints: normalizeWaypointList(raw.waypoints),
-    share_mode: shareRaw === "share" || shareRaw === "private" ? shareRaw : null,
-    delivery_mode: deliveryRaw === "spot" || deliveryRaw === "door" ? deliveryRaw : null,
+    share_mode,
+    delivery_mode:
+      category === "deliver" && post_type === "demand" ? delivery_mode : null,
     count_small,
     count_medium,
     count_large,
@@ -190,6 +258,7 @@ export function normalizeCanonicalStage1(
     currency: String(raw.currency ?? "EUR").trim().toUpperCase() || "EUR",
     locale,
     transport_mode: transport.value,
+    service_subtype,
   };
 }
 
@@ -238,6 +307,7 @@ export function hashCanonicalStage1(
     dm: payload.delivery_mode,
     es: payload.escort_seats,
     tm: payload.transport_mode,
+    sst: payload.service_subtype,
     wp: payload.waypoints.map((w) => w.toLowerCase()),
     c_s: payload.count_small,
     c_m: payload.count_medium,
@@ -283,5 +353,6 @@ export function toRpcStage1Payload(
     locale: payload.locale,
     fee_amount_minor: serverFeeMinor,
     transport_mode: payload.transport_mode,
+    service_subtype: payload.service_subtype,
   };
 }

@@ -3,8 +3,8 @@
  *
  * Saves Stage-2 contact fields (phone, plate, provider info, GPS scope) onto
  * an existing post that was created by:
- *   - Channel A: commit_phase3_business_idempotent_v86  (status='active')
- *   - Channel B: create_shadow_draft_idempotent_v86     (status='draft')
+ *   - Channel A: commit_phase3_business_idempotent_v98  (status='active')
+ *   - Channel B: create_shadow_draft_idempotent_v98     (status='draft')
  *
  * ACTIVATION POLICY (draft → active):
  *   A draft post is activated only when the current Account has at least one

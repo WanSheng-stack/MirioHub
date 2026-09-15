@@ -5,7 +5,7 @@
  * Does NOT create a Passkey challenge, processing_token, or credential.
  *
  * Server re-checks getAccountActivationEligibility() before calling
- * publish_active_post_idempotent_v86. Client identity flags are ignored.
+ * publish_active_post_idempotent_v98. Client identity flags are ignored.
  */
 
 import { NextResponse } from "next/server";
@@ -118,7 +118,7 @@ export async function POST(request: Request) {
     }
 
     const { data: txData, error: txErr } = await supabase.rpc(
-      "publish_active_post_idempotent_v86",
+      "publish_active_post_idempotent_v98",
       {
         p_user_id: user.id,
         p_client_request_id: clientRequestId,

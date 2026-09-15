@@ -8,13 +8,14 @@
 >
 > 代码审阅基线：`feature/home-bottomsheet-fix` @ `a3945a54a6f6d379f0ab23020da34acb91667a5b`
 >
-> 数据库状态：v90–v95 已执行并冻结。PHASE 6.7C.2A / 6.7C.2A.1 新增 v96
-> 服务子类型与地区夜间策略基础，尚未 apply；creation-enabled 仍为 false。
-> Travel/Deliver 缺少合法 transportMode 必须 fail closed。策略表阻止同
-> scope/version 重复和多条 open-ended 行，但不能完全阻止不同版本的有限
-> 有效区间重叠。后续新请求 writer/snapshot 必须以 v97 或新版本化 RPC 把
-> service_subtype、origin_country_code、origin_timezone、night_policy_version
-> 写入 admission facts，不得改已部署的 v95 hash helper。
+> 数据库状态：v90–v97 已执行并冻结（v95 verify 69/69；v96 verify 78/78；
+> PostGIS 已迁至 extensions；v97 verify 15/15 PASS）。PHASE 6.7C.2B 新增
+> 未 apply 的 v98：发布路径写入 `posts.service_subtype`。creation-enabled
+> 仍为 false；夜间策略 RS seed 仍 enabled=false。Travel/Deliver 缺少合法
+> transportMode 必须 fail closed。后续 admission-hash writer/snapshot 必须
+> 以 **v99 或更高** 把 service_subtype、origin_country_code、origin_timezone、
+> night_policy_version 写入 admission facts（v97 已被 PostGIS 占用；v98 为
+> 发布 subtype），不得改已部署的 v95 hash helper。
 
 ---
 

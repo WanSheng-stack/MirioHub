@@ -491,7 +491,7 @@ assert.ok(verifySql.includes("deptype IN ('a', 'i')"));
 assert.equal(verifySql.includes("nullable-text"), false);
 assert.equal(/pg_get_functiondef/i.test(verifySql), false);
 assert.equal(/SELECT\s+public\.create_match_request_v95\s*\(/i.test(verifySql), false);
-assert.equal(payload.includes("service_subtype?:"), false);
+assert.ok(payload.includes("service_subtype?:"));
 assert.ok(payload.includes("TRAVEL_SERVICE_SUBTYPES"));
 assert.ok(helper.includes('if (mode == null || mode === "") return false'));
 assert.equal(helper.includes("return !needsPeople"), false);
@@ -501,6 +501,7 @@ assert.ok(helper.includes("id ASC"));
 assert.ok(ledger.includes("6.7C.2A"));
 assert.ok(ledger.includes("night_service_policies"));
 assert.ok(ledger.includes("v97"));
+assert.ok(ledger.includes("v99") || ledger.includes("v99 or later"));
 assert.ok(ledger.includes("overlapping bounded intervals"));
 
 const techSpec = read(

@@ -23,6 +23,7 @@ import { mapChallengeReserveReason } from "@/lib/auth/challengeReserveReason";
 const baseRaw: Record<string, unknown> = {
   post_type: "demand",
   category: "travel",
+  service_subtype: "passenger",
   title: "",
   origin_address: "Belgrade Center",
   destination_address: "Novi Sad",
@@ -37,6 +38,7 @@ const baseRaw: Record<string, unknown> = {
   count_large: 0,
   count_xlarge: 0,
   escort_seats: 1,
+  max_companions: 1,
   bump_fee: 0,
   currency: "EUR",
   locale: "en",
@@ -103,7 +105,93 @@ assert.equal(rpc.departure_time_window, "14:30-15:00");
 assert.deepEqual(rpc.waypoints, ["WP1", "WP2"]);
 assert.equal(rpc.locale, "en");
 assert.equal(rpc.fee_amount_minor, 1234);
+assert.equal(rpc.service_subtype, "passenger");
 assert.equal(JSON.stringify(rpc), JSON.stringify(toRpcStage1Payload(ctxPayload, 1234)));
+
+// ── service_subtype required for travel/deliver; null for buy ───────────────
+assert.equal(normalizeCanonicalStage1(baseRaw).service_subtype, "passenger");
+expectReject(
+  () => normalizeCanonicalStage1({ ...baseRaw, service_subtype: null }),
+  "error.invalid_service_subtype",
+);
+expectReject(
+  () => normalizeCanonicalStage1({ ...baseRaw, service_subtype: "" }),
+  "error.invalid_service_subtype",
+);
+expectReject(
+  () => normalizeCanonicalStage1({ ...baseRaw, service_subtype: "cargo_only" }),
+  "error.invalid_service_subtype",
+);
+expectReject(
+  () =>
+    normalizeCanonicalStage1({
+      ...baseRaw,
+      category: "buy",
+      service_subtype: "passenger",
+      origin_address: "X",
+      destination_address: "X",
+    }),
+  "error.invalid_service_subtype",
+);
+assert.equal(
+  normalizeCanonicalStage1({
+    ...baseRaw,
+    category: "buy",
+    service_subtype: null,
+    origin_address: "X",
+    destination_address: "X",
+  }).service_subtype,
+  null,
+);
+
+const hashPassenger = hashCanonicalStage1(
+  normalizeCanonicalStage1(baseRaw),
+  40,
+  500,
+);
+const hashSmall = hashCanonicalStage1(
+  normalizeCanonicalStage1({ ...baseRaw, service_subtype: "small_item_only" }),
+  40,
+  500,
+);
+assert.notEqual(hashPassenger, hashSmall);
+
+expectReject(
+  () =>
+    normalizeCanonicalStage1({
+      ...baseRaw,
+      origin_country_code: "RS",
+    }),
+  "error.browser_night_authority_rejected",
+);
+expectReject(
+  () =>
+    normalizeCanonicalStage1({
+      ...baseRaw,
+      post_type: "provider",
+      transport_mode: null,
+    }),
+  "error.transport_mode_required",
+);
+expectReject(
+  () =>
+    normalizeCanonicalStage1({
+      ...baseRaw,
+      post_type: "provider",
+      transport_mode: "motorbike",
+      service_subtype: "passenger",
+    }),
+  "error.illegal_transport_combo",
+);
+assert.equal(
+  normalizeCanonicalStage1({
+    ...baseRaw,
+    post_type: "provider",
+    transport_mode: "car",
+    service_subtype: "passenger",
+  }).transport_mode,
+  "car",
+);
 
 // ── idempotency ≠ spam ──────────────────────────────────────────────────────
 const row = {

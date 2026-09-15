@@ -18,6 +18,7 @@ import type {
   PriceCalcType,
   ProviderPayType,
   PurchasePriceType,
+  ServiceSubtype,
   ShareMode,
 } from "@/lib/post-payload";
 import {
@@ -26,10 +27,18 @@ import {
   isPassengerScene,
   totalLuggageUnits,
 } from "@/lib/post-payload";
+import {
+  cleanupFieldsForServiceSubtype,
+  defaultServiceSubtypeForCategory,
+  deliverShowsEscortShare,
+  travelShowsLuggageControls,
+  travelShowsPassengerControls,
+} from "@/lib/safety/serviceSubtypePublish";
 
 export type PostFormState = {
   post_type: PostType;
   category: PostCategory;
+  service_subtype: ServiceSubtype | null;
   delivery_mode: DeliveryMode;
   share_mode: ShareMode;
   escort_seats: number;
@@ -82,6 +91,7 @@ export type PostFormState = {
 type Action =
   | { type: "SET_POST_TYPE"; post_type: PostType }
   | { type: "SET_CATEGORY"; category: PostCategory }
+  | { type: "SET_SERVICE_SUBTYPE"; service_subtype: ServiceSubtype }
   | { type: "RESET_CURRENT_PUBLISH" }
   | { type: "SET_FIELD"; field: keyof PostFormState; value: PostFormState[keyof PostFormState] }
   | { type: "SET_SHARE_MODE"; share_mode: ShareMode }
@@ -94,12 +104,55 @@ type Action =
 
 const today = new Date().toISOString().slice(0, 10);
 
+function applySubtypeCleanup(
+  state: PostFormState,
+  category: PostCategory,
+  service_subtype: ServiceSubtype | null,
+): PostFormState {
+  const cleaned = cleanupFieldsForServiceSubtype({
+    category,
+    serviceSubtype: service_subtype,
+    escort_seats: state.escort_seats,
+    max_companions: state.max_companions,
+    share_mode: state.share_mode,
+    count_small: state.count_small,
+    count_medium: state.count_medium,
+    count_large: state.count_large,
+    count_xlarge: state.count_xlarge,
+    carry_luggage: state.carry_luggage,
+  });
+  return {
+    ...state,
+    category,
+    service_subtype,
+    escort_seats: cleaned.escort_seats,
+    max_companions: cleaned.max_companions,
+    share_mode: (cleaned.share_mode ?? "share") as ShareMode,
+    count_small: cleaned.count_small,
+    count_medium: cleaned.count_medium,
+    count_large: cleaned.count_large,
+    count_xlarge: cleaned.count_xlarge,
+    carry_luggage: cleaned.carry_luggage,
+    // Travel ↔ Deliver must not keep the other lane's illegal subtype residue
+    // or Travel modes on Deliver vehicles.
+    transport_mode:
+      category === "deliver" &&
+      state.transport_mode !== "" &&
+      state.transport_mode !== "van"
+        ? ""
+        : category === "travel" && state.transport_mode === "van"
+          ? ""
+          : state.transport_mode,
+  };
+}
+
 export const initialFormState: PostFormState = {
   post_type: "demand",
   category: "travel",
+  service_subtype: defaultServiceSubtypeForCategory("travel"),
   delivery_mode: "spot",
   share_mode: "share",
-  escort_seats: 0,
+  escort_seats: 1,
   max_companions: 1,
   item_condition: "new",
   dial_code: "+381",
@@ -152,10 +205,11 @@ function clampSeats(n: number): number {
 function reducer(state: PostFormState, action: Action): PostFormState {
   switch (action.type) {
     case "SET_POST_TYPE": {
-      return {
+      const next = {
         ...initialFormState,
         post_type: action.post_type,
-        category: "travel",
+        category: "travel" as const,
+        service_subtype: defaultServiceSubtypeForCategory("travel"),
         departure_date: state.departure_date,
         departure_time: state.departure_time,
         time_buffer: state.time_buffer,
@@ -165,16 +219,32 @@ function reducer(state: PostFormState, action: Action): PostFormState {
         raw_phone_local: state.raw_phone_local,
         contact_email: state.contact_email,
       };
+      return applySubtypeCleanup(next, "travel", next.service_subtype);
     }
-    case "SET_CATEGORY":
-      return { ...state, category: action.category };
-    case "RESET_CURRENT_PUBLISH":
-      return {
+    case "SET_CATEGORY": {
+      const service_subtype = defaultServiceSubtypeForCategory(action.category);
+      return applySubtypeCleanup(
+        {
+          ...state,
+          delivery_mode: "spot",
+          show_private_buyout_notice: false,
+        },
+        action.category,
+        service_subtype,
+      );
+    }
+    case "SET_SERVICE_SUBTYPE":
+      return applySubtypeCleanup(state, state.category, action.service_subtype);
+    case "RESET_CURRENT_PUBLISH": {
+      const next = {
         ...initialFormState,
         post_type: state.post_type,
         category: state.category,
+        service_subtype: defaultServiceSubtypeForCategory(state.category),
         departure_date: new Date().toISOString().slice(0, 10),
       };
+      return applySubtypeCleanup(next, next.category, next.service_subtype);
+    }
     case "SET_FIELD": {
       const countryValue = String(action.value);
       if (action.field === "phone_country" && isPhoneCountryCode(countryValue)) {
@@ -192,9 +262,16 @@ function reducer(state: PostFormState, action: Action): PostFormState {
         return {
           ...state,
           share_mode,
-          max_companions: state.category === "travel" ? 4 : state.max_companions,
+          max_companions: travelShowsPassengerControls(state.service_subtype)
+            ? 4
+            : state.max_companions,
           escort_seats:
-            state.category === "deliver" && state.escort_seats >= 1 ? 4 : state.escort_seats,
+            state.category === "deliver" &&
+            state.service_subtype === "cargo_with_escort"
+              ? 1
+              : travelShowsPassengerControls(state.service_subtype)
+                ? 4
+                : state.escort_seats,
           show_private_buyout_notice: true,
         };
       }
@@ -256,6 +333,10 @@ export function usePostFormState() {
     dispatch({ type: "SET_CATEGORY", category });
   }, []);
 
+  const setServiceSubtype = useCallback((service_subtype: ServiceSubtype) => {
+    dispatch({ type: "SET_SERVICE_SUBTYPE", service_subtype });
+  }, []);
+
   const setShareMode = useCallback((share_mode: ShareMode) => {
     dispatch({ type: "SET_SHARE_MODE", share_mode });
   }, []);
@@ -266,6 +347,14 @@ export function usePostFormState() {
 
   const setEscortSeats = useCallback(
     (n: number) => {
+      if (state.service_subtype === "cargo_with_escort") {
+        setField("escort_seats", 1);
+        return;
+      }
+      if (state.service_subtype === "cargo_only") {
+        setField("escort_seats", 0);
+        return;
+      }
       const clamped = clampSeats(n);
       if (state.share_mode === "private" && clamped >= 1) {
         setField("escort_seats", 4);
@@ -273,7 +362,7 @@ export function usePostFormState() {
         setField("escort_seats", clamped);
       }
     },
-    [state.share_mode, setField],
+    [state.share_mode, state.service_subtype, setField],
   );
 
   const setMaxCompanions = useCallback(
@@ -281,15 +370,17 @@ export function usePostFormState() {
       const clamped = clampSeats(Math.max(1, n));
       if (state.share_mode === "private") {
         setField("max_companions", 4);
+        setField("escort_seats", 4);
       } else {
         setField("max_companions", clamped);
+        setField("escort_seats", clamped);
       }
     },
     [state.share_mode, setField],
   );
 
   const visibility = useMemo(() => {
-    const { post_type, category, escort_seats } = state;
+    const { post_type, category, service_subtype, carry_luggage } = state;
     const route = isDeliverOrTravel(category);
     const local = isOnsiteOrErrand(category);
     const buy = category === "buy";
@@ -297,13 +388,23 @@ export function usePostFormState() {
     const showDeliveryMode = route && post_type === "demand" && category === "deliver";
     const showShareMode =
       route &&
-      (category === "travel" || (category === "deliver" && escort_seats >= 1));
-    const showLuggage = route;
+      (travelShowsPassengerControls(service_subtype) ||
+        deliverShowsEscortShare(service_subtype));
+    const showLuggage =
+      category === "deliver" ||
+      (category === "travel" &&
+        travelShowsLuggageControls(service_subtype, carry_luggage));
+    const showCarryLuggageToggle =
+      category === "travel" && service_subtype === "passenger";
     const showFeeDemand = route && post_type === "demand";
     const showTitleDesc = !route;
     const showProviderAssets = post_type === "provider" && (route || buy);
-    const showEscortSeats = route && category === "deliver" && post_type === "demand";
-    const showMaxCompanions = route && category === "travel";
+    const showEscortSeats = false;
+    const showMaxCompanions =
+      route &&
+      category === "travel" &&
+      travelShowsPassengerControls(service_subtype);
+    const showServiceSubtype = route;
     return {
       route,
       local,
@@ -312,21 +413,25 @@ export function usePostFormState() {
       showDeliveryMode,
       showShareMode,
       showLuggage,
+      showCarryLuggageToggle,
       showFeeDemand,
       showTitleDesc,
       showProviderAssets,
       showEscortSeats,
       showMaxCompanions,
+      showServiceSubtype,
     };
   }, [state]);
 
   const draftPayload = useMemo((): Partial<PostPayload> => {
     const luggageActive =
       state.category === "deliver" ||
-      (state.category === "travel" && state.carry_luggage);
+      (state.category === "travel" &&
+        travelShowsLuggageControls(state.service_subtype, state.carry_luggage));
     const p: Partial<PostPayload> = {
       post_type: state.post_type,
       category: state.category,
+      service_subtype: state.service_subtype,
       count_small: luggageActive ? state.count_small : 0,
       count_medium: luggageActive ? state.count_medium : 0,
       count_large: luggageActive ? state.count_large : 0,
@@ -344,13 +449,16 @@ export function usePostFormState() {
     else p.delivery_mode = null;
     if (visibility.showShareMode) p.share_mode = state.share_mode;
     else p.share_mode = null;
-    if (visibility.showEscortSeats) p.escort_seats = state.escort_seats;
-    else p.escort_seats = null;
-    if (visibility.showMaxCompanions) p.max_companions = state.max_companions;
-    else p.max_companions = null;
-    if (state.category === "travel") {
+    if (state.category === "deliver") {
+      p.escort_seats =
+        state.service_subtype === "cargo_with_escort" ? 1 : 0;
+    } else if (travelShowsPassengerControls(state.service_subtype)) {
       p.escort_seats =
         state.share_mode === "private" ? 4 : state.max_companions;
+      p.max_companions = p.escort_seats;
+    } else {
+      p.escort_seats = 0;
+      p.max_companions = 0;
     }
     return p;
   }, [state, visibility]);
@@ -366,8 +474,12 @@ export function usePostFormState() {
   const luggageUnits = useMemo(() => totalLuggageUnits(state), [state]);
 
   const showPassengerScene = useMemo(
-    () => isPassengerScene({ category: state.category, escort_seats: state.escort_seats }),
-    [state.category, state.escort_seats],
+    () =>
+      isPassengerScene({
+        category: state.category,
+        escort_seats: state.escort_seats,
+      }) || travelShowsPassengerControls(state.service_subtype),
+    [state.category, state.escort_seats, state.service_subtype],
   );
 
   return {
@@ -376,6 +488,7 @@ export function usePostFormState() {
     setField,
     setPostType,
     setCategory,
+    setServiceSubtype,
     setShareMode,
     resetCurrentPublishForm,
     setEscortSeats,

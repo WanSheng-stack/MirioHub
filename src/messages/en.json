@@ -203,6 +203,10 @@
     "cargo_invalid_handling": "Mark loading and unloading help as yes or no.",
     "cargo_private_field_forbidden": "Cargo details contain a field that is not allowed.",
     "invalid_transport_mode": "The transport option is invalid. Please choose again.",
+    "transport_mode_required": "Choose a vehicle type before publishing.",
+    "invalid_service_subtype": "Choose a valid service type. Travel/Deliver cannot be empty; Buy/Onsite/Errand must stay empty.",
+    "browser_night_authority_rejected": "Browsers cannot submit country, timezone, or night-policy version as authoritative fields.",
+    "illegal_transport_combo": "This vehicle does not match the selected service type. Please choose again.",
     "transport_mode_already_set": "Transport for this post is already set and cannot be changed here.",
     "transport_escort_field_not_allowed": "This listing type cannot include a cargo escort count.",
     "transport_travel_item_field_not_allowed": "Large cargo cannot use the small-item field. Please fill this in again."
@@ -561,7 +565,25 @@
       "vehicle_color": "Vehicle color",
       "license_plate": "License plate",
       "back": "Back",
-      "close": "Close"
+      "close": "Close",
+      "service_subtype_legend": "Service type for this trip",
+      "service_subtype_hint": "Choose explicitly. The system will not infer this from vehicle or luggage.",
+      "subtype": {
+        "demand": {
+          "passenger": "I need a ride",
+          "small_item_only": "I only need a small item brought along",
+          "passenger_with_small_item": "I need a ride and will bring a small item",
+          "cargo_only": "Cargo only — no escort rider",
+          "cargo_with_escort": "Cargo with one escort rider"
+        },
+        "provider": {
+          "passenger": "Passengers only",
+          "small_item_only": "Small items only",
+          "passenger_with_small_item": "Passengers and small items",
+          "cargo_only": "Cargo only — no escort seat",
+          "cargo_with_escort": "Cargo with one escort seat available"
+        }
+      }
     }
   },
   "publishSuccess": {

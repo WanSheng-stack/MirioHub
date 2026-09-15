@@ -203,6 +203,10 @@
     "cargo_invalid_handling": "Označite da li treba pomoć pri utovaru i istovaru sa da ili ne.",
     "cargo_private_field_forbidden": "Podaci o teretu sadrže polje koje nije dozvoljeno.",
     "invalid_transport_mode": "Način prevoza nije važeći. Izaberite ponovo.",
+    "transport_mode_required": "Izaberite tip vozila pre objave.",
+    "invalid_service_subtype": "Izaberite važeći tip usluge. Travel/Deliver ne sme biti prazan; Buy/Onsite/Errand mora ostati prazan.",
+    "browser_night_authority_rejected": "Pregledač ne sme da šalje zemlju, vremensku zonu ili verziju noćne politike kao autoritativna polja.",
+    "illegal_transport_combo": "Ovo vozilo ne odgovara izabranom tipu usluge. Izaberite ponovo.",
     "transport_mode_already_set": "Način prevoza za ovu objavu je već određen i ne može se ovde menjati.",
     "transport_escort_field_not_allowed": "Za ovaj tip objave ne možete uneti broj osoba koje prate teret.",
     "transport_travel_item_field_not_allowed": "Za veliki teret ne koristite polje za sitni prtljag. Unesite ponovo."
@@ -561,7 +565,25 @@
       "vehicle_color": "Boja vozila",
       "license_plate": "Tablice",
       "back": "Nazad",
-      "close": "Zatvori"
+      "close": "Zatvori",
+      "service_subtype_legend": "Tip usluge za ovu vožnju",
+      "service_subtype_hint": "Izaberite eksplicitno. Sistem neće nagađati na osnovu vozila ili prtljaga.",
+      "subtype": {
+        "demand": {
+          "passenger": "Treba mi prevoz",
+          "small_item_only": "Samo da mi se ponese mali paket",
+          "passenger_with_small_item": "Treba mi prevoz i nosim mali paket",
+          "cargo_only": "Samo teret — bez pratnje",
+          "cargo_with_escort": "Teret sa jednom osobom za pratnju"
+        },
+        "provider": {
+          "passenger": "Samo putnici",
+          "small_item_only": "Samo mali paketi",
+          "passenger_with_small_item": "Putnici i mali paketi",
+          "cargo_only": "Samo teret — bez mesta za pratnju",
+          "cargo_with_escort": "Teret sa jednim mestom za pratnju"
+        }
+      }
     }
   },
   "publishSuccess": {

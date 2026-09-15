@@ -10,6 +10,7 @@ import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
 import { LuggageCounters } from "@/components/post-form/DeliverTravelFields";
+import { ServiceSubtypeFields } from "@/components/post-form/ServiceSubtypeFields";
 import { BuyFields, OnsiteErrandFields } from "@/components/post-form/BuyOnsiteFields";
 import { DraftIdentityCompletion } from "@/components/home/DraftIdentityCompletion";
 import { PublishedPostSuccess } from "@/components/home/PublishedPostSuccess";
@@ -47,15 +48,16 @@ interface IdentityActivationContext {
   expiresAt: number;
 }
 
-const VEHICLE_OPTIONS: TransportMode[] = [
+const TRAVEL_VEHICLE_OPTIONS: TransportMode[] = [
   "car",
   "motorbike",
-  "van",
   "bus",
   "train",
   "bicycle",
   "walking",
 ];
+
+const DELIVER_VEHICLE_OPTIONS: TransportMode[] = ["van"];
 
 type Props = {
   open: boolean;
@@ -324,6 +326,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
   const isTravel = state.category === "travel";
   const isDeliver = state.category === "deliver";
+  const VEHICLE_OPTIONS_FOR_CATEGORY = isDeliver
+    ? DELIVER_VEHICLE_OPTIONS
+    : TRAVEL_VEHICLE_OPTIONS;
   const isActiveSuccess = pendingPostStatus === "active";
   const isDraftIdentity = pendingPostStatus === "draft";
   const accountIdentity = resolveAccountIdentityState(accountUser);
@@ -964,7 +969,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                   </div>
                 </div>
 
-                {isTravel ? (
+                <ServiceSubtypeFields form={form} />
+
+                {isTravel && visibility.showMaxCompanions ? (
                   <div className="space-y-3">
                     <p className="text-sm font-medium">{t("home.sheet.passengers")}</p>
                     <div className="grid w-full grid-cols-2 items-center gap-4">
@@ -1068,7 +1075,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     ) : null}
 
                     {/* Luggage display block — under passenger stepper */}
+                    {visibility.showCarryLuggageToggle || visibility.showLuggage ? (
                     <div className="space-y-3">
+                      {visibility.showCarryLuggageToggle ? (
                       <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3">
                         <span className="text-sm font-medium text-zinc-800">
                           {t("ui.has_luggage")}
@@ -1085,21 +1094,29 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                           }
                         />
                       </label>
+                      ) : null}
                       <div
                         className={`grid transition-all duration-300 ease-out ${
-                          state.carry_luggage
+                          visibility.showLuggage
                             ? "grid-rows-[1fr] opacity-100"
                             : "grid-rows-[0fr] opacity-0"
                         }`}
                       >
                         <div className="overflow-hidden">
-                          {state.carry_luggage ? (
+                          {visibility.showLuggage ? (
                             <LuggageCounters form={form} />
                           ) : null}
                         </div>
                       </div>
                     </div>
+                    ) : null}
                   </div>
+                ) : null}
+
+                {isTravel &&
+                !visibility.showMaxCompanions &&
+                visibility.showLuggage ? (
+                  <LuggageCounters form={form} />
                 ) : null}
 
                 {isDeliver ? <LuggageCounters form={form} /> : null}
@@ -1240,7 +1257,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                         }
                       >
                         <option value="">—</option>
-                        {VEHICLE_OPTIONS.map((mode) => (
+                        {VEHICLE_OPTIONS_FOR_CATEGORY.map((mode) => (
                           <option key={mode} value={mode}>
                             {t(`hall.transport.${mode}`)}
                           </option>

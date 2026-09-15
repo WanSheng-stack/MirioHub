@@ -226,6 +226,7 @@ export async function submitPost(
     vehicle_brand: payload.vehicle_brand,
     vehicle_color: payload.vehicle_color,
     transport_mode: payload.transport_mode ?? null,
+    service_subtype: payload.service_subtype ?? null,
     departure_date: payload.departure_date,
     departure_time_window: payload.departure_time_window,
     estimated_arrival_time: payload.estimated_arrival_time,

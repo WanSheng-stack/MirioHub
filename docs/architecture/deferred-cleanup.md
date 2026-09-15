@@ -270,7 +270,7 @@ OWNER against PostGIS.
 
 - **Current state:** PHASE 6.7C.1B.3A bound the v95 guard to encoding-v2
   fingerprints; v95 has now been applied by the user and official verify
-  is 69/69 PASS. PHASE 6.7C.2A / 6.7C.2A.1 adds unapplied v96:
+  is 69/69 PASS. PHASE 6.7C.2A / 6.7C.2A.1 v96 is applied (verify 78/78):
   `posts.service_subtype`, `origin_country_code`, `origin_timezone`,
   `night_policy_version`, and `night_service_policies` with an RS country
   default (`Europe/Belgrade`, 22:00–06:00, enabled=false). Historical
@@ -283,10 +283,11 @@ OWNER against PostGIS.
   window, exact region before country default, then
   `policy_version DESC`, `effective_from DESC`, `id ASC`, take one.
   Future writers must close the old interval before inserting a new
-  version. The next versioned writer/snapshot (v97 or later) must
-  add those four fields to server admission facts; do not patch the
-  deployed v95 hash helper. Creation stays false. MatchRequestSheet
-  stays unmounted. Night policy stays disabled.
+  version. The next admission-hash writer/snapshot (v99 or later; PostGIS
+  already used v97 and publish subtype used v98) must add those four
+  fields to server admission facts; do not patch the deployed v95 hash
+  helper. Creation stays false. MatchRequestSheet stays unmounted. Night
+  policy stays disabled.
   v96 verify names `public.night_service_policies` directly: a missing
   table errors at parse/plan time and fail-closes; a present table with
   drifted inner objects returns FAIL/NULL. Neither path can overall PASS.
@@ -310,10 +311,11 @@ OWNER against PostGIS.
   result schema. Owned-sequence `object_identity` casts
   `pg_depend.deptype` to text before `||`. No live PostgreSQL/MVCC run
   was performed. Creation stays false. MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** reviewed v96 apply, publish-path
-  subtype/night checks, v97 admission-hash facts, request list, resend,
-  accept/reject, contact DTO, MatchRequestSheet mount, country pricing,
-  trusted location resolver, and contract capacity/fulfillment.
+- **Still unresolved / later phases:** publish-path subtype is owned by
+  6.7C.2B/v98 (unapplied until user applies). Admission-hash facts remain
+  for v99 or later. Request list, resend, accept/reject, contact DTO,
+  MatchRequestSheet mount, country pricing, trusted location resolver, and
+  contract capacity/fulfillment remain later.
 - **Future replacement:** A later grant writer must re-check recipient
   settings and confirmed channels before any contact DTO.
 - **Earliest safe production use:** After v95 is applied, verify.sql is run
@@ -325,32 +327,43 @@ OWNER against PostGIS.
 
 ## 15. PostGIS extensions rebind (v97)
 
-- **Current state:** PHASE POSTGIS-RELOCATION-PREP.1A. User applied v97;
-  Support PostGIS move and rebind succeeded. Official verify initially
-  reported 13/15 PASS with false fails on checks 302/303 only. Root cause:
-  `pg_get_function_identity_arguments()` returns named identity text such as
-  `p_left_post_id uuid, p_right_post_id uuid` and
-  `p_lng double precision, p_lat double precision, p_limit integer`, but
-  verify compared a whitespace-folded copy of that string to type-only
-  expectations `uuid,uuid` /
-  `doubleprecision,doubleprecision,integer`. Migration bodies, ACL,
-  search_path, PostGIS schema, GPS typmod/GiST, and creation=false were
-  already PASS. PREP.1A repairs verify only: types come from
-  `oidvectortypes(proargtypes)`, input names from `proargnames[1:pronargs]`,
-  and OID from `to_regprocedure(...) = oid`. Named identity text remains
-  observational. v97 main migration is applied history and must not be
-  edited or re-run. Verify remains one statement, one seven-column
-  result set. Support move already done for this project.
-- **Still unresolved / later phases:** user re-run of repaired v97 verify
-  only; later admission-hash writer/snapshot that adds the v96
-  subtype/night fields. That later writer is not this v97 file and must
-  not patch the already-deployed v95 hash helper in place.
+- **Current state:** PostGIS relocation is complete. Supabase Support moved
+  PostGIS from `public` to `extensions`. User applied v97; repaired verify
+  is officially **15/15 PASS** (`overall_pass=PASS`). Support ticket may
+  close. v97 migration and verify are applied history and must not be
+  edited or re-run. PREP.1A fixed false fails on 302/303 by comparing
+  `oidvectortypes(proargtypes)` and `proargnames` instead of named
+  `pg_get_function_identity_arguments()` to type-only strings, with OID
+  locked by `to_regprocedure(...) = oid`. Creation stays false.
+  MatchRequestSheet stays unmounted.
+- **Still unresolved / later phases:** admission-hash writer/snapshot that
+  adds the v96 subtype/night fields must use **v99 or later** (v97 was
+  PostGIS; v98 is publish subtype). Do not patch the deployed v95 hash
+  helper in place.
 - **Future replacement:** none; this is a one-shot post-move rebind.
-- **Earliest safe production use:** v97 migration already applied; after
-  repaired verify is 15/15 PASS. Creation stays false.
-- **Preconditions:** v95/v96 already applied; PostGIS already in
-  `extensions`; creation stays false; MatchRequestSheet stays
-  unmounted.
-- **Risk if wired early:** n/a for the move (already done). Do not re-run
-  the applied v97 migration. Do not trust a verify that folds named
-  `pg_get_function_identity_arguments()` into type-only strings.
+- **Earliest safe production use:** already applied and verify-green.
+- **Preconditions:** v95/v96 already applied; PostGIS in `extensions`.
+- **Risk if wired early:** n/a. Do not re-run the applied v97 migration.
+
+## 16. Stage-1 publish service_subtype (v98)
+
+- **Current state:** PHASE 6.7C.2B. Forward-only v98 adds
+  `insert_stage1_post_v98` plus publish/shadow/Passkey wrappers that write
+  `posts.service_subtype` from server canonical JSON. Travel/Deliver require
+  a legal non-NULL subtype; Buy/Onsite/Errand require NULL. Subtype enters
+  the payload hash. Browsers must not submit `origin_country_code`,
+  `origin_timezone`, or `night_policy_version` as authority; those columns
+  stay NULL this phase. Night policy remains enabled=false. Creation stays
+  false. v90–v97 and `init.sql` are untouched. v98 is **not applied** from
+  this phase.
+- **Still unresolved / later phases:** user apply + verify of v98;
+  admission-hash writer (v99+); night runtime enforcement; trusted
+  country/IANA timezone resolver; request list/resend/accept; MatchRequestSheet.
+- **Future replacement:** later publish RPCs may supersede v98; do not
+  CREATE OR REPLACE the applied v86 path in place.
+- **Earliest safe production use:** after user applies v98 and verify is
+  green. Not claimed live in this phase.
+- **Preconditions:** v95/v96/v97 applied; creation=false; night RS seed
+  enabled=false.
+- **Risk if wired early:** Travel/Deliver posts keep writing NULL subtype
+  if any production path still calls v86.

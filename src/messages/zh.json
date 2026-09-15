@@ -203,6 +203,10 @@
     "cargo_invalid_handling": "请用是/否标明装卸协助意向。",
     "cargo_private_field_forbidden": "货物信息包含不允许的字段。",
     "invalid_transport_mode": "运输方式无效，请重新选择。",
+    "transport_mode_required": "请选择载具类型后再发布。",
+    "invalid_service_subtype": "请选择合法的服务类型；Travel/Deliver 不能留空，Buy/现场/跑腿不能填写服务子类型。",
+    "browser_night_authority_rejected": "浏览器不能提交国家、时区或夜间策略版本作为权威字段。",
+    "illegal_transport_combo": "当前载具与所选服务类型不匹配，请重新选择。",
     "transport_mode_already_set": "该帖子的运输方式已经确定，无法在此修改。",
     "transport_escort_field_not_allowed": "当前发布类型不能填写押货人数。",
     "transport_travel_item_field_not_allowed": "大件运输不能使用随身小件字段，请重新填写。"
@@ -561,7 +565,25 @@
       "vehicle_color": "车辆颜色",
       "license_plate": "真实原始车牌号",
       "back": "返回上一步",
-      "close": "关闭"
+      "close": "关闭",
+      "service_subtype_legend": "本次服务类型",
+      "service_subtype_hint": "请明确选择；系统不会根据载具或行李自动推断。",
+      "subtype": {
+        "demand": {
+          "passenger": "我要搭车",
+          "small_item_only": "只需顺路捎带小件",
+          "passenger_with_small_item": "我要搭车并携带小件",
+          "cargo_only": "只运货物，无需押货人员",
+          "cargo_with_escort": "运货并需要 1 名押货人员同行"
+        },
+        "provider": {
+          "passenger": "只搭载乘客",
+          "small_item_only": "只顺路捎带小件",
+          "passenger_with_small_item": "可搭载乘客并捎带小件",
+          "cargo_only": "只承运货物，不安排押货人员",
+          "cargo_with_escort": "可承运货物并安排 1 名押货人员"
+        }
+      }
     }
   },
   "publishSuccess": {

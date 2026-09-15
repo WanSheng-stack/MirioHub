@@ -751,13 +751,14 @@ assert.ok(ledger.includes("PostGIS"));
 assert.ok(ledger.includes("v97"));
 assert.ok(ledger.includes("oidvectortypes"));
 assert.ok(ledger.includes("pg_get_function_identity_arguments()"));
-assert.ok(ledger.includes("false fails on checks 302/303"));
+assert.ok(ledger.includes("15/15 PASS"));
+assert.ok(ledger.includes("PostGIS relocation is complete") || ledger.includes("v97"));
 assert.ok(ledger.includes("to_regprocedure"));
 assert.ok(ledger.includes("must not be"));
 assert.ok(ledger.includes("edited or re-run"));
 
 const v97Files = readdirSync(join(repoRoot, "supabase/migrations"))
-  .filter((name) => name.includes("v97") || name.includes("v98"))
+  .filter((name) => name.includes("v97"))
   .sort();
 assert.deepEqual(v97Files, [
   "20260914000001_postgis_extensions_rebind_v97.sql",

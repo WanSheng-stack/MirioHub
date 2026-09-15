@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     const ctx = await buildCanonicalStage1PublishContext(rawPostInput);
 
     const { data: txData, error: txErr } = await supabase.rpc(
-      "create_shadow_draft_idempotent_v86",
+      "create_shadow_draft_idempotent_v98",
       {
         p_user_id: current_uid,
         p_client_request_id: clientRequestId,

@@ -4,6 +4,11 @@ import { isDeliverOrTravel, isOnsiteOrErrand } from "@/lib/post-payload";
 import { buildRawPhone, normalizeLicensePlate, normalizePhone } from "@/lib/post-validation";
 import { calculateFinalFee } from "@/lib/post-fee";
 import { mergeDepartureWindow } from "@/lib/post-time-windows";
+import {
+  cleanupFieldsForServiceSubtype,
+  travelShowsLuggageControls,
+  travelShowsPassengerControls,
+} from "@/lib/safety/serviceSubtypePublish";
 
 export type BuildPayloadResult =
   | { ok: true; payload: PostPayload & Record<string, unknown> }
@@ -21,6 +26,26 @@ export function buildPayloadFromForm(
   const local = isOnsiteOrErrand(state.category);
   const buy = state.category === "buy";
 
+  if (route && !state.service_subtype) {
+    return { ok: false, errorKey: "error.invalid_service_subtype" };
+  }
+  if (!route && state.service_subtype != null) {
+    return { ok: false, errorKey: "error.invalid_service_subtype" };
+  }
+
+  const cleaned = cleanupFieldsForServiceSubtype({
+    category: state.category,
+    serviceSubtype: state.service_subtype,
+    escort_seats: state.escort_seats,
+    max_companions: state.max_companions,
+    share_mode: state.share_mode,
+    count_small: state.count_small,
+    count_medium: state.count_medium,
+    count_large: state.count_large,
+    count_xlarge: state.count_xlarge,
+    carry_luggage: state.carry_luggage,
+  });
+
   let normalized_plate: string | null = null;
   let raw_plate: string | null = null;
   if (state.post_type === "provider" && state.raw_license_plate.trim()) {
@@ -31,39 +56,32 @@ export function buildPayloadFromForm(
   }
 
   const fusedWindow = mergeDepartureWindow(state.departure_time, state.time_buffer);
+  const luggageActive =
+    state.category === "deliver" ||
+    (state.category === "travel" &&
+      travelShowsLuggageControls(state.service_subtype, cleaned.carry_luggage));
 
   const payload: PostPayload & Record<string, unknown> = {
     post_type: state.post_type,
     category: state.category,
+    service_subtype: route ? state.service_subtype : null,
     phone_id: phoneId,
     raw_phone: buildRawPhone(state.phone_country, state.raw_phone_local),
     normalized_phone: phoneResult.normalized,
     departure_date: state.departure_date,
     departure_time_window: fusedWindow,
     estimated_arrival_time: null,
-    count_small:
-      route && (state.category === "deliver" || state.carry_luggage)
-        ? state.count_small
-        : 0,
-    count_medium:
-      route && (state.category === "deliver" || state.carry_luggage)
-        ? state.count_medium
-        : 0,
-    count_large:
-      route && (state.category === "deliver" || state.carry_luggage)
-        ? state.count_large
-        : 0,
-    count_xlarge:
-      route && (state.category === "deliver" || state.carry_luggage)
-        ? state.count_xlarge
-        : 0,
+    count_small: luggageActive ? cleaned.count_small : 0,
+    count_medium: luggageActive ? cleaned.count_medium : 0,
+    count_large: luggageActive ? cleaned.count_large : 0,
+    count_xlarge: luggageActive ? cleaned.count_xlarge : 0,
     bump_fee: state.post_type === "demand" && route ? state.bump_fee : 0,
     fee_amount: null,
     estimated_kms: state.estimated_kms,
     delivery_mode: null,
-    share_mode: null,
-    escort_seats: null,
-    max_companions: null,
+    share_mode: cleaned.share_mode,
+    escort_seats: cleaned.escort_seats,
+    max_companions: cleaned.max_companions,
     item_condition: null,
     plate_id: plateId,
     raw_license_plate: raw_plate,
@@ -87,6 +105,9 @@ export function buildPayloadFromForm(
     provider_pay_type: null,
     title: null,
     description: null,
+    carry_luggage: cleaned.carry_luggage,
+    departure_time: state.departure_time,
+    time_buffer: state.time_buffer,
   };
 
   if (route) {
@@ -106,6 +127,9 @@ export function buildPayloadFromForm(
       payload.vehicle_brand = state.vehicle_brand.trim() || null;
       payload.vehicle_color = state.vehicle_color.trim() || null;
       payload.transport_mode = state.transport_mode || null;
+      if (!payload.transport_mode) {
+        return { ok: false, errorKey: "error.transport_mode_required" };
+      }
       const needsPlate =
         state.transport_mode === "car" ||
         state.transport_mode === "motorbike" ||
@@ -118,25 +142,22 @@ export function buildPayloadFromForm(
       if (state.estimated_kms <= 0) {
         return { ok: false, errorKey: "error.route_distance_failed" };
       }
+      payload.transport_mode = null;
     }
     if (state.post_type === "demand" && state.category === "deliver") {
       payload.delivery_mode = state.delivery_mode;
-      payload.escort_seats = state.escort_seats;
     }
-    if (state.category === "travel") {
-      payload.max_companions = state.max_companions;
-    }
-    if (
-      state.category === "travel" ||
-      (state.category === "deliver" && state.escort_seats >= 1)
-    ) {
-      payload.share_mode = state.share_mode;
+    if (travelShowsPassengerControls(state.service_subtype)) {
+      payload.max_companions = cleaned.max_companions;
+      payload.escort_seats = cleaned.escort_seats;
     }
     payload.has_luggage =
-      state.category === "travel"
-        ? state.carry_luggage &&
-          state.count_small + state.count_medium + state.count_large + state.count_xlarge > 0
-        : state.count_small + state.count_medium + state.count_large + state.count_xlarge > 0;
+      luggageActive &&
+      cleaned.count_small +
+        cleaned.count_medium +
+        cleaned.count_large +
+        cleaned.count_xlarge >
+        0;
     if (state.post_type === "demand") {
       payload.fee_amount = calculateFinalFee(state.estimated_kms, payload);
     }
@@ -156,6 +177,9 @@ export function buildPayloadFromForm(
     payload.departure_time_window = fusedWindow;
     payload.title = state.title.trim();
     payload.description = state.description.trim();
+    payload.service_subtype = null;
+    payload.escort_seats = 0;
+    payload.share_mode = null;
     if (!payload.origin_address) {
       return { ok: false, errorKey: "error.service_address_required" };
     }
@@ -186,6 +210,9 @@ export function buildPayloadFromForm(
     payload.destination_address = payload.service_address;
     payload.title = state.title.trim();
     payload.description = state.description.trim();
+    payload.service_subtype = null;
+    payload.escort_seats = 0;
+    payload.share_mode = null;
     if (!payload.service_address) {
       return { ok: false, errorKey: "error.service_address_required" };
     }

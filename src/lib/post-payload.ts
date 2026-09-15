@@ -1,3 +1,9 @@
+import type {
+  DeliverServiceSubtype,
+  ServiceSubtype,
+  TravelServiceSubtype,
+} from "@/lib/safety/nightServicePolicy";
+
 export type PostType = "demand" | "provider";
 export type PostCategory = "deliver" | "buy" | "travel" | "onsite" | "errand";
 export type DeliveryMode = "spot" | "door";
@@ -27,6 +33,7 @@ export interface PostPayload {
   vehicle_brand?: string | null;
   vehicle_color?: string | null;
   transport_mode?: string | null;
+  service_subtype?: ServiceSubtype | null;
   departure_date: string;
   departure_time_window: string;
   estimated_arrival_time: string | null;
@@ -64,11 +71,7 @@ export {
   DELIVER_SERVICE_SUBTYPES,
   TRAVEL_SERVICE_SUBTYPES,
 } from "@/lib/safety/nightServicePolicy";
-export type {
-  DeliverServiceSubtype,
-  ServiceSubtype,
-  TravelServiceSubtype,
-} from "@/lib/safety/nightServicePolicy";
+export type { DeliverServiceSubtype, ServiceSubtype, TravelServiceSubtype };
 
 export const POST_CATEGORIES: readonly PostCategory[] = [
   "travel",

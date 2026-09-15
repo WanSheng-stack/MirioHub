@@ -197,7 +197,8 @@ assert.ok(passkeyVerify.includes("reserve_challenge_with_lease_v86"));
 
 // TEST 9 — trusted publish not rewritten
 assertNotRewritten("publish_active_post_idempotent_v86");
-assert.ok(trustedPublish.includes("publish_active_post_idempotent_v86"));
+assert.ok(trustedPublish.includes("publish_active_post_idempotent_v98"));
+assert.equal(trustedPublish.includes("publish_active_post_idempotent_v86"), false);
 
 // Extra contracts
 assert.ok(migration.includes("REVOKE ALL ON FUNCTION public.insert_stage1_post_v86"));

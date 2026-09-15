@@ -487,9 +487,11 @@ Onsite由Demand填写固定酬劳或“面议”，Provider填写自己提供该
 ## 21. 当前工程状态与禁令
 
 当前代码基线已经具有双帖表、合同/容量/事件基础、Cargo V2、统一匹配准入
-及已执行的 v95 原子请求边界。PHASE 6.7C.2A 增加 service_subtype 与
-地区夜间策略表，但 v96 尚未执行，夜间策略默认关闭，发帖 UI 尚未采集
-这些字段。
+及已执行的 v95 原子请求边界。v96 已执行（service_subtype 列与夜间策略表，
+RS seed enabled=false）。PostGIS 已迁至 extensions 且 v97 verify 15/15 PASS。
+PHASE 6.7C.2B 通过未 apply 的 v98 把 Travel/Deliver service_subtype 接入
+发布表单与三条 Stage-1 发布路径；Buy/Onsite/Errand 必须保持 NULL。夜间
+策略运行时仍未启用。creation 仍为 false。
 
 Travel/Deliver 新帖必须有合法 service_subtype 才能发布；历史
 service_subtype=NULL 的 active 帖不得进入新 Match Hall 和新顺路请求。
@@ -501,7 +503,8 @@ deliver/cargo_only、buy、errand。交通方式与是否载人分离：摩托�
 也不能绕过。地区夜间策略按精确地区优先、再
 `policy_version DESC` / `effective_from DESC` / `id ASC` 只取一条。
 数据库阻止同 scope/version 重复和多条 open-ended 行，但不能完全阻止
-不同版本的有限有效区间重叠。
+不同版本的有限有效区间重叠。admission-hash 写入上述夜间字段必须使用
+v99 或更高版本，不得与 v97 PostGIS / v98 发布 subtype 冲突。
 
 后续：
 

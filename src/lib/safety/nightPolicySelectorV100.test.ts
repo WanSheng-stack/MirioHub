@@ -132,6 +132,24 @@ assert.ok(guard.includes("night_service_policies missing"));
 assert.ok(guard.includes("RLS not enabled"));
 assert.ok(guard.includes("FORCE RLS must be off"));
 assert.ok(guard.includes("app-role privilege present"));
+assert.ok(guard.includes("SELECT need.attname INTO v_missing"));
+assert.equal(guard.includes("SELECT a.attname INTO v_missing"), false);
+{
+  const missingCol = guard.indexOf("SELECT need.attname INTO v_missing");
+  assert.ok(missingCol >= 0);
+  const stmtEnd = guard.indexOf("LIMIT 1;", missingCol);
+  assert.ok(stmtEnd > missingCol);
+  const stmt = guard.slice(missingCol, stmtEnd + "LIMIT 1;".length);
+  assert.ok(stmt.includes("AS need(attname)"));
+  assert.ok(stmt.includes("FROM pg_catalog.pg_attribute a"));
+  assert.ok(stmt.includes("AND a.attname = need.attname"));
+  // alias a must only appear inside the NOT EXISTS subquery
+  const notExists = stmt.indexOf("WHERE NOT EXISTS (");
+  assert.ok(notExists > 0);
+  const before = stmt.slice(0, notExists);
+  assert.equal(/\ba\.attname\b/.test(before), false);
+  assert.equal(/\bFROM pg_catalog\.pg_attribute a\b/.test(before), false);
+}
 assert.ok(guard.includes("RS seed version 1 row_count must be 1"));
 assert.ok(guard.includes("RS seed enabled must be false"));
 assert.ok(guard.includes("RS seed blocked_start_local drift"));
@@ -170,16 +188,37 @@ assert.equal(body.includes("upper("), false);
 assert.equal(body.includes("Europe/Belgrade"), false);
 assert.equal(body.includes("CREATE TABLE"), false);
 
-// Selector body must be byte-identical to f0d4bf5 (guard/ACL/comments may change)
+// Selector body must be byte-identical to 9a21dd1 (alias fix is guard-only)
 {
   const baselineMig = execFileSync(
     "git",
-    ["show", "f0d4bf5981ddd6988c51529993b542a1f5e19d30:" + V100_REL],
+    ["show", "9a21dd15469f88038509d55d2db3a5a0c100869d:" + V100_REL],
     { cwd: repoRoot, encoding: "utf8" },
   );
   const baselineBody = stripSqlComments(dollarBody(baselineMig, "fn"));
-  assert.equal(body, baselineBody, "selector $fn$ body drifted from f0d4bf5");
+  assert.equal(body, baselineBody, "selector $fn$ body drifted from 9a21dd1");
 }
+
+// First DDL must remain after the complete guard DO block
+{
+  const guardEnd = migration.indexOf("END $$;");
+  assert.ok(guardEnd > 0);
+  const createFn = migration.indexOf(
+    "CREATE FUNCTION public.select_night_service_policy_v100(",
+  );
+  assert.ok(createFn > guardEnd, "CREATE FUNCTION must follow complete guard");
+  assert.equal(
+    migration.slice(0, guardEnd).includes("CREATE FUNCTION"),
+    false,
+  );
+}
+
+// v100 verify must stay frozen at HEAD baseline for this alias-only fix
+assert.equal(
+  gitDiff(V100_VERIFY_REL),
+  "",
+  "v100 verify must be zero-diff for 42P01 alias fix",
+);
 
 const returnsBlock = migration.slice(
   migration.indexOf("RETURNS TABLE"),

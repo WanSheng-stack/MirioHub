@@ -468,3 +468,6 @@ OWNER against PostGIS.
 - **Risk if wired early:** calling selector from client roles (blocked by ACL);
   treating disabled RS seed as an active policy (selector correctly returns
   zero rows).
+- **2C.3C.2:** Guard missing-column probe used `SELECT a.attname` while `a`
+  existed only inside `NOT EXISTS`; fixed to `SELECT need.attname` (SQLSTATE
+  42P01). Selector body/verify unchanged; v100 still unapplied after ROLLBACK.

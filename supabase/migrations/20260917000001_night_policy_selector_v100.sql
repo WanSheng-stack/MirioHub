@@ -35,7 +35,7 @@ BEGIN
     RAISE EXCEPTION 'v100_guard: night_service_policies missing';
   END IF;
 
-  SELECT a.attname INTO v_missing
+  SELECT need.attname INTO v_missing
   FROM (
     VALUES
       ('id'),

@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3B — trusted origin resolver + Nominatim parse (offline).
+ * PHASE 6.7C.2C.3B.1 — trusted origin resolver + Nominatim parse (offline).
  * Tests pure assembly via route-kms; statically verifies server-only wrapper.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/geo/trustedOriginResolver.test.ts
  */
@@ -15,9 +15,12 @@ import {
   buildNominatimSearchUrl,
   fetchNominatimSearchHit,
   geocodeAddress,
+  isValidLatLon,
   normalizeGeocodeAddress,
   osrmRouteKmsFromCoords,
+  parseFiniteCoordinate,
   parseNominatimSearchResponse,
+  requireTrustedCountryCode,
   resolveTimezoneFromCoords,
   resolveTrustedOriginWithLookup,
   toGeographyPointWkt,
@@ -67,6 +70,11 @@ async function main() {
     "\u00C5".normalize("NFC"),
   );
   assert.ok(NOMINATIM_GEOCODE_TIMEOUT_MS === 8000);
+
+  assert.equal(parseFiniteCoordinate(""), null);
+  assert.equal(parseFiniteCoordinate("   "), null);
+  assert.equal(isValidLatLon(90, 180), true);
+  assert.equal(isValidLatLon(91, 0), false);
 
   const url = buildNominatimSearchUrl("Belgrade");
   assert.ok(url.includes("format=jsonv2"));
@@ -157,16 +165,35 @@ async function main() {
     [{ lat: "44", lon: "Infinity", address: { country_code: "rs" } }],
     [{ lat: "91", lon: "20", address: { country_code: "rs" } }],
     [{ lat: "44", lon: "181", address: { country_code: "rs" } }],
+    [{ lat: "", lon: "20", address: { country_code: "rs" } }],
+    [{ lat: "44", lon: "", address: { country_code: "rs" } }],
+    [{ lat: "   ", lon: "20", address: { country_code: "rs" } }],
+    [{ lat: "44", lon: "   ", address: { country_code: "rs" } }],
   ]) {
     const p = parseNominatimSearchResponse(bad);
     assert.equal(p.ok, false, JSON.stringify(bad));
     if (!p.ok) assert.equal(p.errorKey, "error.geocode_invalid_response");
   }
 
+  // Missing country → coordinate hit ok; trusted authority fail-closed
   {
     const p = parseNominatimSearchResponse([{ lat: "44.8", lon: "20.4" }]);
-    assert.equal(p.ok, false);
-    if (!p.ok) assert.equal(p.errorKey, "error.geocode_country_unavailable");
+    assert.equal(p.ok, true);
+    if (p.ok) {
+      assert.equal(p.value.countryCode, null);
+      const country = requireTrustedCountryCode(p.value);
+      assert.equal(country.ok, false);
+      if (!country.ok) {
+        assert.equal(country.errorKey, "error.geocode_country_unavailable");
+      }
+      const trusted = assembleTrustedGeocodePoint(p.value, () => [
+        "Europe/Belgrade",
+      ]);
+      assert.equal(trusted.ok, false);
+      if (!trusted.ok) {
+        assert.equal(trusted.errorKey, "error.geocode_country_unavailable");
+      }
+    }
   }
 
   for (const cc of [undefined, "", "   ", "SRB", "12", "r"]) {
@@ -175,8 +202,26 @@ async function main() {
         ? [{ lat: "44.8", lon: "20.4", address: {} }]
         : [{ lat: "44.8", lon: "20.4", address: { country_code: cc } }];
     const p = parseNominatimSearchResponse(body);
-    assert.equal(p.ok, false, `cc=${String(cc)}`);
-    if (!p.ok) assert.equal(p.errorKey, "error.geocode_country_unavailable");
+    assert.equal(p.ok, true, `cc=${String(cc)} still coordinate hit`);
+    if (p.ok) {
+      assert.equal(p.value.countryCode, null);
+      const trusted = assembleTrustedGeocodePoint(p.value, () => [
+        "Europe/Belgrade",
+      ]);
+      assert.equal(trusted.ok, false);
+      if (!trusted.ok) {
+        assert.equal(trusted.errorKey, "error.geocode_country_unavailable");
+      }
+    }
+  }
+
+  {
+    const res = await resolveTrustedOriginWithLookup("no-country", {
+      fetchImpl: mockFetchJson(200, [{ lat: "44.8", lon: "20.4" }]),
+      findTimezones: () => ["Europe/Belgrade"],
+    });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.errorKey, "error.geocode_country_unavailable");
   }
 
   {
@@ -299,14 +344,8 @@ async function main() {
     assert.ok(resolverSrc.includes("geoTzFind"));
     assert.ok(resolverSrc.includes("resolveTrustedOriginWithLookup"));
     const routeKmsSrc = read("src/lib/route-kms.ts");
-    assert.equal(
-      /from\s+["']geo-tz["']/.test(routeKmsSrc),
-      false,
-    );
-    assert.equal(
-      /import\s+["']server-only["']/.test(routeKmsSrc),
-      false,
-    );
+    assert.equal(/from\s+["']geo-tz["']/.test(routeKmsSrc), false);
+    assert.equal(/import\s+["']server-only["']/.test(routeKmsSrc), false);
     assert.equal(
       /from\s+["']@\/lib\/geo\/trustedOriginResolver["']/.test(routeKmsSrc),
       false,
@@ -375,4 +414,7 @@ async function main() {
   console.log("trustedOriginResolver.test.ts: ok");
 }
 
-void main();
+void main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -23,29 +23,48 @@ export const NOMINATIM_SEARCH_URL =
 export const NOMINATIM_USER_AGENT = "MirioHub/1.0";
 export const NOMINATIM_GEOCODE_TIMEOUT_MS = 8000;
 export const NOMINATIM_REVALIDATE_SECONDS = 86400;
+/** Minimum gap between public Nominatim HTTP calls within one batch. */
+export const NOMINATIM_PUBLIC_MIN_INTERVAL_MS = 1000;
 
 /** Shared public OSRM host for Route + Table. Do not add a second base URL. */
 export const OSRM_DRIVING_HOST = "https://router.project-osrm.org";
+export const OSRM_ROUTE_TIMEOUT_MS = 8000;
 
 export type NominatimHitErrorKey =
   | "error.geocode_failed"
   | "error.geocode_timeout"
-  | "error.geocode_invalid_response"
-  | "error.geocode_country_unavailable";
+  | "error.geocode_invalid_response";
 
-export type NominatimHitOk = {
+/**
+ * Coordinate-level hit from one Nominatim candidate.
+ * countryCode may be null — still usable for geocodeAddress / OSRM.
+ */
+export type NominatimCoordinateHit = {
   lat: number;
   lon: number;
-  countryCode: string;
+  countryCode: string | null;
 };
 
-export type NominatimHitResult =
-  | { ok: true; value: NominatimHitOk }
+/**
+ * @deprecated Prefer NominatimCoordinateHit. Kept as alias for callers that
+ * previously required countryCode; use requireTrustedCountry / assemble for authority.
+ */
+export type NominatimHitOk = NominatimCoordinateHit;
+
+export type NominatimCoordinateResult =
+  | { ok: true; value: NominatimCoordinateHit }
   | { ok: false; errorKey: NominatimHitErrorKey };
+
+/** @deprecated Alias of NominatimCoordinateResult */
+export type NominatimHitResult = NominatimCoordinateResult;
 
 export type NominatimFetchDeps = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** Injected sleep between sequential public Nominatim calls (default 1000ms). */
+  delayMs?: (ms: number) => Promise<void>;
+  /** Override min interval (tests may set 0). */
+  minIntervalMs?: number;
 };
 
 /** NFC + trim; empty → null. */
@@ -55,18 +74,68 @@ export function normalizeGeocodeAddress(raw: string): string | null {
   return normalized === "" ? null : normalized;
 }
 
+/**
+ * Single coordinate parser for all lat/lon entry points.
+ * Accepts number or non-blank numeric string; rejects blank, NaN, Infinity, OOB.
+ */
+export function parseFiniteCoordinate(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return null;
+    return n;
+  }
+  return null;
+}
+
+export function isValidLatLon(lat: number, lon: number): boolean {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180
+  );
+}
+
 function isAbortError(err: unknown): boolean {
   if (err == null || typeof err !== "object") return false;
   const name = (err as { name?: string }).name;
   return name === "AbortError" || name === "TimeoutError";
 }
 
+function defaultDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Parse Nominatim search JSON (jsonv2 + addressdetails) into one hit.
- * Pure: no network. Does not return raw Nominatim payloads to callers beyond
- * lat/lon/countryCode.
+ * Parse optional ISO alpha-2 country from Nominatim address object.
+ * Returns null when missing/invalid — does not fail the coordinate hit.
  */
-export function parseNominatimSearchResponse(data: unknown): NominatimHitResult {
+export function parseOptionalCountryCode(address: unknown): string | null {
+  if (address == null || typeof address !== "object" || Array.isArray(address)) {
+    return null;
+  }
+  const ccRaw = (address as Record<string, unknown>).country_code;
+  if (typeof ccRaw !== "string") return null;
+  const countryCode = ccRaw.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(countryCode)) return null;
+  return countryCode;
+}
+
+/**
+ * Parse Nominatim search JSON into a coordinate hit (country optional).
+ * Pure: no network. Does not return raw Nominatim payloads.
+ */
+export function parseNominatimSearchResponse(
+  data: unknown,
+): NominatimCoordinateResult {
   if (!Array.isArray(data)) {
     return { ok: false, errorKey: "error.geocode_invalid_response" };
   }
@@ -78,41 +147,20 @@ export function parseNominatimSearchResponse(data: unknown): NominatimHitResult 
     return { ok: false, errorKey: "error.geocode_invalid_response" };
   }
   const row = first as Record<string, unknown>;
-  const latRaw = row.lat;
-  const lonRaw = row.lon;
-  const lat =
-    typeof latRaw === "number"
-      ? latRaw
-      : typeof latRaw === "string"
-        ? Number(latRaw)
-        : NaN;
-  const lon =
-    typeof lonRaw === "number"
-      ? lonRaw
-      : typeof lonRaw === "string"
-        ? Number(lonRaw)
-        : NaN;
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    return { ok: false, errorKey: "error.geocode_invalid_response" };
-  }
-  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+  const lat = parseFiniteCoordinate(row.lat);
+  const lon = parseFiniteCoordinate(row.lon);
+  if (lat == null || lon == null || !isValidLatLon(lat, lon)) {
     return { ok: false, errorKey: "error.geocode_invalid_response" };
   }
 
-  const address = row.address;
-  if (address == null || typeof address !== "object" || Array.isArray(address)) {
-    return { ok: false, errorKey: "error.geocode_country_unavailable" };
-  }
-  const ccRaw = (address as Record<string, unknown>).country_code;
-  if (typeof ccRaw !== "string") {
-    return { ok: false, errorKey: "error.geocode_country_unavailable" };
-  }
-  const countryCode = ccRaw.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(countryCode)) {
-    return { ok: false, errorKey: "error.geocode_country_unavailable" };
-  }
-
-  return { ok: true, value: { lat, lon, countryCode } };
+  return {
+    ok: true,
+    value: {
+      lat,
+      lon,
+      countryCode: parseOptionalCountryCode(row.address),
+    },
+  };
 }
 
 export function buildNominatimSearchUrl(normalizedAddress: string): string {
@@ -126,13 +174,13 @@ export function buildNominatimSearchUrl(normalizedAddress: string): string {
 }
 
 /**
- * One Nominatim search hit: coords + country_code from the same candidate.
+ * One Nominatim search coordinate hit (country may be null).
  * Injectable fetch for offline tests.
  */
 export async function fetchNominatimSearchHit(
   address: string,
   deps: NominatimFetchDeps = {},
-): Promise<NominatimHitResult> {
+): Promise<NominatimCoordinateResult> {
   const normalized = normalizeGeocodeAddress(address);
   if (normalized == null) {
     return { ok: false, errorKey: "error.geocode_failed" };
@@ -174,11 +222,14 @@ export async function fetchNominatimSearchHit(
 }
 
 /**
- * Compatibility wrapper: lat/lon or null. Delegates to unified Nominatim hit
- * parser; drops country (callers that need country use the trusted origin module).
+ * Compatibility wrapper: lat/lon or null.
+ * Succeeds when coordinates are valid even if country_code is missing.
  */
-export async function geocodeAddress(address: string): Promise<GeocodeResult> {
-  const hit = await fetchNominatimSearchHit(address);
+export async function geocodeAddress(
+  address: string,
+  deps: NominatimFetchDeps = {},
+): Promise<GeocodeResult> {
+  const hit = await fetchNominatimSearchHit(address, deps);
   if (!hit.ok) return null;
   return { lat: hit.value.lat, lon: hit.value.lon };
 }
@@ -190,6 +241,7 @@ export function toGeographyPointWkt(lat: number, lon: number): string {
 
 export type OsrmFetchDeps = {
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 };
 
 /**
@@ -201,20 +253,40 @@ export async function osrmRouteKmsFromCoords(
 ): Promise<number | null> {
   if (points.length < 2) return null;
   for (const p of points) {
-    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null;
+    if (!isValidLatLon(p.lat, p.lon)) return null;
   }
   const coordStr = points.map((p) => `${p.lon},${p.lat}`).join(";");
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const timeoutMs = deps.timeoutMs ?? OSRM_ROUTE_TIMEOUT_MS;
   try {
     const res = await fetchImpl(
       `${OSRM_DRIVING_HOST}/route/v1/driving/${coordStr}?overview=false`,
-      { next: { revalidate: 3600 } } as RequestInit,
+      {
+        signal: AbortSignal.timeout(timeoutMs),
+        next: { revalidate: 3600 },
+      } as RequestInit,
     );
     if (!res.ok) return null;
-    const json = (await res.json()) as { routes?: { distance: number }[] };
-    const meters = json.routes?.[0]?.distance;
-    if (meters == null || !Number.isFinite(meters)) return null;
-    return meters / 1000;
+    let json: unknown;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+    if (json == null || typeof json !== "object" || Array.isArray(json)) {
+      return null;
+    }
+    const routes = (json as { routes?: unknown }).routes;
+    if (!Array.isArray(routes) || routes.length < 1) return null;
+    const first = routes[0];
+    if (first == null || typeof first !== "object" || Array.isArray(first)) {
+      return null;
+    }
+    const distance = (first as { distance?: unknown }).distance;
+    if (typeof distance !== "number" || !Number.isFinite(distance) || distance < 0) {
+      return null;
+    }
+    return distance / 1000;
   } catch {
     return null;
   }
@@ -264,6 +336,7 @@ export function resolveTimezoneFromCoords(
   lon: number,
   findTimezones: TimezoneLookup,
 ): { ok: true; timezone: string } | { ok: false } {
+  if (!isValidLatLon(lat, lon)) return { ok: false };
   let raw: string[];
   try {
     raw = findTimezones(lat, lon);
@@ -280,12 +353,34 @@ export function resolveTimezoneFromCoords(
 }
 
 /**
- * Build trusted point from an already-parsed Nominatim hit (no second geocode).
+ * Require a legal ISO country on a coordinate hit for trusted authority.
+ */
+export function requireTrustedCountryCode(
+  hit: NominatimCoordinateHit,
+):
+  | { ok: true; countryCode: string }
+  | { ok: false; errorKey: "error.geocode_country_unavailable" } {
+  if (hit.countryCode == null || !/^[A-Z]{2}$/.test(hit.countryCode)) {
+    return { ok: false, errorKey: "error.geocode_country_unavailable" };
+  }
+  return { ok: true, countryCode: hit.countryCode };
+}
+
+/**
+ * Build trusted point from an already-parsed Nominatim coordinate hit
+ * (no second geocode). Requires country + unique IANA timezone.
  */
 export function assembleTrustedGeocodePoint(
-  hit: NominatimHitOk,
+  hit: NominatimCoordinateHit,
   findTimezones: TimezoneLookup,
 ): TrustedOriginResolution {
+  if (!isValidLatLon(hit.lat, hit.lon)) {
+    return { ok: false, errorKey: "error.geocode_invalid_response" };
+  }
+  const country = requireTrustedCountryCode(hit);
+  if (!country.ok) {
+    return { ok: false, errorKey: country.errorKey };
+  }
   const tz = resolveTimezoneFromCoords(hit.lat, hit.lon, findTimezones);
   if (!tz.ok) {
     return { ok: false, errorKey: "error.geocode_timezone_unavailable" };
@@ -296,7 +391,7 @@ export function assembleTrustedGeocodePoint(
       lat: hit.lat,
       lon: hit.lon,
       wkt: toGeographyPointWkt(hit.lat, hit.lon),
-      countryCode: hit.countryCode,
+      countryCode: country.countryCode,
       timezone: tz.timezone,
     },
   };
@@ -320,19 +415,61 @@ export async function resolveTrustedOriginWithLookup(
   return assembleTrustedGeocodePoint(hit.value, deps.findTimezones);
 }
 
+/**
+ * Resolve many addresses sequentially for public Nominatim:
+ * - original order preserved
+ * - normalized duplicates share one HTTP call
+ * - injectable delay between distinct HTTP calls (≥1000ms by default)
+ */
+export async function fetchNominatimCoordinateHitsSequential(
+  locations: string[],
+  deps: NominatimFetchDeps = {},
+): Promise<
+  | { ok: true; hits: NominatimCoordinateHit[] }
+  | { ok: false; errorKey: NominatimHitErrorKey }
+> {
+  const delay = deps.delayMs ?? defaultDelay;
+  const minInterval = deps.minIntervalMs ?? NOMINATIM_PUBLIC_MIN_INTERVAL_MS;
+  const cache = new Map<string, NominatimCoordinateHit>();
+  const hits: NominatimCoordinateHit[] = [];
+  let httpCalls = 0;
+
+  for (const raw of locations) {
+    const normalized = normalizeGeocodeAddress(raw);
+    if (normalized == null) {
+      return { ok: false, errorKey: "error.geocode_failed" };
+    }
+    const cached = cache.get(normalized);
+    if (cached) {
+      hits.push(cached);
+      continue;
+    }
+    if (httpCalls > 0 && minInterval > 0) {
+      await delay(minInterval);
+    }
+    const result = await fetchNominatimSearchHit(normalized, deps);
+    httpCalls += 1;
+    if (!result.ok) {
+      return { ok: false, errorKey: result.errorKey };
+    }
+    cache.set(normalized, result.value);
+    hits.push(result.value);
+  }
+
+  return { ok: true, hits };
+}
+
 /** Fetch total route kms for ordered location strings via Nominatim + OSRM. */
 export async function fetchOrderedRouteKms(
   locations: string[],
+  deps: NominatimFetchDeps & OsrmFetchDeps = {},
 ): Promise<number | null> {
   const cleaned = locations.map((l) => l.trim()).filter(Boolean);
   if (cleaned.length < 2) return null;
-  const hits = await Promise.all(cleaned.map((a) => fetchNominatimSearchHit(a)));
-  if (hits.some((h) => !h.ok)) return null;
-  const coords = hits.map((h) => ({
-    lat: (h as { ok: true; value: NominatimHitOk }).value.lat,
-    lon: (h as { ok: true; value: NominatimHitOk }).value.lon,
-  }));
-  return osrmRouteKmsFromCoords(coords);
+  const batch = await fetchNominatimCoordinateHitsSequential(cleaned, deps);
+  if (!batch.ok) return null;
+  const coords = batch.hits.map((h) => ({ lat: h.lat, lon: h.lon }));
+  return osrmRouteKmsFromCoords(coords, deps);
 }
 
 /**
@@ -375,12 +512,13 @@ export async function computeRouteDistance(
   locations: string[],
   sliceOrigin?: string,
   sliceDestination?: string,
+  deps: NominatimFetchDeps & OsrmFetchDeps = {},
 ): Promise<RouteDistanceResult> {
   const cleaned = locations.map((l) => l.trim()).filter(Boolean);
   if (cleaned.length < 2) {
     return { ok: false, errorKey: "error.address_required" };
   }
-  const totalKms = await fetchOrderedRouteKms(cleaned);
+  const totalKms = await fetchOrderedRouteKms(cleaned, deps);
   if (totalKms == null) {
     return { ok: false, errorKey: "error.route_distance_failed" };
   }

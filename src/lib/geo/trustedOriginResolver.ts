@@ -13,8 +13,8 @@ import {
   NOMINATIM_GEOCODE_TIMEOUT_MS,
   assembleTrustedGeocodePoint,
   resolveTrustedOriginWithLookup,
+  type NominatimCoordinateHit,
   type NominatimFetchDeps,
-  type NominatimHitOk,
   type TimezoneLookup,
   type TrustedGeocodePoint,
   type TrustedOriginResolution,
@@ -22,6 +22,7 @@ import {
 
 export { NOMINATIM_GEOCODE_TIMEOUT_MS };
 export type {
+  NominatimCoordinateHit,
   TrustedGeocodePoint,
   TrustedOriginResolution,
   TimezoneLookup,
@@ -33,15 +34,17 @@ export type ResolveTrustedOriginDeps = NominatimFetchDeps & {
 
 export {
   assertValidIanaTimezone,
+  requireTrustedCountryCode,
   resolveTimezoneFromCoords,
 } from "@/lib/route-kms";
 
 /**
- * Build trusted point from an already-parsed Nominatim hit (no second geocode).
- * Defaults to offline geo-tz.
+ * Build trusted point from an already-parsed Nominatim coordinate hit
+ * (no second geocode). Defaults to offline geo-tz.
+ * Requires countryCode + unique IANA timezone.
  */
 export function trustedPointFromNominatimHit(
-  hit: NominatimHitOk,
+  hit: NominatimCoordinateHit,
   findTimezones: TimezoneLookup = geoTzFind,
 ): TrustedOriginResolution {
   return assembleTrustedGeocodePoint(hit, findTimezones);

@@ -238,7 +238,7 @@ checks AS (
       'secdef='||COALESCE(prosecdef::text, 'null'),
       'vol='||COALESCE(provolatile_text, 'null'),
       'result='||COALESCE(result_def, 'null'))
-      FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
+      FROM exact_resolved WHERE proname = 'insert_stage1_post_v98') AS observed,
     'one insert_v98 uuid SECURITY DEFINER VOLATILE fixed search_path'::text AS expected
   UNION ALL SELECT 101, 'rpc', 'insert_v98 writes subtype',
     CASE WHEN EXISTS (

@@ -132,9 +132,22 @@ assert.ok(guard.includes("night_service_policies missing"));
 assert.ok(guard.includes("RLS not enabled"));
 assert.ok(guard.includes("FORCE RLS must be off"));
 assert.ok(guard.includes("app-role privilege present"));
-assert.ok(guard.includes("RS country-default seed missing"));
+assert.ok(guard.includes("RS seed version 1 row_count must be 1"));
 assert.ok(guard.includes("RS seed enabled must be false"));
+assert.ok(guard.includes("RS seed blocked_start_local drift"));
+assert.ok(guard.includes("RS seed blocked_end_local drift"));
+assert.ok(guard.includes("RS seed effective_from must be set"));
+assert.ok(guard.includes("RS seed effective_until must be NULL"));
+assert.ok(guard.includes("system_configs id=1 must exist exactly once"));
 assert.ok(guard.includes("matching_request_creation_enabled must be false"));
+assert.ok(guard.includes("WHERE id = 1"));
+assert.ok(guard.includes("policy_version = 1"));
+assert.equal(guard.includes("ORDER BY p.policy_version ASC, p.id ASC"), false);
+assert.equal(
+  /FROM public\.system_configs\s+LIMIT 1/.test(guard),
+  false,
+  "system_configs must not use unconditional LIMIT 1",
+);
 assert.ok(guard.includes("v99A facts helper missing"));
 assert.ok(guard.includes("create_match_request_v99 missing"));
 assert.ok(guard.includes("select_night_service_policy_v100 already exists"));
@@ -157,6 +170,17 @@ assert.equal(body.includes("upper("), false);
 assert.equal(body.includes("Europe/Belgrade"), false);
 assert.equal(body.includes("CREATE TABLE"), false);
 
+// Selector body must be byte-identical to f0d4bf5 (guard/ACL/comments may change)
+{
+  const baselineMig = execFileSync(
+    "git",
+    ["show", "f0d4bf5981ddd6988c51529993b542a1f5e19d30:" + V100_REL],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  const baselineBody = stripSqlComments(dollarBody(baselineMig, "fn"));
+  assert.equal(body, baselineBody, "selector $fn$ body drifted from f0d4bf5");
+}
+
 const returnsBlock = migration.slice(
   migration.indexOf("RETURNS TABLE"),
   migration.indexOf("LANGUAGE sql"),
@@ -174,6 +198,18 @@ assert.ok(verifySql.includes("::text"));
 assert.equal(verifySql.includes("INSERT "), false);
 assert.equal(verifySql.includes("UPDATE "), false);
 assert.equal(verifySql.includes("DELETE "), false);
+assert.equal(
+  /INSERT\s+INTO\s+public\.night_service_policies/i.test(migration + verifySql),
+  false,
+);
+assert.equal(
+  /UPDATE\s+public\.night_service_policies/i.test(migration + verifySql),
+  false,
+);
+assert.equal(
+  /DELETE\s+FROM\s+public\.night_service_policies/i.test(migration + verifySql),
+  false,
+);
 
 const checkOrders = [
   ...verifySql.matchAll(/^\s*\(\s*(\d+)\s*,/gm),
@@ -194,6 +230,75 @@ assert.ok(verifySql.includes("matching creation still false"));
 assert.ok(verifySql.includes("RS seed still enabled=false"));
 assert.ok(verifySql.includes("no select_night_service_policy_v101"));
 assert.ok(verifySql.includes("provolatile::text"));
+
+// 2C.3C.1 — false-PASS boundary locks
+assert.ok(migration.includes("WHERE id = 1"));
+assert.ok(verifySql.includes("WHERE id = 1"));
+assert.equal(
+  /FROM public\.system_configs\s+LIMIT 1/.test(migration),
+  false,
+);
+assert.equal(
+  /FROM public\.system_configs\s+LIMIT 1/.test(verifySql),
+  false,
+);
+assert.ok(verifySql.includes("policy_version = 1"));
+assert.ok(verifySql.includes("row_count"));
+assert.ok(guard.includes("count(*)::int INTO v_seed_n"));
+assert.ok(/v_seed_n IS DISTINCT FROM 1/.test(guard));
+assert.ok(migration.includes("TIME '22:00'"));
+assert.ok(migration.includes("TIME '06:00'"));
+assert.ok(verifySql.includes("TIME '22:00'"));
+assert.ok(verifySql.includes("TIME '06:00'"));
+assert.ok(verifySql.includes("(SELECT effective_until FROM rs_seed) IS NULL"));
+assert.ok(guard.includes("RS seed effective_until must be NULL"));
+assert.ok(verifySql.includes("effective_from + interval '1 second'"));
+assert.equal(verifySql.includes("2026-06-15 12:00:00+00"), true); // invalid-input checks may keep fixed time
+// check 21 must not use the fixed date for RS disabled proof
+{
+  const check21Start = verifySql.indexOf("'RS disabled returns zero rows'");
+  assert.ok(check21Start > 0);
+  const check21Block = verifySql.slice(check21Start, check21Start + 900);
+  assert.equal(check21Block.includes("2026-06-15"), false);
+  assert.ok(check21Block.includes("seed_count=1 evaluation_time_set=true selector_count=0"));
+  assert.ok(check21Block.includes("seed_count"));
+  assert.ok(check21Block.includes("evaluation_time_set"));
+  assert.ok(check21Block.includes("selector_count"));
+}
+assert.ok(verifySql.includes("rs_disabled AS"));
+assert.ok(verifySql.includes("ELSE NULL"));
+assert.ok(
+  verifySql.includes("WHEN s.row_count = 1 AND s.effective_from IS NOT NULL"),
+);
+assert.ok(
+  verifySql.includes("bool_and(c.result = 'PASS') OVER ()") &&
+    verifySql.includes("THEN 'PASS'") &&
+    verifySql.includes("ELSE 'FAIL'") &&
+    verifySql.includes("END AS overall_pass"),
+);
+// overall_pass must be text PASS/FAIL, not boolean bool_and alone
+assert.equal(
+  /\(SELECT bool_and\(x\.result = 'PASS'\) FROM checks x\) AS overall_pass/.test(
+    verifySql,
+  ),
+  false,
+);
+assert.ok(verifySql.includes("THEN 'PASS'"));
+assert.ok(verifySql.includes("ELSE 'FAIL'"));
+
+assert.ok(migration.includes("CREATE FUNCTION public.select_night_service_policy_v100("));
+assert.ok(migration.includes(FN_IDENTITY) || migration.includes(FN_REGPROCEDURE));
+assert.ok(migration.includes("REVOKE ALL ON FUNCTION public.select_night_service_policy_v100"));
+assert.ok(migration.includes("GRANT EXECUTE ON FUNCTION public.select_night_service_policy_v100"));
+assert.equal(migration.includes("CREATE TABLE"), false);
+assert.equal(migration.includes("CREATE TRIGGER"), false);
+assert.equal(migration.includes("CREATE SEQUENCE"), false);
+assert.equal(
+  stripSqlComments(migration).includes(
+    "CREATE FUNCTION public.select_night_service_policy_v101",
+  ),
+  false,
+);
 
 // ── Frozen paths ────────────────────────────────────────────────────────────
 for (const path of FROZEN) {

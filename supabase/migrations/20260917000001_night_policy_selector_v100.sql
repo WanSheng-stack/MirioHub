@@ -24,6 +24,12 @@ DECLARE
   v_ver integer;
   v_creation boolean;
   v_priv text;
+  v_seed_n integer;
+  v_blocked_start time;
+  v_blocked_end time;
+  v_eff_from timestamptz;
+  v_eff_until timestamptz;
+  v_cfg_n integer;
 BEGIN
   IF to_regclass('public.night_service_policies') IS NULL THEN
     RAISE EXCEPTION 'v100_guard: night_service_policies missing';
@@ -191,16 +197,36 @@ BEGIN
     RAISE EXCEPTION 'v100_guard: night_service_policies PUBLIC privilege present';
   END IF;
 
-  SELECT p.enabled, p.timezone_name, p.policy_version
-  INTO v_enabled, v_tz, v_ver
+  -- Exact RS country-default seed version 1 only (future RS versions allowed).
+  SELECT count(*)::int INTO v_seed_n
   FROM public.night_service_policies p
   WHERE p.country_code = 'RS'
     AND p.region_code IS NULL
-  ORDER BY p.policy_version ASC, p.id ASC
-  LIMIT 1;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'v100_guard: RS country-default seed missing';
+    AND p.policy_version = 1;
+  IF v_seed_n IS DISTINCT FROM 1 THEN
+    RAISE EXCEPTION 'v100_guard: RS seed version 1 row_count must be 1 (got %)', v_seed_n;
   END IF;
+
+  SELECT
+    p.enabled,
+    p.timezone_name,
+    p.policy_version,
+    p.blocked_start_local,
+    p.blocked_end_local,
+    p.effective_from,
+    p.effective_until
+  INTO
+    v_enabled,
+    v_tz,
+    v_ver,
+    v_blocked_start,
+    v_blocked_end,
+    v_eff_from,
+    v_eff_until
+  FROM public.night_service_policies p
+  WHERE p.country_code = 'RS'
+    AND p.region_code IS NULL
+    AND p.policy_version = 1;
   IF v_enabled IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'v100_guard: RS seed enabled must be false';
   END IF;
@@ -210,13 +236,31 @@ BEGIN
   IF v_ver IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'v100_guard: RS seed policy_version must be 1';
   END IF;
+  IF v_blocked_start IS DISTINCT FROM TIME '22:00' THEN
+    RAISE EXCEPTION 'v100_guard: RS seed blocked_start_local drift';
+  END IF;
+  IF v_blocked_end IS DISTINCT FROM TIME '06:00' THEN
+    RAISE EXCEPTION 'v100_guard: RS seed blocked_end_local drift';
+  END IF;
+  IF v_eff_from IS NULL THEN
+    RAISE EXCEPTION 'v100_guard: RS seed effective_from must be set';
+  END IF;
+  IF v_eff_until IS NOT NULL THEN
+    RAISE EXCEPTION 'v100_guard: RS seed effective_until must be NULL';
+  END IF;
 
   IF to_regclass('public.system_configs') IS NULL THEN
     RAISE EXCEPTION 'v100_guard: system_configs missing';
   END IF;
+  SELECT count(*)::int INTO v_cfg_n
+  FROM public.system_configs
+  WHERE id = 1;
+  IF v_cfg_n IS DISTINCT FROM 1 THEN
+    RAISE EXCEPTION 'v100_guard: system_configs id=1 must exist exactly once (got %)', v_cfg_n;
+  END IF;
   SELECT matching_request_creation_enabled INTO v_creation
   FROM public.system_configs
-  LIMIT 1;
+  WHERE id = 1;
   IF v_creation IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'v100_guard: matching_request_creation_enabled must be false';
   END IF;

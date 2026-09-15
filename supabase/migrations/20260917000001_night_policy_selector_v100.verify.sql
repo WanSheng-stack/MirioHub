@@ -144,19 +144,51 @@ table_app_acl AS (
 ),
 rs_seed AS (
   SELECT
-    enabled,
-    timezone_name,
-    policy_version
+    count(*)::int AS row_count,
+    (array_agg(enabled ORDER BY id))[1] AS enabled,
+    (array_agg(timezone_name ORDER BY id))[1] AS timezone_name,
+    (array_agg(blocked_start_local ORDER BY id))[1] AS blocked_start_local,
+    (array_agg(blocked_end_local ORDER BY id))[1] AS blocked_end_local,
+    (array_agg(policy_version ORDER BY id))[1] AS policy_version,
+    (array_agg(effective_from ORDER BY id))[1] IS NOT NULL AS effective_from_set,
+    (array_agg(effective_until ORDER BY id))[1] AS effective_until,
+    (array_agg(effective_from ORDER BY id))[1] AS effective_from
   FROM public.night_service_policies
   WHERE country_code = 'RS'
     AND region_code IS NULL
-  ORDER BY policy_version ASC, id ASC
-  LIMIT 1
+    AND policy_version = 1
 ),
 creation AS (
-  SELECT matching_request_creation_enabled AS enabled
-  FROM public.system_configs
-  LIMIT 1
+  SELECT
+    (SELECT count(*)::int FROM public.system_configs WHERE id = 1) AS row_count,
+    (
+      SELECT matching_request_creation_enabled
+      FROM public.system_configs
+      WHERE id = 1
+    ) AS enabled
+),
+rs_disabled AS (
+  SELECT
+    s.row_count AS seed_count,
+    CASE
+      WHEN s.row_count = 1 AND s.effective_from IS NOT NULL
+      THEN s.effective_from + interval '1 second'
+      ELSE NULL
+    END AS evaluation_time,
+    CASE
+      WHEN s.row_count = 1 AND s.effective_from IS NOT NULL
+      THEN (
+        SELECT count(*)::int
+        FROM public.select_night_service_policy_v100(
+          'RS',
+          NULL,
+          'Europe/Belgrade',
+          s.effective_from + interval '1 second'
+        )
+      )
+      ELSE NULL
+    END AS selector_count
+  FROM rs_seed s
 ),
 src AS (
   SELECT
@@ -202,10 +234,6 @@ src AS (
 ),
 call_counts AS (
   SELECT
-    (SELECT count(*)::int
-     FROM public.select_night_service_policy_v100(
-       'RS', NULL, 'Europe/Belgrade', timestamptz '2026-06-15 12:00:00+00'
-     )) AS rs_disabled_n,
     (SELECT count(*)::int
      FROM public.select_night_service_policy_v100(
        'rs', NULL, 'Europe/Belgrade', timestamptz '2026-06-15 12:00:00+00'
@@ -471,9 +499,20 @@ checks AS (
         21,
         'behavior'::text,
         'RS disabled returns zero rows'::text,
-        CASE WHEN (SELECT rs_disabled_n FROM call_counts) = 0 THEN 'PASS' ELSE 'FAIL' END,
-        COALESCE((SELECT rs_disabled_n::text FROM call_counts), 'NULL'),
-        '0'::text
+        CASE
+          WHEN (SELECT seed_count FROM rs_disabled) = 1
+           AND (SELECT evaluation_time FROM rs_disabled) IS NOT NULL
+           AND (SELECT selector_count FROM rs_disabled) = 0
+          THEN 'PASS'
+          ELSE 'FAIL'
+        END,
+        format(
+          'seed_count=%s evaluation_time_set=%s selector_count=%s',
+          (SELECT seed_count FROM rs_disabled),
+          ((SELECT evaluation_time FROM rs_disabled) IS NOT NULL),
+          COALESCE((SELECT selector_count::text FROM rs_disabled), 'NULL')
+        ),
+        'seed_count=1 evaluation_time_set=true selector_count=0'::text
       ),
       (
         22,
@@ -528,30 +567,46 @@ checks AS (
         'config'::text,
         'matching creation still false'::text,
         CASE
-          WHEN (SELECT enabled FROM creation) IS FALSE THEN 'PASS'
+          WHEN (SELECT row_count FROM creation) = 1
+           AND (SELECT enabled FROM creation) IS FALSE
+          THEN 'PASS'
           ELSE 'FAIL'
         END,
-        COALESCE((SELECT enabled::text FROM creation), 'NULL'),
-        'false'::text
+        format(
+          'row_count=%s enabled=%s',
+          (SELECT row_count FROM creation),
+          COALESCE((SELECT enabled::text FROM creation), 'NULL')
+        ),
+        'row_count=1 enabled=false'::text
       ),
       (
         29,
         'seed'::text,
         'RS seed still enabled=false'::text,
         CASE
-          WHEN (SELECT enabled FROM rs_seed) IS FALSE
+          WHEN (SELECT row_count FROM rs_seed) = 1
+           AND (SELECT enabled FROM rs_seed) IS FALSE
            AND (SELECT timezone_name FROM rs_seed) = 'Europe/Belgrade'
+           AND (SELECT blocked_start_local FROM rs_seed) = TIME '22:00'
+           AND (SELECT blocked_end_local FROM rs_seed) = TIME '06:00'
            AND (SELECT policy_version FROM rs_seed) = 1
+           AND (SELECT effective_from_set FROM rs_seed) IS TRUE
+           AND (SELECT effective_until FROM rs_seed) IS NULL
           THEN 'PASS'
           ELSE 'FAIL'
         END,
         format(
-          'enabled=%s tz=%s ver=%s',
-          (SELECT enabled FROM rs_seed),
-          (SELECT timezone_name FROM rs_seed),
-          (SELECT policy_version FROM rs_seed)
+          'row_count=%s enabled=%s timezone=%s blocked_start=%s blocked_end=%s version=%s effective_from_set=%s effective_until=%s',
+          (SELECT row_count FROM rs_seed),
+          COALESCE((SELECT enabled::text FROM rs_seed), 'NULL'),
+          COALESCE((SELECT timezone_name FROM rs_seed), 'NULL'),
+          COALESCE((SELECT blocked_start_local::text FROM rs_seed), 'NULL'),
+          COALESCE((SELECT blocked_end_local::text FROM rs_seed), 'NULL'),
+          COALESCE((SELECT policy_version::text FROM rs_seed), 'NULL'),
+          COALESCE((SELECT effective_from_set::text FROM rs_seed), 'NULL'),
+          COALESCE((SELECT effective_until::text FROM rs_seed), 'NULL')
         ),
-        'enabled=false tz=Europe/Belgrade ver=1'::text
+        'row_count=1 enabled=false timezone=Europe/Belgrade blocked_start=22:00:00 blocked_end=06:00:00 version=1 effective_from_set=true effective_until=NULL'::text
       ),
       (
         30,
@@ -590,7 +645,10 @@ scored AS (
     c.result,
     c.observed,
     c.expected,
-    (SELECT bool_and(x.result = 'PASS') FROM checks x) AS overall_pass
+    CASE
+      WHEN bool_and(c.result = 'PASS') OVER () THEN 'PASS'
+      ELSE 'FAIL'
+    END AS overall_pass
   FROM checks c
 )
 SELECT

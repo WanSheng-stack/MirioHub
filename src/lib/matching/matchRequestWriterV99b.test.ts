@@ -382,9 +382,15 @@ const v99Files = readdirSync(join(repoRoot, "supabase/migrations"))
 assert.ok(v99Files.includes("20260916000001_match_admission_authority_v99.sql"));
 assert.ok(v99Files.includes("20260916000002_match_request_writer_v99b.sql"));
 assert.ok(v99Files.includes("20260916000002_match_request_writer_v99b.verify.sql"));
+// v100 night policy selector is a later phase; writer v100 must not exist yet.
+assert.ok(
+  v99Files.some((n) => n.includes("night_policy_selector_v100")),
+  "expected night_policy_selector_v100 migration present",
+);
 assert.equal(
-  v99Files.some((n) => n.includes("v100")),
+  v99Files.some((n) => /create_match_request.*v100|match_request_writer_v100/.test(n)),
   false,
 );
+assert.equal(migration.includes("CREATE FUNCTION public.create_match_request_v100"), false);
 
 console.log("matchRequestWriterV99b.test.ts: ok");

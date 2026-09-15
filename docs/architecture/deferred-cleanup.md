@@ -127,8 +127,8 @@ must not modify it.
 - **Current state:** PHASE 6.7B.1B wires the parse-only Cargo V2 contract into
   `ApplicationPayloadV1` and the unmounted `MatchRequestSheet`. Demand
   applicants to a Provider deliver post send `cargoRequirement` (overall
-  required LÃWÃH + two needs-help booleans). Provider applicants to a
-  Demand deliver post send `cargoCapacity` (this-trip remaining LÃWÃH + two
+  required LÃÂWÃÂH + two needs-help booleans). Provider applicants to a
+  Demand deliver post send `cargoCapacity` (this-trip remaining LÃÂWÃÂH + two
   can-help booleans). Handling flags remain **advisory preferences only**.
   The sheet is not mounted on PostCard or the homepage. No match-request
   API writes `match_requests` / `match_contracts` / `agreement_snapshot`.
@@ -172,8 +172,8 @@ PHASE 6.6A.1 does **not** set `security_invoker=true` on it.
 After a successful v92 apply, Security Advisor is expected to still report
 **two** items:
 
-1. `public.public_posts_safe` â?Security Definer View (later dedicated phase)
-2. `public.spatial_ref_sys` â?RLS Disabled in Public (owned by
+1. `public.public_posts_safe` Ã¢Â?Security Definer View (later dedicated phase)
+2. `public.spatial_ref_sys` Ã¢Â?RLS Disabled in Public (owned by
    `supabase_admin`; SQL Editor `postgres` cannot ALTER it; escalated to
    Supabase Support; intentionally outside v92)
 
@@ -201,7 +201,7 @@ OWNER against PostGIS.
   `match_contracts`) exist, are empty, have RLS enabled, FORCE RLS off, no
   policies, and no app-role grants. Manual apply did **not** write
   `schema_migrations`; absence from migration history must not be treated as
-  âv93 undeployedâ? Do not re-run v93, forge history, or edit the executed
+  Ã¢ÂÂv93 undeployedÃ¢Â? Do not re-run v93, forge history, or edit the executed
   v93 files. `MatchRequestSheet` remains unmounted. No writer.
 - **Resolved in 6.7A.2A:** array CHECK bypasses (2-D / NULL / non-1 lower);
   one-way invitation timestamps; coarse v90 column existence guard; verify
@@ -220,7 +220,7 @@ OWNER against PostGIS.
 
 ## 13. Allocation and event foundation (v94 schema only)
 
-- **Current state:** PHASE 6.7A.3B.1 â?the v94 main migration is already
+- **Current state:** PHASE 6.7A.3B.1 Ã¢Â?the v94 main migration is already
   deployed (six tables exist) and is frozen. Do not rewrite or re-run it.
   First live verify returned 267 PASS + 1 false FAIL on check 930
   (`volume_cm3 numeric-then-multiply`). PostgreSQL renders
@@ -239,9 +239,9 @@ OWNER against PostGIS.
   tables: RLS on, not FORCE, no policy, no GRANT, UUID defaults, no
   RPC/trigger/sequence. No production writer, API, or UI. Checklist item
   keys are a child table; `confirmed_items text[]` and 2016 pairwise array
-  comparisons were removed in 6.7A.3A. `item_order` 1â?4 UNIQUE per
+  comparisons were removed in 6.7A.3A. `item_order` 1Ã¢Â?4 UNIQUE per
   acceptance caps cardinality. **non-empty checklist items is a future
-  transactional writer invariant** â?DDL does not require a header to have
+  transactional writer invariant** Ã¢Â?DDL does not require a header to have
   a child row. Actor-is-contract-participant is also a future writer
   re-read, not a single-table CHECK. `contract_events.event_payload` CHECK
   blocks listed sensitive keys at the **top level only**; the future writer
@@ -273,7 +273,7 @@ OWNER against PostGIS.
   is 69/69 PASS. PHASE 6.7C.2A / 6.7C.2A.1 v96 is applied (verify 78/78):
   `posts.service_subtype`, `origin_country_code`, `origin_timezone`,
   `night_policy_version`, and `night_service_policies` with an RS country
-  default (`Europe/Belgrade`, 22:00â?6:00, enabled=false). Historical
+  default (`Europe/Belgrade`, 22:00Ã¢Â?6:00, enabled=false). Historical
   travel/deliver NULL subtype is legacy_unknown and must fail closed for
   new matching. Travel/Deliver also fail closed when `transportMode` is
   NULL, empty, or unknown, even if night policy is disabled. Unique
@@ -353,7 +353,7 @@ OWNER against PostGIS.
   must not submit `origin_country_code`, `origin_timezone`, or
   `night_policy_version` as authority; those columns remain NULL on the
   current publish path. Night policy remains enabled=false. Creation stays
-  false. v90âv97 and `init.sql` are untouched applied history.
+  false. v90Ã¢ÂÂv97 and `init.sql` are untouched applied history.
 - **Still unresolved / later phases:** admission writer/API switch (after
   v99A snapshot); night runtime enforcement; trusted country/IANA timezone
   resolver; request list/resend/accept; MatchRequestSheet.
@@ -386,7 +386,7 @@ OWNER against PostGIS.
   deployed v95/v99A helpers in place.
 - **Earliest safe production use:** snapshot helpers are applied; production
   matching still gated by creation=false and v99B writer apply.
-- **Preconditions:** v95âv98 applied; PostGIS in `extensions`;
+- **Preconditions:** v95Ã¢ÂÂv98 applied; PostGIS in `extensions`;
   creation=false; night RS enabled=false.
 - **Risk if wired early:** enabling creation before the fail-closed writer.
 
@@ -397,10 +397,10 @@ OWNER against PostGIS.
   `/api/matching/requests` loads snapshot/writer v99; keeps
   `inspect_match_request_v95`. Exact retry precedes creation/lock/hash.
   Fresh requests require exact subtype pair match and full v98
-  subtypeÃtransport allowlists on both posts. Creation and RS night
+  subtypeÃÂtransport allowlists on both posts. Creation and RS night
   remain false. PHASE 6.7C.2C.2A repaired pair/transport gates pre-apply.
 - **Still unresolved / later phases:** trusted country/timezone publish
-  path (see Â§19); night runtime; enabling creation.
+  path (see ÃÂ§19); night runtime; enabling creation.
 - **Future replacement:** later writers must not CREATE OR REPLACE v99B
   in place without a new forward-only version.
 - **Earliest safe production use:** matching creation still off; posts
@@ -412,28 +412,54 @@ OWNER against PostGIS.
 ## 19. Trusted origin geocode / country / timezone resolver (2C.3B / 2C.3B.1)
 
 - **Current state:** PHASE 6.7C.2C.3B.1. Server-only module
-  `src/lib/geo/trustedOriginResolver.ts` resolves origin address → lat/lon/WKT
+  `src/lib/geo/trustedOriginResolver.ts` resolves origin address â lat/lon/WKT
   / ISO country / IANA timezone. Two-level typed results in `route-kms.ts`:
-  (1) **coordinate hit** — valid lat/lon, `countryCode` may be null (enough for
-  `geocodeAddress` / OSRM); (2) **trusted authority** — requires `^[A-Z]{2}$`
+  (1) **coordinate hit** â valid lat/lon, `countryCode` may be null (enough for
+  `geocodeAddress` / OSRM); (2) **trusted authority** â requires `^[A-Z]{2}$`
   country + unique valid IANA timezone (fail closed). Country comes from the
   **same** Nominatim search hit as coordinates (`format=jsonv2`,
   `addressdetails=1`, 8s timeout); timezone from offline `geo-tz` only.
   Unified `parseFiniteCoordinate` / `isValidLatLon` for all lat/lon entry
   points. Public Nominatim batch geocode is **sequential** (original order,
-  normalized-address dedupe, injectable ≥1000ms delay between HTTP calls) —
+  normalized-address dedupe, injectable â¥1000ms delay between HTTP calls) â
   this is a local courtesy throttle only, **not** a global rate-limit across
   serverless instances. Before production scale, replace public Nominatim with
   a compliant commercial provider or self-hosted Nominatim. Does **not** write
   posts, does not change publish APIs, does not add authority fields to
   CanonicalStage1Payload / toRpcStage1Payload / RPCs. `posts_update_own`
   bypass remains for a later writer/API cutover.
-- **Still unresolved / later phases:** night policy selector SQL; service_role
-  publish writer; three API cutover; column/trigger seal on authority fields;
-  enabling creation / RS night; Nominatim provider replacement / self-host.
+- **Still unresolved / later phases:** service_role publish writer; three API
+  cutover; column/trigger seal on authority fields; enabling creation / RS
+  night; Nominatim provider replacement / self-host.
 - **Earliest safe production use:** resolver is library-only until a later
   publish phase wires it; public Nominatim is not production-scale-ready.
 - **Preconditions:** v99B applied; creation=false; night RS enabled=false.
 - **Risk if wired early:** treating resolver output as DB authority before
   service_role-only writer and UPDATE seal ship; public Nominatim rate limits
   across concurrent serverless instances.
+
+## 20. Night policy selector v100 (2C.3C)
+
+- **Current state:** PHASE 6.7C.2C.3C. Forward-only unapplied migration
+  `20260917000001_night_policy_selector_v100.sql` adds
+  `public.select_night_service_policy_v100(text,text,text,timestamptz)` —
+  LANGUAGE sql, SECURITY DEFINER, STABLE, fixed
+  `search_path=pg_catalog, public, pg_temp`. service_role EXECUTE only;
+  PUBLIC/anon/authenticated revoked. Does **not** grant table ACL on
+  `night_service_policies`. Fail-closed on illegal country/region/timezone/
+  evaluation_time (zero rows, no uppercase coercion, no Europe/Belgrade
+  fallback). Selector requires `enabled IS TRUE`, exact timezone match,
+  inclusive `effective_from`, exclusive `effective_until`, exact region over
+  country default, then `policy_version DESC`, `effective_from DESC`,
+  `id ASC`, `LIMIT 1`. Current RS seed remains `enabled=false` so selector
+  returns zero rows. Pure TS fixture mirror:
+  `src/lib/safety/nightPolicySelectorV100.ts` (tests only).
+- **Still unresolved / later phases:** service_role publish writer that calls
+  this selector; API cutover; posts_update_own seal; enabling creation / RS
+  night.
+- **Earliest safe production use:** after live apply of v100 and a later
+  writer phase; not before.
+- **Preconditions:** v96 table+RS seed; v99A/v99B functions; creation=false.
+- **Risk if wired early:** calling selector from client roles (blocked by ACL);
+  treating disabled RS seed as an active policy (selector correctly returns
+  zero rows).

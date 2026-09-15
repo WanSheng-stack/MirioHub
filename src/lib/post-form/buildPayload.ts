@@ -9,6 +9,7 @@ import {
   travelShowsLuggageControls,
   travelShowsPassengerControls,
 } from "@/lib/safety/serviceSubtypePublish";
+import { getTransportPolicy } from "@/lib/transport/transportPolicy";
 
 export type BuildPayloadResult =
   | { ok: true; payload: PostPayload & Record<string, unknown> }
@@ -35,6 +36,7 @@ export function buildPayloadFromForm(
 
   const cleaned = cleanupFieldsForServiceSubtype({
     category: state.category,
+    postType: state.post_type,
     serviceSubtype: state.service_subtype,
     escort_seats: state.escort_seats,
     max_companions: state.max_companions,
@@ -59,7 +61,7 @@ export function buildPayloadFromForm(
   const luggageActive =
     state.category === "deliver" ||
     (state.category === "travel" &&
-      travelShowsLuggageControls(state.service_subtype, cleaned.carry_luggage));
+      travelShowsLuggageControls(state.service_subtype));
 
   const payload: PostPayload & Record<string, unknown> = {
     post_type: state.post_type,
@@ -116,6 +118,10 @@ export function buildPayloadFromForm(
     if (!payload.origin_address || !payload.destination_address) {
       return { ok: false, errorKey: "error.address_required" };
     }
+    payload.transport_mode = state.transport_mode || null;
+    if (!payload.transport_mode) {
+      return { ok: false, errorKey: "error.transport_mode_required" };
+    }
     if (state.post_type === "provider") {
       const intermediate = state.waypoints.map((w) => w.trim()).filter(Boolean);
       payload.waypoints = [
@@ -126,14 +132,10 @@ export function buildPayloadFromForm(
       payload.provider_name = state.provider_name.trim() || null;
       payload.vehicle_brand = state.vehicle_brand.trim() || null;
       payload.vehicle_color = state.vehicle_color.trim() || null;
-      payload.transport_mode = state.transport_mode || null;
-      if (!payload.transport_mode) {
-        return { ok: false, errorKey: "error.transport_mode_required" };
-      }
-      const needsPlate =
-        state.transport_mode === "car" ||
-        state.transport_mode === "motorbike" ||
-        state.transport_mode === "van";
+      const needsPlate = Boolean(
+        state.transport_mode &&
+          getTransportPolicy(state.transport_mode)?.requiresPlate,
+      );
       if (needsPlate && !normalized_plate) {
         return { ok: false, errorKey: "error.invalid_plate" };
       }
@@ -142,7 +144,6 @@ export function buildPayloadFromForm(
       if (state.estimated_kms <= 0) {
         return { ok: false, errorKey: "error.route_distance_failed" };
       }
-      payload.transport_mode = null;
     }
     if (state.post_type === "demand" && state.category === "deliver") {
       payload.delivery_mode = state.delivery_mode;

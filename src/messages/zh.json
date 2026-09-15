@@ -116,6 +116,7 @@
     "item_price_required": "请填写商品价格。",
     "reference_photo_required": "价格面议时必须上传商品参考照片。",
     "submit_failed": "发布失败，请重试。",
+    "stage1_required": "请先完成第一阶段发布。已禁止浏览器直接写入帖子。",
     "missing_env": "缺少 Supabase 环境变量。",
     "not_found": "帖子不存在。",
     "post_denied_blurred": "暂时无法发布，如有疑问请联系客服。",
@@ -369,13 +370,24 @@
       "walking": "步行",
       "scooter": "滑板车",
       "bicycle": "自行车",
+      "ebike": "电动自行车",
       "motorbike": "摩托车",
       "subway": "地铁",
       "bus": "公交",
       "train": "火车",
       "flight": "飞机",
+      "ferry": "轮渡",
+      "passenger_boat": "客船",
+      "private_boat": "私人船",
       "car": "汽车",
-      "van": "面包车"
+      "van": "面包车（旧）",
+      "cargo_van": "货运面包车",
+      "light_truck": "轻卡",
+      "box_truck": "厢式货车",
+      "vehicle_with_trailer": "带拖车车辆",
+      "cargo_boat": "货船",
+      "private_cargo_boat": "私人货船",
+      "other_cargo_vehicle": "其他货运载具"
     }
   },
   "post": {

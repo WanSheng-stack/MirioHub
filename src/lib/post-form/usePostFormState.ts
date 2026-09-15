@@ -34,6 +34,7 @@ import {
   travelShowsLuggageControls,
   travelShowsPassengerControls,
 } from "@/lib/safety/serviceSubtypePublish";
+import { publishTransportModesForCategory } from "@/lib/auth/publishTransportMode";
 
 export type PostFormState = {
   post_type: PostType;
@@ -111,6 +112,7 @@ function applySubtypeCleanup(
 ): PostFormState {
   const cleaned = cleanupFieldsForServiceSubtype({
     category,
+    postType: state.post_type,
     serviceSubtype: service_subtype,
     escort_seats: state.escort_seats,
     max_companions: state.max_companions,
@@ -121,6 +123,9 @@ function applySubtypeCleanup(
     count_xlarge: state.count_xlarge,
     carry_luggage: state.carry_luggage,
   });
+  const allowedModes = new Set(
+    publishTransportModesForCategory(category) as readonly string[],
+  );
   return {
     ...state,
     category,
@@ -133,16 +138,10 @@ function applySubtypeCleanup(
     count_large: cleaned.count_large,
     count_xlarge: cleaned.count_xlarge,
     carry_luggage: cleaned.carry_luggage,
-    // Travel ↔ Deliver must not keep the other lane's illegal subtype residue
-    // or Travel modes on Deliver vehicles.
     transport_mode:
-      category === "deliver" &&
-      state.transport_mode !== "" &&
-      state.transport_mode !== "van"
-        ? ""
-        : category === "travel" && state.transport_mode === "van"
-          ? ""
-          : state.transport_mode,
+      state.transport_mode && allowedModes.has(state.transport_mode)
+        ? state.transport_mode
+        : "",
   };
 }
 
@@ -380,7 +379,7 @@ export function usePostFormState() {
   );
 
   const visibility = useMemo(() => {
-    const { post_type, category, service_subtype, carry_luggage } = state;
+    const { post_type, category, service_subtype } = state;
     const route = isDeliverOrTravel(category);
     const local = isOnsiteOrErrand(category);
     const buy = category === "buy";
@@ -389,13 +388,11 @@ export function usePostFormState() {
     const showShareMode =
       route &&
       (travelShowsPassengerControls(service_subtype) ||
-        deliverShowsEscortShare(service_subtype));
+        deliverShowsEscortShare(service_subtype, post_type));
     const showLuggage =
       category === "deliver" ||
-      (category === "travel" &&
-        travelShowsLuggageControls(service_subtype, carry_luggage));
-    const showCarryLuggageToggle =
-      category === "travel" && service_subtype === "passenger";
+      (category === "travel" && travelShowsLuggageControls(service_subtype));
+    const showCarryLuggageToggle = false;
     const showFeeDemand = route && post_type === "demand";
     const showTitleDesc = !route;
     const showProviderAssets = post_type === "provider" && (route || buy);
@@ -405,6 +402,7 @@ export function usePostFormState() {
       category === "travel" &&
       travelShowsPassengerControls(service_subtype);
     const showServiceSubtype = route;
+    const showTransportMode = route;
     return {
       route,
       local,
@@ -420,6 +418,7 @@ export function usePostFormState() {
       showEscortSeats,
       showMaxCompanions,
       showServiceSubtype,
+      showTransportMode,
     };
   }, [state]);
 
@@ -427,7 +426,7 @@ export function usePostFormState() {
     const luggageActive =
       state.category === "deliver" ||
       (state.category === "travel" &&
-        travelShowsLuggageControls(state.service_subtype, state.carry_luggage));
+        travelShowsLuggageControls(state.service_subtype));
     const p: Partial<PostPayload> = {
       post_type: state.post_type,
       category: state.category,
@@ -451,7 +450,10 @@ export function usePostFormState() {
     else p.share_mode = null;
     if (state.category === "deliver") {
       p.escort_seats =
-        state.service_subtype === "cargo_with_escort" ? 1 : 0;
+        state.post_type === "demand" &&
+        state.service_subtype === "cargo_with_escort"
+          ? 1
+          : 0;
     } else if (travelShowsPassengerControls(state.service_subtype)) {
       p.escort_seats =
         state.share_mode === "private" ? 4 : state.max_companions;

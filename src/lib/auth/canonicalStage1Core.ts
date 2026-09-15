@@ -12,9 +12,9 @@ import crypto from "crypto";
 import { calculateFinalFee } from "@/lib/post-fee";
 import { mergeDepartureWindow } from "@/lib/post-time-windows";
 import {
-  parseV1TransportMode,
-  type ValidV1TransportMode,
-} from "@/lib/auth/v1TransportMode";
+  parsePublishTransportMode,
+  type PublishTransportMode,
+} from "@/lib/auth/publishTransportMode";
 import type { ServiceSubtype } from "@/lib/safety/nightServicePolicy";
 import {
   assertNoBrowserNightAuthorityFields,
@@ -46,7 +46,7 @@ export type CanonicalStage1Payload = {
   bump_fee_minor: number;
   currency: string;
   locale: "zh" | "en" | "sr";
-  transport_mode: ValidV1TransportMode | null;
+  transport_mode: PublishTransportMode | null;
   service_subtype: ServiceSubtype | null;
 };
 
@@ -184,7 +184,7 @@ export function normalizeCanonicalStage1(
   const localeRaw = String(raw.locale ?? "sr").trim().toLowerCase();
   const locale = (LOCALES.has(localeRaw) ? localeRaw : "sr") as "zh" | "en" | "sr";
 
-  const transport = parseV1TransportMode(raw.transport_mode);
+  const transport = parsePublishTransportMode(category, raw.transport_mode);
   if (!transport.ok) {
     throw new CanonicalStage1Error(transport.errorKey);
   }
@@ -203,6 +203,7 @@ export function normalizeCanonicalStage1(
 
   const cleaned = cleanupFieldsForServiceSubtype({
     category,
+    postType: post_type as "demand" | "provider",
     serviceSubtype: service_subtype,
     escort_seats,
     max_companions,

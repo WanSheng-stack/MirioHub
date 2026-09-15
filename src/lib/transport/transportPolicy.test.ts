@@ -92,7 +92,7 @@ const baseRaw: Record<string, unknown> = {
   waypoints: ["WP1"],
   share_mode: "share",
   delivery_mode: null,
-  count_small: 1,
+  count_small: 0,
   count_medium: 0,
   count_large: 0,
   count_xlarge: 0,
@@ -498,31 +498,53 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
   assert.equal(toRpcStage1Payload(payload, 100).transport_mode, "car");
 }
 
-// TEST Z — blank transport → null
+// TEST Z — Travel/Deliver blank transport rejected
 {
-  assert.equal(normalizeCanonicalStage1({ ...baseRaw, transport_mode: "" }).transport_mode, null);
-  assert.equal(
-    normalizeCanonicalStage1({ ...baseRaw, transport_mode: "   " }).transport_mode,
-    null,
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "" }),
+    "error.transport_mode_required",
+  );
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "   " }),
+    "error.transport_mode_required",
   );
   const missing = { ...baseRaw };
   delete missing.transport_mode;
-  assert.equal(normalizeCanonicalStage1(missing).transport_mode, null);
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1(missing),
+    "error.transport_mode_required",
+  );
 }
 
-// TEST AA — unknown / V2 reject
+// TEST AA — unknown / legacy van / cross-lane reject; deliver targets accepted
 {
   expectCanonicalReject(
-    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "cargo_van" }),
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "van" }),
     "error.invalid_transport_mode",
   );
   expectCanonicalReject(
     () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "hovercraft" }),
-    "error.invalid_transport_mode",
+    "error.illegal_transport_combo",
   );
   expectCanonicalReject(
     () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: 1 }),
     "error.invalid_transport_mode",
+  );
+  expectCanonicalReject(
+    () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: "cargo_van" }),
+    "error.illegal_transport_combo",
+  );
+  assert.equal(
+    normalizeCanonicalStage1({
+      ...baseRaw,
+      category: "deliver",
+      service_subtype: "cargo_only",
+      transport_mode: "cargo_van",
+      share_mode: null,
+      escort_seats: 0,
+      max_companions: 0,
+    }).transport_mode,
+    "cargo_van",
   );
 }
 
@@ -534,6 +556,7 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
     escort_seats: 0,
     max_companions: 0,
     share_mode: null,
+    transport_mode: "walking",
   };
   const a = normalizeCanonicalStage1({ ...travelItem, transport_mode: "walking" });
   const b = normalizeCanonicalStage1({ ...travelItem, transport_mode: "bicycle" });
@@ -547,17 +570,6 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
   assert.notEqual(ha, hashCanonicalStage1(b, 40, computeServerFeeMinor(40, b)));
   assert.notEqual(ha, hashCanonicalStage1(c, 40, computeServerFeeMinor(40, c)));
   assert.equal(ha, hashCanonicalStage1(a, 40, fee));
-  const blank = normalizeCanonicalStage1({ ...travelItem, transport_mode: "" });
-  const missing = { ...travelItem };
-  delete missing.transport_mode;
-  assert.equal(
-    hashCanonicalStage1(blank, 40, computeServerFeeMinor(40, blank)),
-    hashCanonicalStage1(
-      normalizeCanonicalStage1(missing),
-      40,
-      computeServerFeeMinor(40, normalizeCanonicalStage1(missing)),
-    ),
-  );
 }
 
 // TEST AE — trusted / shadow / Passkey share the same mapping
@@ -710,14 +722,15 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
   assert.equal(matching, "", matching);
 }
 
-// TEST AT — production UI still uses V1 modes only
+// TEST AT — publish UI uses target Travel modes + land Deliver targets
 {
   const postsSrc = read("src/lib/posts.ts");
   assert.ok(postsSrc.includes('"van"'));
-  assert.equal(postsSrc.includes("cargo_van"), false);
-  assert.equal(postsSrc.includes("vehicle_with_trailer"), false);
+  assert.ok(postsSrc.includes("cargo_van"));
+  assert.ok(postsSrc.includes("vehicle_with_trailer"));
   const publish = read("src/components/home/PublishBottomSheet.tsx");
-  assert.equal(publish.includes("cargo_van"), false);
+  assert.ok(publish.includes("publishTransportModesForCategory"));
+  assert.ok(read("src/lib/auth/publishTransportMode.ts").includes("cargo_van"));
   assert.deepEqual([...V1_STAGE1_TRANSPORT_MODES], [
     "walking",
     "scooter",

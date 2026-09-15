@@ -33,7 +33,7 @@ const baseRaw: Record<string, unknown> = {
   waypoints: ["WP1", "WP2"],
   share_mode: "share",
   delivery_mode: null,
-  count_small: 1,
+  count_small: 0,
   count_medium: 0,
   count_large: 0,
   count_xlarge: 0,
@@ -42,6 +42,7 @@ const baseRaw: Record<string, unknown> = {
   bump_fee: 0,
   currency: "EUR",
   locale: "en",
+  transport_mode: "car",
 };
 
 function expectReject(fn: () => unknown, key: string) {
@@ -128,6 +129,7 @@ expectReject(
       ...baseRaw,
       category: "buy",
       service_subtype: "passenger",
+      transport_mode: null,
       origin_address: "X",
       destination_address: "X",
     }),
@@ -138,6 +140,7 @@ assert.equal(
     ...baseRaw,
     category: "buy",
     service_subtype: null,
+    transport_mode: null,
     origin_address: "X",
     destination_address: "X",
   }).service_subtype,
@@ -165,12 +168,11 @@ expectReject(
   "error.browser_night_authority_rejected",
 );
 expectReject(
-  () =>
-    normalizeCanonicalStage1({
-      ...baseRaw,
-      post_type: "provider",
-      transport_mode: null,
-    }),
+  () => normalizeCanonicalStage1({ ...baseRaw, post_type: "provider", transport_mode: null }),
+  "error.transport_mode_required",
+);
+expectReject(
+  () => normalizeCanonicalStage1({ ...baseRaw, transport_mode: null }),
   "error.transport_mode_required",
 );
 expectReject(

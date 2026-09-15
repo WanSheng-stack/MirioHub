@@ -3,8 +3,8 @@ import type { AppLocale } from "@/i18n/routing";
 
 type Props = { params: Promise<{ locale: string }> };
 
-/** Legacy route — redirects to new publish page */
+/** Legacy route — Stage-1 publish lives on the home dual-channel sheet. */
 export default async function PublishRedirectPage({ params }: Props) {
   const { locale } = await params;
-  redirect({ href: "/posts/new", locale: locale as AppLocale });
+  redirect({ href: "/", locale: locale as AppLocale });
 }

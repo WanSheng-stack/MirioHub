@@ -43,13 +43,24 @@ export type TransportMode =
   | "walking"
   | "scooter"
   | "bicycle"
+  | "ebike"
   | "motorbike"
   | "subway"
   | "bus"
   | "train"
   | "flight"
+  | "ferry"
+  | "passenger_boat"
+  | "private_boat"
   | "car"
-  | "van";
+  | "van"
+  | "cargo_van"
+  | "light_truck"
+  | "box_truck"
+  | "vehicle_with_trailer"
+  | "cargo_boat"
+  | "private_cargo_boat"
+  | "other_cargo_vehicle";
 
 export type TravelServiceSubtype =
   | "passenger"

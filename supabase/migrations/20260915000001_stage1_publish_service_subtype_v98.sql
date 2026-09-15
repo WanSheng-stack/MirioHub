@@ -106,13 +106,43 @@ BEGIN
   END IF;
 
   v_transport_raw := NULLIF(btrim(COALESCE(p_post_payload->>'transport_mode', '')), '');
-  IF v_transport_raw IS NULL THEN
-    v_transport_mode := NULL;
-  ELSIF v_transport_raw IN (
-    'walking', 'scooter', 'bicycle', 'motorbike', 'subway', 'bus',
-    'train', 'flight', 'car', 'van'
-  ) THEN
+
+  -- Lane-exact transport allowlist. Legacy van rejected for new writes.
+  -- Water cargo modes are legal in SQL even if publish UI omits them.
+  IF v_category IN ('travel') THEN
+    IF v_transport_raw IS NULL THEN
+      RAISE EXCEPTION 'error.transport_mode_required';
+    END IF;
+    IF v_transport_raw = 'van' THEN
+      RAISE EXCEPTION 'error.invalid_transport_mode';
+    END IF;
+    IF v_transport_raw NOT IN (
+      'walking', 'bicycle', 'ebike', 'scooter', 'motorbike', 'car',
+      'subway', 'bus', 'train', 'flight', 'ferry',
+      'passenger_boat', 'private_boat'
+    ) THEN
+      RAISE EXCEPTION 'error.illegal_transport_combo';
+    END IF;
     v_transport_mode := v_transport_raw;
+  ELSIF v_category IN ('deliver') THEN
+    IF v_transport_raw IS NULL THEN
+      RAISE EXCEPTION 'error.transport_mode_required';
+    END IF;
+    IF v_transport_raw = 'van' THEN
+      RAISE EXCEPTION 'error.invalid_transport_mode';
+    END IF;
+    IF v_transport_raw NOT IN (
+      'cargo_van', 'light_truck', 'box_truck', 'vehicle_with_trailer',
+      'cargo_boat', 'private_cargo_boat', 'other_cargo_vehicle'
+    ) THEN
+      RAISE EXCEPTION 'error.illegal_transport_combo';
+    END IF;
+    v_transport_mode := v_transport_raw;
+  ELSIF v_category IN ('buy', 'onsite', 'errand') THEN
+    IF v_transport_raw IS NOT NULL THEN
+      RAISE EXCEPTION 'error.invalid_transport_mode';
+    END IF;
+    v_transport_mode := NULL;
   ELSE
     RAISE EXCEPTION 'error.invalid_transport_mode';
   END IF;
@@ -180,6 +210,43 @@ REVOKE ALL ON FUNCTION public.insert_stage1_post_v98(
 REVOKE ALL ON FUNCTION public.insert_stage1_post_v98(
   uuid, uuid, text, text, jsonb, bigint, text
 ) FROM service_role;
+
+-- Expand posts.transport_mode CHECK so target modes persist.
+-- Legacy van remains allowed for historical rows; v98 writers reject new van.
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT c.conname
+    FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'posts'
+      AND c.contype = 'c'
+      AND pg_catalog.pg_get_constraintdef(c.oid) ILIKE '%transport_mode%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.posts DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+
+  ALTER TABLE public.posts
+    DROP CONSTRAINT IF EXISTS posts_transport_mode_check;
+
+  ALTER TABLE public.posts
+    ADD CONSTRAINT posts_transport_mode_check CHECK (
+      transport_mode IS NULL
+      OR transport_mode IN (
+        'walking', 'bicycle', 'ebike', 'scooter', 'motorbike', 'car',
+        'subway', 'bus', 'train', 'flight', 'ferry',
+        'passenger_boat', 'private_boat',
+        'cargo_van', 'light_truck', 'box_truck', 'vehicle_with_trailer',
+        'cargo_boat', 'private_cargo_boat', 'other_cargo_vehicle',
+        'van'
+      )
+    );
+END;
+$$;
 
 
 -- ── Passkey ACTIVE (CASE C still status-only; no Stage-1 rewrite) ───────────

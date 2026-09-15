@@ -281,7 +281,7 @@ assert.ok(
 );
 
 // TEST D — publish fraud decision still works; browser does not receive metrics
-assert.ok(submitPost.includes("/api/posts/evaluate-publish-intercept"));
+assert.ok(completeContact.includes("evaluatePublishIntercept"));
 assert.ok(evaluateHelper.includes("evaluatePublishIntercept") || evaluatePublishRoute.includes("evaluatePublishIntercept"));
 assert.ok(fraudFlow.includes("processDemandPostIntercept"));
 assert.ok(fraudFlow.includes("processSupplyPostIntercept"));
@@ -289,7 +289,8 @@ assert.ok(evaluatePublishRoute.includes("evaluatePublishIntercept"));
 assert.equal(evaluatePublishRoute.includes("account_count"), false);
 assert.equal(evaluatePublishRoute.includes("last_post_at"), false);
 assert.equal(evaluatePublishRoute.includes("has_other_phone"), false);
-assert.ok(submitPost.includes("publishInterceptLeakedMetrics"));
+assert.equal(submitPost.includes('.from("posts").insert'), false);
+assert.ok(submitPost.includes("upsertPhoneHistory"));
 
 // TEST E — authenticated browser cannot write fraud_logs
 assert.ok(migration.includes("DROP POLICY IF EXISTS fraud_logs_insert_authenticated"));

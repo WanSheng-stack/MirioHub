@@ -116,6 +116,7 @@
     "item_price_required": "Cena artikla je obavezna.",
     "reference_photo_required": "Referentna fotografija je obavezna za dogovor.",
     "submit_failed": "Objava nije uspela. Pokušajte ponovo.",
+    "stage1_required": "Prvo završite Stage 1 objavu. Direktni unos više nije dozvoljen.",
     "missing_env": "Nedostaje Supabase konfiguracija.",
     "not_found": "Objava nije pronađena.",
     "post_denied_blurred": "Objava trenutno nije moguća. Kontaktirajte podršku.",
@@ -369,13 +370,24 @@
       "walking": "Peške",
       "scooter": "Trottinet",
       "bicycle": "Bicikl",
+      "ebike": "E-bicikl",
       "motorbike": "Motor",
       "subway": "Metro",
       "bus": "Autobus",
       "train": "Voz",
       "flight": "Avion",
+      "ferry": "Trajekt",
+      "passenger_boat": "Putnički brod",
+      "private_boat": "Privatni brod",
       "car": "Auto",
-      "van": "Kombi"
+      "van": "Kombi (stari)",
+      "cargo_van": "Teretni kombi",
+      "light_truck": "Laki kamion",
+      "box_truck": "Kamion sanduk",
+      "vehicle_with_trailer": "Vozilo sa prikolicom",
+      "cargo_boat": "Teretni brod",
+      "private_cargo_boat": "Privatni teretni brod",
+      "other_cargo_vehicle": "Drugo teretno vozilo"
     }
   },
   "post": {

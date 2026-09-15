@@ -14,8 +14,9 @@
  * Legacy four-tier luggage counts remain the production model.
  * Do not fold Deliver furniture/appliances into travelItemUnits.
  *
- * Do NOT replace `@/lib/posts` TRANSPORT_MODES. V2 names (cargo_van,
- * vehicle_with_trailer, boats, …) must not appear in production UI or CHECK.
+ * Do NOT replace `@/lib/posts` TRANSPORT_MODES wholesale for matching reads.
+ * New Stage-1 publish uses `@/lib/auth/publishTransportMode` (target modes).
+ * Legacy `van` remains readable only (`allowsNewPost=false`).
  */
 
 import { TRANSPORT_MODES } from "@/lib/posts";

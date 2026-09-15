@@ -5,6 +5,8 @@
 -- Catalog / config reads only. Do not write data.
 -- This statement names public.posts, public.system_configs, and
 -- public.night_service_policies. Missing relations fail closed at parse/plan time.
+-- TypeScript call-site proofs (v98 API wiring, no posts.insert, no v86 production
+-- callers) live in repo static tests — DB catalog cannot verify those.
 
 WITH
 roles AS (
@@ -29,7 +31,19 @@ fn AS (
     (strpos(lower(p.prosrc), 'service_subtype') > 0) AS writes_subtype,
     (strpos(lower(p.prosrc), 'origin_country_code') > 0
       AND strpos(lower(p.prosrc), 'error.browser_night_authority_rejected') > 0)
-      AS rejects_browser_authority
+      AS rejects_browser_authority,
+    (strpos(p.prosrc, 'cargo_van') > 0
+      AND strpos(p.prosrc, 'light_truck') > 0
+      AND strpos(p.prosrc, 'box_truck') > 0
+      AND strpos(p.prosrc, 'vehicle_with_trailer') > 0
+      AND strpos(p.prosrc, 'other_cargo_vehicle') > 0
+      AND strpos(p.prosrc, 'cargo_boat') > 0
+      AND strpos(p.prosrc, 'ebike') > 0
+      AND strpos(p.prosrc, 'ferry') > 0
+      AND strpos(p.prosrc, 'passenger_boat') > 0) AS has_target_transport_allowlist,
+    (strpos(p.prosrc, 'error.transport_mode_required') > 0) AS requires_transport_nonempty,
+    (strpos(p.prosrc, '''van''') > 0
+      AND strpos(p.prosrc, 'error.invalid_transport_mode') > 0) AS rejects_legacy_van_write
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
@@ -95,6 +109,9 @@ exact_resolved AS (
     f.proconfig,
     f.writes_subtype,
     f.rejects_browser_authority,
+    f.has_target_transport_allowlist,
+    f.requires_transport_nonempty,
+    f.rejects_legacy_van_write,
     f.proowner,
     f.proacl
   FROM exact e
@@ -177,6 +194,20 @@ checks AS (
       'rejects_browser_authority='||COALESCE(rejects_browser_authority::text, 'null'))
       FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
     'insert body references service_subtype and rejects browser authority keys'
+  UNION ALL SELECT 102, 'rpc', 'insert_v98 transport allowlist',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM exact_resolved r
+      WHERE r.proname = 'insert_stage1_post_v98'
+        AND r.has_target_transport_allowlist IS TRUE
+        AND r.requires_transport_nonempty IS TRUE
+        AND r.rejects_legacy_van_write IS TRUE
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT concat_ws(' | ',
+      'allowlist='||COALESCE(has_target_transport_allowlist::text, 'null'),
+      'requires_transport='||COALESCE(requires_transport_nonempty::text, 'null'),
+      'rejects_van='||COALESCE(rejects_legacy_van_write::text, 'null'))
+      FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
+    'insert SQL has Travel/Deliver target allowlist, requires transport, rejects legacy van'
   UNION ALL SELECT 110, 'rpc', 'publish_v98 identity',
     CASE WHEN EXISTS (
       SELECT 1 FROM exact_resolved r

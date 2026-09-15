@@ -5,7 +5,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/navigation";
 import type { AppLocale } from "@/i18n/routing";
 import type { PostFormController } from "@/lib/post-form/usePostFormState";
-import { submitPost } from "@/lib/post-form/submitPost";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
@@ -21,6 +20,8 @@ import {
   readPhoneSaveResponse,
   resetPhoneFeedback,
 } from "@/lib/profile/phoneSaveClient";
+import { publishTransportModesForCategory } from "@/lib/auth/publishTransportMode";
+import { getTransportPolicy } from "@/lib/transport/transportPolicy";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -48,17 +49,6 @@ interface IdentityActivationContext {
   expiresAt: number;
 }
 
-const TRAVEL_VEHICLE_OPTIONS: TransportMode[] = [
-  "car",
-  "motorbike",
-  "bus",
-  "train",
-  "bicycle",
-  "walking",
-];
-
-const DELIVER_VEHICLE_OPTIONS: TransportMode[] = ["van"];
-
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -77,7 +67,6 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     visibility,
     computedFee,
     feeReady,
-    dispatch,
     resetCurrentPublishForm,
   } = form;
   const [stage, setStage] = useState<1 | 2>(1);
@@ -319,16 +308,16 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
   if (!open) return null;
 
-  const needsPlate =
-    state.transport_mode === "car" ||
-    state.transport_mode === "motorbike" ||
-    state.transport_mode === "van";
+  const needsPlate = Boolean(
+    state.transport_mode &&
+      getTransportPolicy(state.transport_mode)?.requiresPlate,
+  );
 
   const isTravel = state.category === "travel";
   const isDeliver = state.category === "deliver";
-  const VEHICLE_OPTIONS_FOR_CATEGORY = isDeliver
-    ? DELIVER_VEHICLE_OPTIONS
-    : TRAVEL_VEHICLE_OPTIONS;
+  const VEHICLE_OPTIONS_FOR_CATEGORY = publishTransportModesForCategory(
+    state.category,
+  );
   const isActiveSuccess = pendingPostStatus === "active";
   const isDraftIdentity = pendingPostStatus === "draft";
   const accountIdentity = resolveAccountIdentityState(accountUser);
@@ -860,29 +849,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       return;
     }
 
-    // ── Path B: no pending post (legacy / direct publish without Passkey) ────
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("is_premium")
-      .eq("id", auth.user.id)
-      .maybeSingle();
-
-    const result = await submitPost(
-      supabase,
-      auth.user.id,
-      locale,
-      form.state,
-      Boolean(profile?.is_premium),
-    );
+    // Dual-channel Stage 1 must create pendingPostId before Stage 2 contact.
+    // Direct browser posts.insert (legacy Path B) is removed.
     setSubmitting(false);
-
-    if (!result.ok) {
-      // Strip leading "error." so rendering via t(`error.${key}`) stays clean
-      setErrorKey(result.errorKey.replace(/^error\./, ""));
-      return;
-    }
-    onClose();
-    router.push(`/posts/${result.postId}`);
+    setErrorKey("stage1_required");
+    setStage(1);
   }
 
   return (
@@ -970,6 +941,30 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                 </div>
 
                 <ServiceSubtypeFields form={form} />
+
+                {visibility.showTransportMode ? (
+                  <label className="block text-sm font-medium">
+                    {t("home.sheet.vehicle_type")}
+                    <select
+                      className={inputClass}
+                      value={state.transport_mode}
+                      onChange={(e) =>
+                        setField(
+                          "transport_mode",
+                          e.target.value as TransportMode | "",
+                        )
+                      }
+                      required
+                    >
+                      <option value="">—</option>
+                      {VEHICLE_OPTIONS_FOR_CATEGORY.map((mode) => (
+                        <option key={mode} value={mode}>
+                          {t(`hall.transport.${mode}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
 
                 {isTravel && visibility.showMaxCompanions ? (
                   <div className="space-y-3">
@@ -1074,41 +1069,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                       </p>
                     ) : null}
 
-                    {/* Luggage display block — under passenger stepper */}
-                    {visibility.showCarryLuggageToggle || visibility.showLuggage ? (
-                    <div className="space-y-3">
-                      {visibility.showCarryLuggageToggle ? (
-                      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3">
-                        <span className="text-sm font-medium text-zinc-800">
-                          {t("ui.has_luggage")}
-                        </span>
-                        <input
-                          type="checkbox"
-                          className="h-5 w-5 accent-emerald-600"
-                          checked={state.carry_luggage}
-                          onChange={(e) =>
-                            dispatch({
-                              type: "SET_CARRY_LUGGAGE",
-                              carry_luggage: e.target.checked,
-                            })
-                          }
-                        />
-                      </label>
-                      ) : null}
-                      <div
-                        className={`grid transition-all duration-300 ease-out ${
-                          visibility.showLuggage
-                            ? "grid-rows-[1fr] opacity-100"
-                            : "grid-rows-[0fr] opacity-0"
-                        }`}
-                      >
-                        <div className="overflow-hidden">
-                          {visibility.showLuggage ? (
-                            <LuggageCounters form={form} />
-                          ) : null}
-                        </div>
+                    {/* Luggage counters — only for subtypes that allow small items */}
+                    {visibility.showLuggage ? (
+                      <div className="space-y-3">
+                        <LuggageCounters form={form} />
                       </div>
-                    </div>
                     ) : null}
                   </div>
                 ) : null}

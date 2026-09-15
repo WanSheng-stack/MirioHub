@@ -116,6 +116,7 @@
     "item_price_required": "Item price is required.",
     "reference_photo_required": "Reference photo is required for negotiable pricing.",
     "submit_failed": "Failed to publish. Please try again.",
+    "stage1_required": "Complete Stage 1 publish first. Direct insert is no longer allowed.",
     "missing_env": "Missing Supabase configuration.",
     "not_found": "Post not found.",
     "post_denied_blurred": "Unable to publish at this time. Please contact support if you believe this is an error.",
@@ -369,13 +370,24 @@
       "walking": "Walking",
       "scooter": "Scooter",
       "bicycle": "Bicycle",
+      "ebike": "E-bike",
       "motorbike": "Motorbike",
       "subway": "Subway",
       "bus": "Bus",
       "train": "Train",
       "flight": "Flight",
+      "ferry": "Ferry",
+      "passenger_boat": "Passenger boat",
+      "private_boat": "Private boat",
       "car": "Car",
-      "van": "Van"
+      "van": "Van (legacy)",
+      "cargo_van": "Cargo van",
+      "light_truck": "Light truck",
+      "box_truck": "Box truck",
+      "vehicle_with_trailer": "Vehicle with trailer",
+      "cargo_boat": "Cargo boat",
+      "private_cargo_boat": "Private cargo boat",
+      "other_cargo_vehicle": "Other cargo vehicle"
     }
   },
   "post": {

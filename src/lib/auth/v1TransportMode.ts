@@ -1,16 +1,33 @@
 /**
- * Production V1 transport_mode allowlist for Stage 1 persistence.
- * Must stay aligned with live publish `TRANSPORT_MODES` (not V2 policy names).
- * Does not map van → cargo_van. Does not accept V2 modes.
+ * Frozen V1 Stage-1 transport allowlist (v86 / historical rows).
+ * New publish uses `@/lib/auth/publishTransportMode` + transportPolicy targets.
+ * Do not expand this list with V2 cargo modes.
  */
 
-import { TRANSPORT_MODES } from "@/lib/posts";
-import type { TransportMode } from "@/lib/types";
+export type ValidV1TransportMode =
+  | "walking"
+  | "scooter"
+  | "bicycle"
+  | "motorbike"
+  | "subway"
+  | "bus"
+  | "train"
+  | "flight"
+  | "car"
+  | "van";
 
-export type ValidV1TransportMode = TransportMode;
-
-export const V1_STAGE1_TRANSPORT_MODES: readonly ValidV1TransportMode[] =
-  TRANSPORT_MODES;
+export const V1_STAGE1_TRANSPORT_MODES: readonly ValidV1TransportMode[] = [
+  "walking",
+  "scooter",
+  "bicycle",
+  "motorbike",
+  "subway",
+  "bus",
+  "train",
+  "flight",
+  "car",
+  "van",
+] as const;
 
 export const INVALID_TRANSPORT_MODE_KEY = "error.invalid_transport_mode";
 
@@ -23,8 +40,8 @@ export function isValidV1TransportMode(
 }
 
 /**
- * Stage 1 normalize: missing / null / blank → null.
- * Unknown, V2, and non-string values reject. No fuzzy mapping.
+ * Historical V1 parser: missing / null / blank → null.
+ * Unknown and non-string values reject. No fuzzy mapping.
  */
 export function parseV1TransportMode(
   raw: unknown,

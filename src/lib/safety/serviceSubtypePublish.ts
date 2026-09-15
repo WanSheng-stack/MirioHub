@@ -1,7 +1,6 @@
 /**
- * PHASE 6.7C.2B — publish-time service_subtype defaults and fail-closed checks.
- * Pure helpers. Server canonical must re-run; do not trust browser conclusions.
- * Night policy runtime stays disabled; subtype/transport legality still applies.
+ * PHASE 6.7C.2B / 6.7C.2B.1 — publish-time service_subtype defaults and
+ * fail-closed checks. Pure helpers. Server canonical must re-run.
  */
 
 import {
@@ -14,7 +13,17 @@ import {
   type ServiceSubtype,
   type TravelServiceSubtype,
 } from "@/lib/safety/nightServicePolicy";
-import { LEGACY_VAN } from "@/lib/transport/transportPolicy";
+import {
+  ILLEGAL_TRANSPORT_COMBO_KEY,
+  INVALID_TRANSPORT_MODE_KEY,
+  isLegacyVanTransportMode,
+  TRANSPORT_MODE_REQUIRED_KEY,
+} from "@/lib/auth/publishTransportMode";
+import {
+  isModeAllowedForLane,
+  isTargetDeliverTransportMode,
+  isTargetTravelTransportMode,
+} from "@/lib/transport/transportPolicy";
 
 export const DEFAULT_TRAVEL_SERVICE_SUBTYPE: TravelServiceSubtype = "passenger";
 export const DEFAULT_DELIVER_SERVICE_SUBTYPE: DeliverServiceSubtype =
@@ -22,8 +31,11 @@ export const DEFAULT_DELIVER_SERVICE_SUBTYPE: DeliverServiceSubtype =
 
 export const INVALID_SERVICE_SUBTYPE_KEY = "error.invalid_service_subtype";
 export const BROWSER_NIGHT_AUTHORITY_KEY = "error.browser_night_authority_rejected";
-export const TRANSPORT_MODE_REQUIRED_KEY = "error.transport_mode_required";
-export const ILLEGAL_TRANSPORT_COMBO_KEY = "error.illegal_transport_combo";
+export {
+  ILLEGAL_TRANSPORT_COMBO_KEY,
+  INVALID_TRANSPORT_MODE_KEY,
+  TRANSPORT_MODE_REQUIRED_KEY,
+};
 
 const BROWSER_AUTHORITY_KEYS = [
   "origin_country_code",
@@ -89,17 +101,6 @@ export function parsePublishServiceSubtype(
   return subtype as DeliverServiceSubtype;
 }
 
-/**
- * V1 Stage-1 modes stay as persisted names. For deliver, legacy `van` is
- * evaluated as the suggested cargo target so subtype/transport legality can
- * run without accepting V2 mode names into the write path.
- */
-function modeForPolicyEval(mode: string | null | undefined): string | null {
-  if (mode == null || mode === "") return null;
-  if (mode === LEGACY_VAN) return "cargo_van";
-  return mode;
-}
-
 export type PublishSubtypeTransportInput = {
   category: string;
   postType: "demand" | "provider";
@@ -110,7 +111,7 @@ export type PublishSubtypeTransportInput = {
 export function assertPublishSubtypeTransportLegal(
   input: PublishSubtypeTransportInput,
 ): void {
-  const { category, postType, serviceSubtype, transportMode } = input;
+  const { category, serviceSubtype, transportMode } = input;
 
   if (!serviceSubtypeIsLegal(category, serviceSubtype)) {
     throw new Error(INVALID_SERVICE_SUBTYPE_KEY);
@@ -120,18 +121,27 @@ export function assertPublishSubtypeTransportLegal(
     if (serviceSubtype == null) {
       throw new Error(INVALID_SERVICE_SUBTYPE_KEY);
     }
-    const mode = transportMode == null || transportMode === "" ? null : transportMode;
-    if (postType === "provider" && mode == null) {
+    const mode =
+      transportMode == null || transportMode === "" ? null : String(transportMode).trim();
+    if (mode == null || mode === "") {
       throw new Error(TRANSPORT_MODE_REQUIRED_KEY);
     }
-    if (mode == null) {
-      // Demand may omit transport_mode; still reject illegal subtype above.
-      return;
+    if (isLegacyVanTransportMode(mode)) {
+      throw new Error(INVALID_TRANSPORT_MODE_KEY);
+    }
+    if (category === "travel" && !isTargetTravelTransportMode(mode)) {
+      throw new Error(ILLEGAL_TRANSPORT_COMBO_KEY);
+    }
+    if (category === "deliver" && !isTargetDeliverTransportMode(mode)) {
+      throw new Error(ILLEGAL_TRANSPORT_COMBO_KEY);
+    }
+    if (!isModeAllowedForLane(mode, category)) {
+      throw new Error(ILLEGAL_TRANSPORT_COMBO_KEY);
     }
     const decision = evaluateNightServicePolicy({
       category,
       serviceSubtype,
-      transportMode: modeForPolicyEval(mode),
+      transportMode: mode,
       purpose: "publish",
       policyEnabled: false,
     });
@@ -151,6 +161,7 @@ export function assertPublishSubtypeTransportLegal(
 
 export type SubtypeFieldCleanupInput = {
   category: string;
+  postType: "demand" | "provider";
   serviceSubtype: ServiceSubtype | null;
   escort_seats: number;
   max_companions: number;
@@ -179,6 +190,7 @@ export function cleanupFieldsForServiceSubtype(
 ): SubtypeFieldCleanupResult {
   const {
     category,
+    postType,
     serviceSubtype,
     escort_seats,
     max_companions,
@@ -187,7 +199,6 @@ export function cleanupFieldsForServiceSubtype(
     count_medium,
     count_large,
     count_xlarge,
-    carry_luggage,
   } = input;
 
   if (category === "buy" || category === "onsite" || category === "errand") {
@@ -217,16 +228,16 @@ export function cleanupFieldsForServiceSubtype(
       };
     }
     if (serviceSubtype === "passenger") {
-      const luggageOn = carry_luggage;
+      // Mutually exclusive: people, no small items. No luggage toggle.
       return {
         escort_seats: Math.max(1, Math.min(4, max_companions || escort_seats || 1)),
         max_companions: Math.max(1, Math.min(4, max_companions || 1)),
         share_mode: share_mode === "private" ? "private" : "share",
-        count_small: luggageOn ? count_small : 0,
-        count_medium: luggageOn ? count_medium : 0,
-        count_large: luggageOn ? count_large : 0,
-        count_xlarge: luggageOn ? count_xlarge : 0,
-        carry_luggage: luggageOn,
+        count_small: 0,
+        count_medium: 0,
+        count_large: 0,
+        count_xlarge: 0,
+        carry_luggage: false,
       };
     }
     if (serviceSubtype === "passenger_with_small_item") {
@@ -257,10 +268,17 @@ export function cleanupFieldsForServiceSubtype(
       };
     }
     if (serviceSubtype === "cargo_with_escort") {
+      // Demand: one escort rider requested. Provider: capability only —
+      // never forge escort_seats as a provider headcount.
       return {
-        escort_seats: 1,
+        escort_seats: postType === "demand" ? 1 : 0,
         max_companions: 0,
-        share_mode: share_mode === "private" ? "private" : "share",
+        share_mode:
+          postType === "demand"
+            ? share_mode === "private"
+              ? "private"
+              : "share"
+            : null,
         count_small,
         count_medium,
         count_large,
@@ -278,7 +296,7 @@ export function cleanupFieldsForServiceSubtype(
     count_medium,
     count_large,
     count_xlarge,
-    carry_luggage,
+    carry_luggage: false,
   };
 }
 
@@ -292,19 +310,17 @@ export function travelShowsPassengerControls(
 
 export function travelShowsLuggageControls(
   subtype: ServiceSubtype | null | undefined,
-  carryLuggage: boolean,
 ): boolean {
-  if (subtype === "small_item_only" || subtype === "passenger_with_small_item") {
-    return true;
-  }
-  if (subtype === "passenger") return carryLuggage;
-  return false;
+  return (
+    subtype === "small_item_only" || subtype === "passenger_with_small_item"
+  );
 }
 
 export function deliverShowsEscortShare(
   subtype: ServiceSubtype | null | undefined,
+  postType: "demand" | "provider",
 ): boolean {
-  return subtype === "cargo_with_escort";
+  return postType === "demand" && subtype === "cargo_with_escort";
 }
 
 export function subtypeRequiresHumanTravel(

@@ -8,14 +8,18 @@
 >
 > 代码审阅基线：`feature/home-bottomsheet-fix` @ `a3945a54a6f6d379f0ab23020da34acb91667a5b`
 >
-> 数据库状态：v90–v97 已执行并冻结（v95 verify 69/69；v96 verify 78/78；
-> PostGIS 已迁至 extensions；v97 verify 15/15 PASS）。PHASE 6.7C.2B 新增
-> 未 apply 的 v98：发布路径写入 `posts.service_subtype`。creation-enabled
-> 仍为 false；夜间策略 RS seed 仍 enabled=false。Travel/Deliver 缺少合法
-> transportMode 必须 fail closed。后续 admission-hash writer/snapshot 必须
-> 以 **v99 或更高** 把 service_subtype、origin_country_code、origin_timezone、
-> night_policy_version 写入 admission facts（v97 已被 PostGIS 占用；v98 为
-> 发布 subtype），不得改已部署的 v95 hash helper。
+> 数据库状态：v90–v98 已执行并冻结（v95 verify 69/69；v96 verify 78/78；
+> PostGIS 已迁至 extensions；v97 verify 15/15 PASS；v98 verify 19/19 PASS）。
+> PHASE 6.7C.2C.1 / v99A 新增**未 apply** 的只读 admission 权威对象：
+> `match_request_admission_post_facts_v99`、`match_request_admission_facts_hash_v99`、
+> `read_match_request_candidate_snapshot_v99`。不创建 `create_match_request_v99`，
+> 不切换匹配 API。creation-enabled 仍为 false；夜间策略 RS seed 仍
+> enabled=false。v98 发布路径仍把 origin_country_code / origin_timezone /
+> night_policy_version 写为 NULL；v99A snapshot 可如实返回并哈希这些 NULL，
+> 但不得推断国家或时区。下一阶段 `create_match_request_v99` 必须对新匹配
+> fail closed：service_subtype NULL（legacy_unknown）、origin_country_code NULL、
+> origin_timezone NULL、night_policy_version NULL 均不得创建新顺路请求。
+> 不得改已部署的 v95 hash helper。v99 未执行，不得写成生产可用。
 
 ---
 

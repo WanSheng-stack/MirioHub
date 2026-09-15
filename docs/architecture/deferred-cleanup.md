@@ -311,9 +311,9 @@ OWNER against PostGIS.
   result schema. Owned-sequence `object_identity` casts
   `pg_depend.deptype` to text before `||`. No live PostgreSQL/MVCC run
   was performed. Creation stays false. MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** publish-path subtype is owned by
-  6.7C.2B/v98 (unapplied until user applies). Admission-hash facts remain
-  for v99 or later. Request list, resend, accept/reject, contact DTO,
+- **Still unresolved / later phases:** admission-hash facts/snapshot owned by
+  6.7C.2C.1/v99A (unapplied until user applies); create_match_request_v99 +
+  API cutover later. Request list, resend, accept/reject, contact DTO,
   MatchRequestSheet mount, country pricing, trusted location resolver, and
   contract capacity/fulfillment remain later.
 - **Future replacement:** A later grant writer must re-check recipient
@@ -336,10 +336,8 @@ OWNER against PostGIS.
   `pg_get_function_identity_arguments()` to type-only strings, with OID
   locked by `to_regprocedure(...) = oid`. Creation stays false.
   MatchRequestSheet stays unmounted.
-- **Still unresolved / later phases:** admission-hash writer/snapshot that
-  adds the v96 subtype/night fields must use **v99 or later** (v97 was
-  PostGIS; v98 is publish subtype). Do not patch the deployed v95 hash
-  helper in place.
+- **Still unresolved / later phases:** admission writer/API after v99A
+  snapshot apply. Do not patch the deployed v95 hash helper in place.
 - **Future replacement:** none; this is a one-shot post-move rebind.
 - **Earliest safe production use:** already applied and verify-green.
 - **Preconditions:** v95/v96 already applied; PostGIS in `extensions`.
@@ -347,23 +345,54 @@ OWNER against PostGIS.
 
 ## 16. Stage-1 publish service_subtype (v98)
 
-- **Current state:** PHASE 6.7C.2B. Forward-only v98 adds
-  `insert_stage1_post_v98` plus publish/shadow/Passkey wrappers that write
-  `posts.service_subtype` from server canonical JSON. Travel/Deliver require
-  a legal non-NULL subtype; Buy/Onsite/Errand require NULL. Subtype enters
-  the payload hash. Browsers must not submit `origin_country_code`,
-  `origin_timezone`, or `night_policy_version` as authority; those columns
-  stay NULL this phase. Night policy remains enabled=false. Creation stays
-  false. v90–v97 and `init.sql` are untouched. v98 is **not applied** from
-  this phase.
-- **Still unresolved / later phases:** user apply + verify of v98;
-  admission-hash writer (v99+); night runtime enforcement; trusted
-  country/IANA timezone resolver; request list/resend/accept; MatchRequestSheet.
+- **Current state:** PHASE 6.7C.2B applied by the user; official verify is
+  **19/19 PASS**. Forward-only v98 adds `insert_stage1_post_v98` plus
+  publish/shadow/Passkey wrappers that write `posts.service_subtype` from
+  server canonical JSON. Travel/Deliver require a legal non-NULL subtype;
+  Buy/Onsite/Errand require NULL. Subtype enters the payload hash. Browsers
+  must not submit `origin_country_code`, `origin_timezone`, or
+  `night_policy_version` as authority; those columns remain NULL on the
+  current publish path. Night policy remains enabled=false. Creation stays
+  false. v90–v97 and `init.sql` are untouched applied history.
+- **Still unresolved / later phases:** admission writer/API switch (after
+  v99A snapshot); night runtime enforcement; trusted country/IANA timezone
+  resolver; request list/resend/accept; MatchRequestSheet.
 - **Future replacement:** later publish RPCs may supersede v98; do not
   CREATE OR REPLACE the applied v86 path in place.
-- **Earliest safe production use:** after user applies v98 and verify is
-  green. Not claimed live in this phase.
+- **Earliest safe production use:** publish subtype path is verify-green
+  after user apply; matching creation remains off.
 - **Preconditions:** v95/v96/v97 applied; creation=false; night RS seed
   enabled=false.
-- **Risk if wired early:** Travel/Deliver posts keep writing NULL subtype
-  if any production path still calls v86.
+- **Risk if wired early:** n/a for applied publish path while creation stays
+  false.
+
+## 17. Match admission authority facts/hash/snapshot (v99A)
+
+- **Current state:** PHASE 6.7C.2C.1 / v99A. Forward-only, **unapplied**
+  migration adds three SECURITY DEFINER helpers only:
+  `match_request_admission_post_facts_v99`,
+  `match_request_admission_facts_hash_v99`,
+  `read_match_request_candidate_snapshot_v99`. Does **not** create
+  `create_match_request_v99`, does not switch the matching API, does not
+  enable creation, does not enable night policy. PostGIS types/functions
+  use `extensions.` (post-v97). Facts include `admission_schema_version=99`
+  plus `service_subtype` / `origin_country_code` / `origin_timezone` /
+  `night_policy_version`. Snapshot is one SQL statement with one
+  MATERIALIZED `posts` read; hash order is post id ascending. NULL country /
+  timezone / policy values may be returned and hashed as-is; they must not
+  be inferred. v95 five formal functions remain untouched.
+- **Still unresolved / later phases:** user apply + verify of v99A; then
+  `create_match_request_v99` + API cutover. That future writer must fail
+  closed for new requests when `service_subtype` is NULL (legacy_unknown),
+  or when `origin_country_code` / `origin_timezone` /
+  `night_policy_version` is NULL. Trusted country/IANA timezone resolution
+  is still unimplemented.
+- **Future replacement:** later writers must not CREATE OR REPLACE the
+  deployed v95 helpers in place.
+- **Earliest safe production use:** never claim live until user applies
+  v99A and a later writer/API phase ships. This phase is read-only foundation
+  only.
+- **Preconditions:** v95–v98 applied; PostGIS in `extensions`;
+  creation=false; night RS enabled=false.
+- **Risk if wired early:** treating unapplied snapshot helpers as production
+  matching authority, or enabling creation before the fail-closed writer.

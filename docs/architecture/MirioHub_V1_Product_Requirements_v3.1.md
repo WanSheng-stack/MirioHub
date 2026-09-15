@@ -489,9 +489,13 @@ Onsite由Demand填写固定酬劳或“面议”，Provider填写自己提供该
 当前代码基线已经具有双帖表、合同/容量/事件基础、Cargo V2、统一匹配准入
 及已执行的 v95 原子请求边界。v96 已执行（service_subtype 列与夜间策略表，
 RS seed enabled=false）。PostGIS 已迁至 extensions 且 v97 verify 15/15 PASS。
-PHASE 6.7C.2B 通过未 apply 的 v98 把 Travel/Deliver service_subtype 接入
-发布表单与三条 Stage-1 发布路径；Buy/Onsite/Errand 必须保持 NULL。夜间
-策略运行时仍未启用。creation 仍为 false。
+v98 已执行（verify 19/19 PASS）：Travel/Deliver service_subtype 经发布路径
+写入；Buy/Onsite/Errand 保持 NULL。PHASE 6.7C.2C.1 / v99A 仅新增未 apply
+的只读 admission facts/hash/snapshot；不建 writer、不切换 API、不启用匹配。
+夜间策略运行时仍未启用。creation 仍为 false。国家/IANA 时区可信解析仍未
+实现。下一阶段才是 create_match_request_v99 + API 切换；该 writer 必须对新
+匹配 fail closed（service_subtype / country / timezone / night_policy_version
+为 NULL 时不得创建）。
 
 Travel/Deliver 新帖必须有合法 service_subtype 才能发布；历史
 service_subtype=NULL 的 active 帖不得进入新 Match Hall 和新顺路请求。
@@ -503,8 +507,8 @@ deliver/cargo_only、buy、errand。交通方式与是否载人分离：摩托�
 也不能绕过。地区夜间策略按精确地区优先、再
 `policy_version DESC` / `effective_from DESC` / `id ASC` 只取一条。
 数据库阻止同 scope/version 重复和多条 open-ended 行，但不能完全阻止
-不同版本的有限有效区间重叠。admission-hash 写入上述夜间字段必须使用
-v99 或更高版本，不得与 v97 PostGIS / v98 发布 subtype 冲突。
+不同版本的有限有效区间重叠。admission-hash 权威字段已由未 apply 的 v99A
+快照/hash 承载；writer 不得改已部署的 v95 helper。
 
 后续：
 

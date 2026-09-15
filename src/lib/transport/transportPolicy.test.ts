@@ -729,7 +729,7 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
   assert.ok(postsSrc.includes("cargo_van"));
   assert.ok(postsSrc.includes("vehicle_with_trailer"));
   const publish = read("src/components/home/PublishBottomSheet.tsx");
-  assert.ok(publish.includes("publishTransportModesForCategory"));
+  assert.ok(publish.includes("publishTransportModesForSubtype"));
   assert.ok(read("src/lib/auth/publishTransportMode.ts").includes("cargo_van"));
   assert.deepEqual([...V1_STAGE1_TRANSPORT_MODES], [
     "walking",

@@ -43,7 +43,28 @@ fn AS (
       AND strpos(p.prosrc, 'passenger_boat') > 0) AS has_target_transport_allowlist,
     (strpos(p.prosrc, 'error.transport_mode_required') > 0) AS requires_transport_nonempty,
     (strpos(p.prosrc, '''van''') > 0
-      AND strpos(p.prosrc, 'error.invalid_transport_mode') > 0) AS rejects_legacy_van_write
+      AND strpos(p.prosrc, 'error.invalid_transport_mode') > 0) AS rejects_legacy_van_write,
+    -- Structural branch locks (markers + control-flow strings — never emit prosrc)
+    (strpos(p.prosrc, 'v98_people_travel_car_only') > 0
+      AND strpos(p.prosrc, 'passenger_with_small_item') > 0
+      AND strpos(p.prosrc, 'v_transport_raw IS DISTINCT FROM ''car''') > 0) AS people_travel_car_only,
+    (strpos(p.prosrc, 'v98_small_item_travel_all_modes') > 0
+      AND strpos(p.prosrc, 'small_item_only') > 0
+      AND strpos(p.prosrc, '''walking''') > 0) AS small_item_travel_all_modes,
+    (strpos(p.prosrc, 'v98_cargo_escort_land_only') > 0
+      AND strpos(p.prosrc, '''cargo_boat''') > 0
+      AND strpos(p.prosrc, '''private_cargo_boat''') > 0
+      AND strpos(p.prosrc, 'cargo_with_escort') > 0) AS cargo_escort_rejects_boats,
+    (strpos(p.prosrc, 'v98_normalize_passenger_zero_counts') > 0
+      AND strpos(p.prosrc, 'v_count_small := 0') > 0
+      AND strpos(p.prosrc, 'v_count_xlarge := 0') > 0) AS passenger_zeros_counts,
+    (strpos(p.prosrc, 'v98_normalize_cargo_escort_demand_provider') > 0
+      AND strpos(p.prosrc, 'v_post_type = ''demand''') > 0
+      AND strpos(p.prosrc, 'v_escort_seats := 1') > 0
+      AND strpos(p.prosrc, 'v_escort_seats := 0') > 0
+      AND strpos(p.prosrc, 'v_share_mode := NULL') > 0) AS cargo_escort_demand_provider_split,
+    (strpos(p.prosrc, 'error.invalid_payload_numeric_values') > 0
+      AND strpos(p.prosrc, 'invalid_text_representation') > 0) AS numeric_fail_closed
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
@@ -112,6 +133,12 @@ exact_resolved AS (
     f.has_target_transport_allowlist,
     f.requires_transport_nonempty,
     f.rejects_legacy_van_write,
+    f.people_travel_car_only,
+    f.small_item_travel_all_modes,
+    f.cargo_escort_rejects_boats,
+    f.passenger_zeros_counts,
+    f.cargo_escort_demand_provider_split,
+    f.numeric_fail_closed,
     f.proowner,
     f.proacl
   FROM exact e
@@ -208,6 +235,34 @@ checks AS (
       'rejects_van='||COALESCE(rejects_legacy_van_write::text, 'null'))
       FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
     'insert SQL has Travel/Deliver target allowlist, requires transport, rejects legacy van'
+  UNION ALL SELECT 103, 'rpc', 'insert_v98 people car-only branch',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM exact_resolved r
+      WHERE r.proname = 'insert_stage1_post_v98'
+        AND r.people_travel_car_only IS TRUE
+        AND r.small_item_travel_all_modes IS TRUE
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT concat_ws(' | ',
+      'people_car_only='||COALESCE(people_travel_car_only::text, 'null'),
+      'small_item_all='||COALESCE(small_item_travel_all_modes::text, 'null'))
+      FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
+    'passenger subtypes car-only — small_item_only keeps full Travel allowlist'
+  UNION ALL SELECT 104, 'rpc', 'insert_v98 escort land + normalize',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM exact_resolved r
+      WHERE r.proname = 'insert_stage1_post_v98'
+        AND r.cargo_escort_rejects_boats IS TRUE
+        AND r.passenger_zeros_counts IS TRUE
+        AND r.cargo_escort_demand_provider_split IS TRUE
+        AND r.numeric_fail_closed IS TRUE
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT concat_ws(' | ',
+      'escort_no_boat='||COALESCE(cargo_escort_rejects_boats::text, 'null'),
+      'passenger_zero='||COALESCE(passenger_zeros_counts::text, 'null'),
+      'escort_split='||COALESCE(cargo_escort_demand_provider_split::text, 'null'),
+      'numeric='||COALESCE(numeric_fail_closed::text, 'null'))
+      FROM exact_resolved WHERE proname = 'insert_stage1_post_v98'),
+    'cargo_with_escort land-only — passenger zeros counts — Demand/Provider escort split — numeric fail-closed'
   UNION ALL SELECT 110, 'rpc', 'publish_v98 identity',
     CASE WHEN EXISTS (
       SELECT 1 FROM exact_resolved r

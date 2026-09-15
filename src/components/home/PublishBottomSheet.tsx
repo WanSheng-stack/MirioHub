@@ -20,7 +20,7 @@ import {
   readPhoneSaveResponse,
   resetPhoneFeedback,
 } from "@/lib/profile/phoneSaveClient";
-import { publishTransportModesForCategory } from "@/lib/auth/publishTransportMode";
+import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
 import { getTransportPolicy } from "@/lib/transport/transportPolicy";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
@@ -315,8 +315,9 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
 
   const isTravel = state.category === "travel";
   const isDeliver = state.category === "deliver";
-  const VEHICLE_OPTIONS_FOR_CATEGORY = publishTransportModesForCategory(
+  const VEHICLE_OPTIONS_FOR_CATEGORY = publishTransportModesForSubtype(
     state.category,
+    state.service_subtype,
   );
   const isActiveSuccess = pendingPostStatus === "active";
   const isDraftIdentity = pendingPostStatus === "draft";

@@ -62,34 +62,57 @@ SET search_path TO 'pg_catalog', 'public', 'pg_temp'
 AS $$
 DECLARE
   v_id uuid;
-  v_transport_mode text;
-  v_transport_raw text;
+  v_post_type text;
   v_category text;
   v_subtype_raw text;
   v_service_subtype text;
+  v_transport_raw text;
+  v_transport_mode text;
+  v_share_raw text;
+  v_share_mode text;
+  v_delivery_raw text;
+  v_delivery_mode text;
+  v_count_small integer;
+  v_count_medium integer;
+  v_count_large integer;
+  v_count_xlarge integer;
+  v_escort_seats integer;
+  v_max_companions integer;
+  v_people integer;
+  -- PHASE 6.7C.2B.2 markers (verify locks these branches; do not remove):
+  -- v98_people_travel_car_only
+  -- v98_small_item_travel_all_modes
+  -- v98_cargo_escort_land_only
+  -- v98_cargo_only_full_deliver
+  -- v98_normalize_passenger_zero_counts
+  -- v98_normalize_cargo_escort_demand_provider
 BEGIN
   IF p_status IS DISTINCT FROM 'draft' AND p_status IS DISTINCT FROM 'active' THEN
     RAISE EXCEPTION 'error.invalid_post_status';
   END IF;
 
-  -- Browsers must not submit these as authoritative publish facts.
   IF p_post_payload ? 'origin_country_code'
      OR p_post_payload ? 'origin_timezone'
      OR p_post_payload ? 'night_policy_version' THEN
     RAISE EXCEPTION 'error.browser_night_authority_rejected';
   END IF;
 
+  v_post_type := lower(btrim(COALESCE(p_post_payload->>'post_type', '')));
+  IF v_post_type IS DISTINCT FROM 'demand' AND v_post_type IS DISTINCT FROM 'provider' THEN
+    RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+  END IF;
+
   v_category := lower(btrim(COALESCE(p_post_payload->>'category', '')));
   v_subtype_raw := NULLIF(btrim(COALESCE(p_post_payload->>'service_subtype', '')), '');
 
-  IF v_category IN ('travel') THEN
+  IF v_category = 'travel' THEN
     IF v_subtype_raw IS NULL OR v_subtype_raw NOT IN (
       'passenger', 'small_item_only', 'passenger_with_small_item'
     ) THEN
       RAISE EXCEPTION 'error.invalid_service_subtype';
     END IF;
     v_service_subtype := v_subtype_raw;
-  ELSIF v_category IN ('deliver') THEN
+  ELSIF v_category = 'deliver' THEN
     IF v_subtype_raw IS NULL OR v_subtype_raw NOT IN (
       'cargo_only', 'cargo_with_escort'
     ) THEN
@@ -106,35 +129,57 @@ BEGIN
   END IF;
 
   v_transport_raw := NULLIF(btrim(COALESCE(p_post_payload->>'transport_mode', '')), '');
+  IF v_transport_raw = 'van' THEN
+    RAISE EXCEPTION 'error.invalid_transport_mode';
+  END IF;
 
-  -- Lane-exact transport allowlist. Legacy van rejected for new writes.
-  -- Water cargo modes are legal in SQL even if publish UI omits them.
-  IF v_category IN ('travel') THEN
+  -- Subtype × transport allowlist (independent of TypeScript).
+  IF v_category = 'travel' THEN
     IF v_transport_raw IS NULL THEN
       RAISE EXCEPTION 'error.transport_mode_required';
     END IF;
-    IF v_transport_raw = 'van' THEN
-      RAISE EXCEPTION 'error.invalid_transport_mode';
-    END IF;
-    IF v_transport_raw NOT IN (
-      'walking', 'bicycle', 'ebike', 'scooter', 'motorbike', 'car',
-      'subway', 'bus', 'train', 'flight', 'ferry',
-      'passenger_boat', 'private_boat'
-    ) THEN
+    IF v_service_subtype IN ('passenger', 'passenger_with_small_item') THEN
+      -- v98_people_travel_car_only
+      IF v_transport_raw IS DISTINCT FROM 'car' THEN
+        RAISE EXCEPTION 'error.illegal_transport_combo';
+      END IF;
+    ELSIF v_service_subtype = 'small_item_only' THEN
+      -- v98_small_item_travel_all_modes
+      IF v_transport_raw NOT IN (
+        'walking', 'bicycle', 'ebike', 'scooter', 'motorbike', 'car',
+        'subway', 'bus', 'train', 'flight', 'ferry',
+        'passenger_boat', 'private_boat'
+      ) THEN
+        RAISE EXCEPTION 'error.illegal_transport_combo';
+      END IF;
+    ELSE
       RAISE EXCEPTION 'error.illegal_transport_combo';
     END IF;
     v_transport_mode := v_transport_raw;
-  ELSIF v_category IN ('deliver') THEN
+  ELSIF v_category = 'deliver' THEN
     IF v_transport_raw IS NULL THEN
       RAISE EXCEPTION 'error.transport_mode_required';
     END IF;
-    IF v_transport_raw = 'van' THEN
-      RAISE EXCEPTION 'error.invalid_transport_mode';
-    END IF;
-    IF v_transport_raw NOT IN (
-      'cargo_van', 'light_truck', 'box_truck', 'vehicle_with_trailer',
-      'cargo_boat', 'private_cargo_boat', 'other_cargo_vehicle'
-    ) THEN
+    IF v_service_subtype = 'cargo_only' THEN
+      -- v98_cargo_only_full_deliver
+      IF v_transport_raw NOT IN (
+        'cargo_van', 'light_truck', 'box_truck', 'vehicle_with_trailer',
+        'cargo_boat', 'private_cargo_boat', 'other_cargo_vehicle'
+      ) THEN
+        RAISE EXCEPTION 'error.illegal_transport_combo';
+      END IF;
+    ELSIF v_service_subtype = 'cargo_with_escort' THEN
+      -- v98_cargo_escort_land_only (boats cannot carry escort)
+      IF v_transport_raw IN ('cargo_boat', 'private_cargo_boat') THEN
+        RAISE EXCEPTION 'error.illegal_transport_combo';
+      END IF;
+      IF v_transport_raw NOT IN (
+        'cargo_van', 'light_truck', 'box_truck',
+        'vehicle_with_trailer', 'other_cargo_vehicle'
+      ) THEN
+        RAISE EXCEPTION 'error.illegal_transport_combo';
+      END IF;
+    ELSE
       RAISE EXCEPTION 'error.illegal_transport_combo';
     END IF;
     v_transport_mode := v_transport_raw;
@@ -145,6 +190,137 @@ BEGIN
     v_transport_mode := NULL;
   ELSE
     RAISE EXCEPTION 'error.invalid_transport_mode';
+  END IF;
+
+  -- Safe numeric parse: never rely on cast exceptions for browser junk.
+  BEGIN
+    IF p_post_payload ? 'count_small'
+       AND jsonb_typeof(p_post_payload->'count_small') = 'string'
+       AND btrim(p_post_payload->>'count_small') !~ '^\d+$' THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+    END IF;
+    IF p_post_payload ? 'count_medium'
+       AND jsonb_typeof(p_post_payload->'count_medium') = 'string'
+       AND btrim(p_post_payload->>'count_medium') !~ '^\d+$' THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+    END IF;
+    IF p_post_payload ? 'count_large'
+       AND jsonb_typeof(p_post_payload->'count_large') = 'string'
+       AND btrim(p_post_payload->>'count_large') !~ '^\d+$' THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+    END IF;
+    IF p_post_payload ? 'count_xlarge'
+       AND jsonb_typeof(p_post_payload->'count_xlarge') = 'string'
+       AND btrim(p_post_payload->>'count_xlarge') !~ '^\d+$' THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+    END IF;
+    IF p_post_payload ? 'escort_seats'
+       AND jsonb_typeof(p_post_payload->'escort_seats') = 'string'
+       AND btrim(p_post_payload->>'escort_seats') !~ '^\d+$' THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+    END IF;
+    IF p_post_payload ? 'max_companions'
+       AND jsonb_typeof(p_post_payload->'max_companions') = 'string'
+       AND btrim(p_post_payload->>'max_companions') !~ '^\d+$' THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+    END IF;
+
+    v_count_small := COALESCE((p_post_payload->>'count_small')::integer, 0);
+    v_count_medium := COALESCE((p_post_payload->>'count_medium')::integer, 0);
+    v_count_large := COALESCE((p_post_payload->>'count_large')::integer, 0);
+    v_count_xlarge := COALESCE((p_post_payload->>'count_xlarge')::integer, 0);
+    v_escort_seats := COALESCE((p_post_payload->>'escort_seats')::integer, 0);
+    v_max_companions := COALESCE(
+      NULLIF(p_post_payload->>'max_companions', '')::integer,
+      v_escort_seats
+    );
+  EXCEPTION
+    WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+  END;
+
+  IF v_count_small < 0 OR v_count_medium < 0 OR v_count_large < 0 OR v_count_xlarge < 0
+     OR v_escort_seats < 0 OR v_max_companions < 0
+     OR v_count_small > 2147483647 OR v_count_medium > 2147483647
+     OR v_count_large > 2147483647 OR v_count_xlarge > 2147483647
+     OR v_escort_seats > 2147483647 OR v_max_companions > 2147483647 THEN
+    RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+  END IF;
+
+  v_share_raw := lower(btrim(COALESCE(p_post_payload->>'share_mode', '')));
+  v_delivery_raw := lower(btrim(COALESCE(p_post_payload->>'delivery_mode', '')));
+  IF v_delivery_raw IN ('spot', 'door') THEN
+    v_delivery_mode := v_delivery_raw;
+  ELSE
+    v_delivery_mode := NULL;
+  END IF;
+
+  -- Independent field normalization by category/subtype/post_type.
+  IF v_category = 'travel' THEN
+    IF v_service_subtype = 'passenger' THEN
+      -- v98_normalize_passenger_zero_counts
+      v_count_small := 0;
+      v_count_medium := 0;
+      v_count_large := 0;
+      v_count_xlarge := 0;
+      v_people := GREATEST(1, LEAST(4, COALESCE(NULLIF(v_max_companions, 0), NULLIF(v_escort_seats, 0), 1)));
+      IF v_max_companions > 4 OR v_escort_seats > 4 THEN
+        RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+      END IF;
+      v_escort_seats := v_people;
+      v_max_companions := v_people;
+      IF v_share_raw = 'private' THEN
+        v_share_mode := 'private';
+      ELSE
+        v_share_mode := 'share';
+      END IF;
+    ELSIF v_service_subtype = 'small_item_only' THEN
+      v_escort_seats := 0;
+      v_max_companions := 0;
+      v_share_mode := NULL;
+    ELSIF v_service_subtype = 'passenger_with_small_item' THEN
+      v_people := GREATEST(1, LEAST(4, COALESCE(NULLIF(v_max_companions, 0), NULLIF(v_escort_seats, 0), 1)));
+      IF v_max_companions > 4 OR v_escort_seats > 4 THEN
+        RAISE EXCEPTION 'error.invalid_payload_numeric_values';
+      END IF;
+      v_escort_seats := v_people;
+      v_max_companions := v_people;
+      IF v_share_raw = 'private' THEN
+        v_share_mode := 'private';
+      ELSE
+        v_share_mode := 'share';
+      END IF;
+    END IF;
+  ELSIF v_category = 'deliver' THEN
+    IF v_service_subtype = 'cargo_only' THEN
+      v_escort_seats := 0;
+      v_max_companions := 0;
+      v_share_mode := NULL;
+    ELSIF v_service_subtype = 'cargo_with_escort' THEN
+      -- v98_normalize_cargo_escort_demand_provider
+      v_max_companions := 0;
+      IF v_post_type = 'demand' THEN
+        v_escort_seats := 1;
+        IF v_share_raw = 'private' THEN
+          v_share_mode := 'private';
+        ELSE
+          v_share_mode := 'share';
+        END IF;
+      ELSE
+        v_escort_seats := 0;
+        v_share_mode := NULL;
+      END IF;
+    END IF;
+  ELSE
+    -- Buy/Onsite/Errand: zero residual browser fields.
+    v_count_small := 0;
+    v_count_medium := 0;
+    v_count_large := 0;
+    v_count_xlarge := 0;
+    v_escort_seats := 0;
+    v_max_companions := 0;
+    v_share_mode := NULL;
+    v_delivery_mode := NULL;
   END IF;
 
   INSERT INTO public.posts (
@@ -161,8 +337,8 @@ BEGIN
     p_client_request_id,
     p_payload_hash,
     p_status,
-    (p_post_payload->>'post_type'),
-    (p_post_payload->>'category'),
+    v_post_type,
+    v_category,
     COALESCE(p_post_payload->>'title', ''),
     'city',
     COALESCE(p_post_payload->>'origin_address', ''),
@@ -170,13 +346,13 @@ BEGIN
     NULLIF(p_post_payload->>'departure_date', '')::DATE,
     NULLIF(p_post_payload->>'departure_time_window', ''),
     COALESCE(p_post_payload->'waypoints', '[]'::jsonb),
-    NULLIF(p_post_payload->>'share_mode', ''),
-    NULLIF(p_post_payload->>'delivery_mode', ''),
-    COALESCE((p_post_payload->>'count_small')::INTEGER, 0),
-    COALESCE((p_post_payload->>'count_medium')::INTEGER, 0),
-    COALESCE((p_post_payload->>'count_large')::INTEGER, 0),
-    COALESCE((p_post_payload->>'count_xlarge')::INTEGER, 0),
-    COALESCE((p_post_payload->>'escort_seats')::INTEGER, 0),
+    v_share_mode,
+    v_delivery_mode,
+    v_count_small,
+    v_count_medium,
+    v_count_large,
+    v_count_xlarge,
+    v_escort_seats,
     COALESCE((p_post_payload->>'bump_fee_minor')::NUMERIC, 0) / 100,
     (p_server_fee_minor::NUMERIC / 100),
     p_server_fee_minor,

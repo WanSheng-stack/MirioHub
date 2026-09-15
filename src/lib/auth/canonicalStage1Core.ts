@@ -184,16 +184,28 @@ export function normalizeCanonicalStage1(
   const localeRaw = String(raw.locale ?? "sr").trim().toLowerCase();
   const locale = (LOCALES.has(localeRaw) ? localeRaw : "sr") as "zh" | "en" | "sr";
 
-  const transport = parsePublishTransportMode(category, raw.transport_mode);
-  if (!transport.ok) {
-    throw new CanonicalStage1Error(transport.errorKey);
-  }
-
   let service_subtype: ServiceSubtype | null;
   try {
     service_subtype = parsePublishServiceSubtype(category, raw.service_subtype);
   } catch (err) {
     rethrowPublishKey(err);
+  }
+
+  if (
+    (service_subtype === "passenger" ||
+      service_subtype === "passenger_with_small_item") &&
+    (escort_seats > 4 || max_companions > 4)
+  ) {
+    throw new CanonicalStage1Error("error.invalid_payload_numeric_values");
+  }
+
+  const transport = parsePublishTransportMode(
+    category,
+    raw.transport_mode,
+    service_subtype,
+  );
+  if (!transport.ok) {
+    throw new CanonicalStage1Error(transport.errorKey);
   }
 
   let share_mode: "share" | "private" | null =

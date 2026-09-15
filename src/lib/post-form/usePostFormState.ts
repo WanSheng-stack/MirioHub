@@ -34,7 +34,7 @@ import {
   travelShowsLuggageControls,
   travelShowsPassengerControls,
 } from "@/lib/safety/serviceSubtypePublish";
-import { publishTransportModesForCategory } from "@/lib/auth/publishTransportMode";
+import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
 
 export type PostFormState = {
   post_type: PostType;
@@ -124,7 +124,7 @@ function applySubtypeCleanup(
     carry_luggage: state.carry_luggage,
   });
   const allowedModes = new Set(
-    publishTransportModesForCategory(category) as readonly string[],
+    publishTransportModesForSubtype(category, service_subtype) as readonly string[],
   );
   return {
     ...state,

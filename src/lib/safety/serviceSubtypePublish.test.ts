@@ -387,7 +387,7 @@ const hashB = hashCanonicalStage1(
 assert.notEqual(hashA, hashB);
 
 const sheet = read("src/components/home/PublishBottomSheet.tsx");
-assert.ok(sheet.includes("publishTransportModesForCategory"));
+assert.ok(sheet.includes("publishTransportModesForSubtype"));
 assert.equal(sheet.includes('DELIVER_VEHICLE_OPTIONS: TransportMode[] = ["van"]'), false);
 assert.equal(sheet.includes("submitPost"), false);
 assert.ok(sheet.includes("stage1_required"));

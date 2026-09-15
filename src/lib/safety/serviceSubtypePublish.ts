@@ -138,6 +138,22 @@ export function assertPublishSubtypeTransportLegal(
     if (!isModeAllowedForLane(mode, category)) {
       throw new Error(ILLEGAL_TRANSPORT_COMBO_KEY);
     }
+    // People Travel subtypes are car-only; escort Deliver excludes boats.
+    if (
+      category === "travel" &&
+      (serviceSubtype === "passenger" ||
+        serviceSubtype === "passenger_with_small_item") &&
+      mode !== "car"
+    ) {
+      throw new Error(ILLEGAL_TRANSPORT_COMBO_KEY);
+    }
+    if (
+      category === "deliver" &&
+      serviceSubtype === "cargo_with_escort" &&
+      (mode === "cargo_boat" || mode === "private_cargo_boat")
+    ) {
+      throw new Error(ILLEGAL_TRANSPORT_COMBO_KEY);
+    }
     const decision = evaluateNightServicePolicy({
       category,
       serviceSubtype,

@@ -83,6 +83,10 @@ assert.ok(selectTail.includes("result"));
 assert.ok(selectTail.includes("observed"));
 assert.ok(selectTail.includes("expected"));
 assert.ok(selectTail.includes("overall_pass"));
+assert.ok(
+  verifySql.includes(") AS observed,"),
+  "checks CTE first arm must alias observed for outer SELECT",
+);
 assert.ok(verifySql.includes("writes_subtype"));
 assert.ok(verifySql.includes("rejects_browser_authority"));
 assert.ok(verifySql.includes("has_target_transport_allowlist"));

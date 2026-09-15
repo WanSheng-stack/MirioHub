@@ -411,20 +411,25 @@ BEGIN
     RAISE EXCEPTION 'error.match_request_not_eligible';
   END IF;
 
-  -- v99B authority fields from locked posts (no inference, no browser override).
-  -- Travel/Deliver require non-NULL legal subtype + country + timezone + policy.
+  -- v99B authority: locked posts only; no inference / browser override.
+  -- Travel/Deliver require non-NULL legal subtype + exact pair match +
+  -- frozen v98 subtype×transport allowlists on BOTH sides.
   IF v_init_subtype IS NULL OR btrim(v_init_subtype) = ''
      OR v_ctr_subtype IS NULL OR btrim(v_ctr_subtype) = '' THEN
     RAISE EXCEPTION 'error.match_request_not_eligible';
   END IF;
+  -- Exact subtype pair (no cross-subtype matching / no silent downgrade).
+  IF v_init_subtype IS DISTINCT FROM v_ctr_subtype THEN
+    RAISE EXCEPTION 'error.match_request_not_eligible';
+  END IF;
   IF v_init_cat = 'travel' THEN
-    IF v_init_subtype NOT IN ('passenger', 'passenger_with_small_item', 'small_item_only')
-       OR v_ctr_subtype NOT IN ('passenger', 'passenger_with_small_item', 'small_item_only') THEN
+    IF v_init_subtype NOT IN (
+      'passenger', 'passenger_with_small_item', 'small_item_only'
+    ) THEN
       RAISE EXCEPTION 'error.match_request_not_eligible';
     END IF;
   ELSIF v_init_cat = 'deliver' THEN
-    IF v_init_subtype NOT IN ('cargo_only', 'cargo_with_escort')
-       OR v_ctr_subtype NOT IN ('cargo_only', 'cargo_with_escort') THEN
+    IF v_init_subtype NOT IN ('cargo_only', 'cargo_with_escort') THEN
       RAISE EXCEPTION 'error.match_request_not_eligible';
     END IF;
   ELSE
@@ -435,25 +440,58 @@ BEGIN
      OR v_ctr_transport IS NULL OR btrim(v_ctr_transport) = '' THEN
     RAISE EXCEPTION 'error.match_request_not_eligible';
   END IF;
-  -- Frozen subtype×transport (v98): people Travel car-only; escort Deliver no boats.
+  -- Legacy van is never legal (v98 publish reject).
+  IF v_init_transport = 'van' OR v_ctr_transport = 'van' THEN
+    RAISE EXCEPTION 'error.match_request_not_eligible';
+  END IF;
+
+  -- Frozen v98 subtype × transport truth table (both initiator and counterpart).
   IF v_init_cat = 'travel'
-     AND v_init_subtype IN ('passenger', 'passenger_with_small_item')
-     AND v_init_transport IS DISTINCT FROM 'car' THEN
-    RAISE EXCEPTION 'error.match_request_not_eligible';
-  END IF;
-  IF v_ctr_cat = 'travel'
-     AND v_ctr_subtype IN ('passenger', 'passenger_with_small_item')
-     AND v_ctr_transport IS DISTINCT FROM 'car' THEN
-    RAISE EXCEPTION 'error.match_request_not_eligible';
-  END IF;
-  IF v_init_cat = 'deliver'
-     AND v_init_subtype = 'cargo_with_escort'
-     AND v_init_transport IN ('cargo_boat', 'private_cargo_boat') THEN
-    RAISE EXCEPTION 'error.match_request_not_eligible';
-  END IF;
-  IF v_ctr_cat = 'deliver'
-     AND v_ctr_subtype = 'cargo_with_escort'
-     AND v_ctr_transport IN ('cargo_boat', 'private_cargo_boat') THEN
+     AND v_init_subtype IN ('passenger', 'passenger_with_small_item') THEN
+    -- v98_people_travel_car_only
+    IF v_init_transport IS DISTINCT FROM 'car'
+       OR v_ctr_transport IS DISTINCT FROM 'car' THEN
+      RAISE EXCEPTION 'error.match_request_not_eligible';
+    END IF;
+  ELSIF v_init_cat = 'travel' AND v_init_subtype = 'small_item_only' THEN
+    -- v98_small_item_travel_all_modes = TARGET_TRAVEL_TRANSPORT_MODES
+    IF v_init_transport NOT IN (
+         'walking', 'bicycle', 'ebike', 'scooter', 'motorbike', 'car',
+         'subway', 'bus', 'train', 'flight', 'ferry',
+         'passenger_boat', 'private_boat'
+       )
+       OR v_ctr_transport NOT IN (
+         'walking', 'bicycle', 'ebike', 'scooter', 'motorbike', 'car',
+         'subway', 'bus', 'train', 'flight', 'ferry',
+         'passenger_boat', 'private_boat'
+       ) THEN
+      RAISE EXCEPTION 'error.match_request_not_eligible';
+    END IF;
+  ELSIF v_init_cat = 'deliver' AND v_init_subtype = 'cargo_only' THEN
+    -- v98_cargo_only_full_deliver = TARGET_DELIVER_TRANSPORT_MODES
+    IF v_init_transport NOT IN (
+         'cargo_van', 'light_truck', 'box_truck', 'vehicle_with_trailer',
+         'cargo_boat', 'private_cargo_boat', 'other_cargo_vehicle'
+       )
+       OR v_ctr_transport NOT IN (
+         'cargo_van', 'light_truck', 'box_truck', 'vehicle_with_trailer',
+         'cargo_boat', 'private_cargo_boat', 'other_cargo_vehicle'
+       ) THEN
+      RAISE EXCEPTION 'error.match_request_not_eligible';
+    END IF;
+  ELSIF v_init_cat = 'deliver' AND v_init_subtype = 'cargo_with_escort' THEN
+    -- v98_cargo_escort_land_only (boats cannot carry escort)
+    IF v_init_transport NOT IN (
+         'cargo_van', 'light_truck', 'box_truck',
+         'vehicle_with_trailer', 'other_cargo_vehicle'
+       )
+       OR v_ctr_transport NOT IN (
+         'cargo_van', 'light_truck', 'box_truck',
+         'vehicle_with_trailer', 'other_cargo_vehicle'
+       ) THEN
+      RAISE EXCEPTION 'error.match_request_not_eligible';
+    END IF;
+  ELSE
     RAISE EXCEPTION 'error.match_request_not_eligible';
   END IF;
 
@@ -672,11 +710,6 @@ COMMENT ON FUNCTION public.create_match_request_v99(
 ) IS
   'v99B atomic first-send writer. Exact retry uses idempotency_payload_hash only. Fresh requests recompute v99 admission hash from locked posts. Fail-closed on NULL subtype/country/timezone/policy. Does not write contracts/allocations/events. Does not enable creation or night policy.';
 
-REVOKE ALL ON FUNCTION public.create_match_request_v99(
-  uuid, uuid, uuid, uuid, uuid, text, text, text, jsonb,
-  integer, text, text, bigint, text, bigint, bigint, integer, integer, integer,
-  text, boolean, boolean
-) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.create_match_request_v99(
   uuid, uuid, uuid, uuid, uuid, text, text, text, jsonb,
   integer, text, text, bigint, text, bigint, bigint, integer, integer, integer,

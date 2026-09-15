@@ -113,7 +113,11 @@ assert.equal(migration.includes("public.st_"), false);
 assert.equal(fnBody.includes("public.digest"), false);
 
 assert.ok(migration.includes("REVOKE ALL ON FUNCTION public.create_match_request_v99"));
-assert.ok(migration.includes("FROM PUBLIC;"));
+assert.equal(
+  (migration.match(/FROM PUBLIC;/g) ?? []).length,
+  1,
+  "exactly one PUBLIC revoke",
+);
 assert.ok(migration.includes("FROM anon;"));
 assert.ok(migration.includes("FROM authenticated;"));
 assert.ok(migration.includes("GRANT EXECUTE ON FUNCTION public.create_match_request_v99"));
@@ -156,10 +160,93 @@ assert.ok(fnBody.includes("v_init_country IS NULL"));
 assert.ok(fnBody.includes("v_init_timezone IS NULL"));
 assert.ok(fnBody.includes("v_init_night_ver IS NULL"));
 assert.ok(fnBody.includes("v_init_country !~ '^[A-Z]{2}$'"));
+assert.ok(fnBody.includes("v_init_subtype IS DISTINCT FROM v_ctr_subtype"));
 assert.ok(fnBody.includes("passenger_with_small_item"));
 assert.ok(fnBody.includes("cargo_with_escort"));
-assert.ok(fnBody.includes("cargo_boat"));
-assert.ok(fnBody.includes("IS DISTINCT FROM 'car'"));
+assert.ok(fnBody.includes("v_init_transport = 'van'"));
+assert.ok(fnBody.includes("v_ctr_transport = 'van'"));
+assert.ok(fnBody.includes("v_init_transport IS DISTINCT FROM 'car'"));
+assert.ok(fnBody.includes("v_ctr_transport IS DISTINCT FROM 'car'"));
+
+// Full frozen allowlists (both sides) — deleting a member must fail these.
+const TRAVEL_SMALL_ITEM_MODES = [
+  "walking",
+  "bicycle",
+  "ebike",
+  "scooter",
+  "motorbike",
+  "car",
+  "subway",
+  "bus",
+  "train",
+  "flight",
+  "ferry",
+  "passenger_boat",
+  "private_boat",
+] as const;
+const DELIVER_CARGO_ONLY_MODES = [
+  "cargo_van",
+  "light_truck",
+  "box_truck",
+  "vehicle_with_trailer",
+  "cargo_boat",
+  "private_cargo_boat",
+  "other_cargo_vehicle",
+] as const;
+const ESCORT_LAND_MODES = [
+  "cargo_van",
+  "light_truck",
+  "box_truck",
+  "vehicle_with_trailer",
+  "other_cargo_vehicle",
+] as const;
+
+const peopleStart = fnBody.indexOf(
+  "v_init_subtype IN ('passenger', 'passenger_with_small_item')",
+);
+const smallItemStart = fnBody.indexOf("AND v_init_subtype = 'small_item_only'");
+const cargoOnlyStart = fnBody.indexOf("AND v_init_subtype = 'cargo_only'");
+const escortStart = fnBody.indexOf("AND v_init_subtype = 'cargo_with_escort'");
+assert.ok(peopleStart > 0 && smallItemStart > peopleStart);
+assert.ok(cargoOnlyStart > smallItemStart && escortStart > cargoOnlyStart);
+
+const peopleBlock = fnBody.slice(peopleStart, smallItemStart);
+assert.ok(peopleBlock.includes("v_init_transport IS DISTINCT FROM 'car'"));
+assert.ok(peopleBlock.includes("v_ctr_transport IS DISTINCT FROM 'car'"));
+assert.ok(peopleBlock.includes("passenger_with_small_item"));
+
+const smallItemBlock = fnBody.slice(smallItemStart, cargoOnlyStart);
+for (const mode of TRAVEL_SMALL_ITEM_MODES) {
+  assert.ok(
+    smallItemBlock.includes(`'${mode}'`),
+    `small_item_only allowlist missing ${mode}`,
+  );
+}
+assert.ok(smallItemBlock.includes("v_init_transport NOT IN"));
+assert.ok(smallItemBlock.includes("v_ctr_transport NOT IN"));
+assert.equal(smallItemBlock.includes("'cargo_van'"), false);
+
+const cargoOnlyBlock = fnBody.slice(cargoOnlyStart, escortStart);
+for (const mode of DELIVER_CARGO_ONLY_MODES) {
+  assert.ok(
+    cargoOnlyBlock.includes(`'${mode}'`),
+    `cargo_only allowlist missing ${mode}`,
+  );
+}
+assert.ok(cargoOnlyBlock.includes("v_init_transport NOT IN"));
+assert.ok(cargoOnlyBlock.includes("v_ctr_transport NOT IN"));
+
+const escortBlock = fnBody.slice(escortStart);
+for (const mode of ESCORT_LAND_MODES) {
+  assert.ok(
+    escortBlock.includes(`'${mode}'`),
+    `escort land allowlist missing ${mode}`,
+  );
+}
+assert.equal(escortBlock.includes("'cargo_boat'"), false);
+assert.equal(escortBlock.includes("'private_cargo_boat'"), false);
+assert.ok(escortBlock.includes("v_init_transport NOT IN"));
+assert.ok(escortBlock.includes("v_ctr_transport NOT IN"));
 
 // No browser authority params on writer signature
 const createSig = migration.slice(
@@ -189,6 +276,8 @@ assert.ok(verifySql.includes(") AS observed,"));
 assert.ok(verifySql.includes("overall_pass"));
 assert.ok(verifySql.includes("writer_v99 identity"));
 assert.ok(verifySql.includes("writer binds v99 facts/hash"));
+assert.ok(verifySql.includes("pair subtype exact-match gate"));
+assert.ok(verifySql.includes("transport authority v98 truth table"));
 assert.ok(verifySql.includes("writer ACL service_role only"));
 assert.ok(verifySql.includes("v99A three functions retained"));
 assert.ok(verifySql.includes("v95 five functions retained"));
@@ -196,6 +285,11 @@ assert.ok(verifySql.includes("create_match_request_v100 absent"));
 assert.ok(verifySql.includes("no v99B table/policy/trigger/sequence"));
 assert.ok(verifySql.includes("creation remains false"));
 assert.ok(verifySql.includes("night RS seed disabled"));
+assert.ok(verifySql.includes("pair_subtype_exact"));
+assert.ok(verifySql.includes("travel_people_car_both"));
+assert.ok(verifySql.includes("travel_small_item_full_allowlist"));
+assert.ok(verifySql.includes("deliver_cargo_only_full_allowlist"));
+assert.ok(verifySql.includes("escort_land_five_no_boats"));
 assert.equal(/SELECT\s+p\.prosrc\b/i.test(verifySql), false);
 assert.equal(/pg_get_functiondef/i.test(verifySql), false);
 assert.ok(verifySql.includes(WRITER_IDENTITY));
@@ -203,7 +297,13 @@ assert.ok(verifySql.includes(WRITER_IDENTITY));
 const checkOrders = [...verifySql.matchAll(/SELECT\s+(\d+)\s*(?::integer)?\s*(?:AS check_order)?/g)]
   .map((m) => Number(m[1]))
   .filter((n) => n >= 100);
-assert.ok(checkOrders.length >= 9, `expected many verify checks, got ${checkOrders.length}`);
+assert.ok(checkOrders.length >= 11, `expected many verify checks, got ${checkOrders.length}`);
+
+// TS pair exact subtype + policy
+assert.ok(policy.includes("pairHasExactAdmissionSubtype"));
+assert.ok(policy.includes("postSatisfiesAdmissionAuthority"));
+assert.ok(policy.includes("assertPublishSubtypeTransportLegal"));
+assert.ok(policy.includes("String(timezoneRaw).trim()"));
 
 // ── API cutover (production call sites) ─────────────────────────────────────
 const routeLive = stripSqlComments(route);
@@ -253,6 +353,7 @@ assert.equal(retryBlock.includes("loadQuote"), false);
 
 // TS admission authority parity
 assert.ok(policy.includes("postSatisfiesAdmissionAuthority"));
+assert.ok(policy.includes("pairHasExactAdmissionSubtype"));
 assert.ok(policy.includes("assertPublishSubtypeTransportLegal"));
 assert.ok(policy.includes("service_subtype?:"));
 assert.ok(policy.includes("origin_country_code?:"));

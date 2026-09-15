@@ -398,11 +398,16 @@ OWNER against PostGIS.
   `read_match_request_candidate_snapshot_v99` and writes via
   `create_match_request_v99`. `inspect_match_request_v95` remains for
   exact-retry / limit hints. Exact retry still precedes creation flag /
-  posts lock / v99 hash. Fresh requests fail closed when subtype /
-  country / timezone / night_policy_version are missing or illegal, and
-  when subtype×transport violates the frozen v98 truth table. Creation
-  flag and RS night seed remain false. No UI mount, list, resend, accept,
+  posts lock / v99 hash. Fresh requests require **exact** subtype pair
+  match (no cross-subtype / no silent downgrade) and enforce the full
+  frozen v98 subtype×transport allowlists on **both** posts (people
+  Travel car-only; small_item full Travel modes; cargo_only full Deliver
+  modes including boats; cargo_with_escort five land cargo vehicles;
+  reject legacy van / unknown / cross-lane / NULL-blank). Creation flag
+  and RS night seed remain false. No UI mount, list, resend, accept,
   contract, or night runtime.
+  PHASE 6.7C.2C.2A repaired the unapplied writer in place for pair
+  subtype exact-match and complete transport authority (verify hardened).
 - **Still unresolved / later phases:** user apply + verify of v99B; trusted
   country/timezone publish path; night runtime; enabling creation.
 - **Future replacement:** later writers must not CREATE OR REPLACE v99B

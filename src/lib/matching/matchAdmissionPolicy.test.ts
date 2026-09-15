@@ -9,18 +9,24 @@ import {
   canonicalAdmissionFacts,
   describePairTimeDifference,
   evaluateMatchAdmission,
+  evaluatePairCompatibility,
   evaluateRouteAdmission,
   hashMatchAdmissionDigest,
   isStrictCalendarDate,
   officialStartDeltaMinutes,
   officialTimeWindowsCompatible,
   pairHasCompatibleSchedule,
+  pairHasExactAdmissionSubtype,
   postSatisfiesAdmissionAuthority,
   validateProposedSchedule,
   type MatchAdmissionPost,
   type MatchAdmissionRouteScore,
   type MatchAdmissionRouteThresholds,
 } from "@/lib/matching/matchAdmissionPolicy";
+import {
+  TARGET_DELIVER_TRANSPORT_MODES,
+  TARGET_TRAVEL_TRANSPORT_MODES,
+} from "@/lib/transport/transportPolicy";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -388,6 +394,10 @@ assert.deepEqual(
     false,
   );
   assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, service_subtype: "   " }),
+    false,
+  );
+  assert.equal(
     postSatisfiesAdmissionAuthority({
       ...demand,
       service_subtype: "cargo_only",
@@ -415,6 +425,10 @@ assert.deepEqual(
   );
   assert.equal(
     postSatisfiesAdmissionAuthority({ ...demand, origin_timezone: "" }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({ ...demand, origin_timezone: "  " }),
     false,
   );
   assert.equal(
@@ -460,6 +474,203 @@ assert.deepEqual(
       ...deliver,
       transport_mode: "cargo_boat",
     }),
+    false,
+  );
+
+  // Pair subtype exact-match (no silent downgrade).
+  assert.equal(pairHasExactAdmissionSubtype(demand, provider), true);
+  assert.equal(
+    pairHasExactAdmissionSubtype(demand, {
+      ...provider,
+      service_subtype: "small_item_only",
+    }),
+    false,
+  );
+  assert.equal(
+    pairHasExactAdmissionSubtype(demand, {
+      ...provider,
+      service_subtype: "passenger_with_small_item",
+    }),
+    false,
+  );
+  assert.equal(
+    pairHasExactAdmissionSubtype(
+      { ...demand, category: "deliver", service_subtype: "cargo_only", transport_mode: "cargo_van" },
+      {
+        ...provider,
+        category: "deliver",
+        service_subtype: "cargo_with_escort",
+        transport_mode: "cargo_van",
+        escort_seats: 1,
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    evaluatePairCompatibility(demand, {
+      ...provider,
+      service_subtype: "small_item_only",
+      transport_mode: "car",
+    }).ok,
+    false,
+  );
+  assert.equal(
+    evaluatePairCompatibility(demand, {
+      ...provider,
+      service_subtype: "passenger_with_small_item",
+    }).ok,
+    false,
+  );
+  assert.equal(evaluatePairCompatibility(demand, provider).ok, true);
+
+  // Transport authority via single-post helper (both sides must pass).
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      service_subtype: "small_item_only",
+      transport_mode: "cargo_van",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      category: "deliver",
+      service_subtype: "cargo_only",
+      transport_mode: "bus",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      transport_mode: "walking",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      service_subtype: "passenger_with_small_item",
+      transport_mode: "bus",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      category: "deliver",
+      service_subtype: "cargo_with_escort",
+      transport_mode: "private_cargo_boat",
+      escort_seats: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      transport_mode: "unknown_mode",
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      transport_mode: null,
+    }),
+    false,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      transport_mode: "  ",
+    }),
+    false,
+  );
+
+  // Positive transport cases (initiator-shaped posts).
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      service_subtype: "passenger",
+      transport_mode: "car",
+    }),
+    true,
+  );
+  assert.equal(
+    postSatisfiesAdmissionAuthority({
+      ...demand,
+      service_subtype: "passenger_with_small_item",
+      transport_mode: "car",
+    }),
+    true,
+  );
+  for (const mode of TARGET_TRAVEL_TRANSPORT_MODES) {
+    assert.equal(
+      postSatisfiesAdmissionAuthority({
+        ...demand,
+        service_subtype: "small_item_only",
+        transport_mode: mode,
+      }),
+      true,
+      `small_item_only + ${mode}`,
+    );
+  }
+  for (const mode of TARGET_DELIVER_TRANSPORT_MODES) {
+    assert.equal(
+      postSatisfiesAdmissionAuthority({
+        ...demand,
+        category: "deliver",
+        service_subtype: "cargo_only",
+        transport_mode: mode,
+      }),
+      true,
+      `cargo_only + ${mode}`,
+    );
+  }
+  for (const mode of [
+    "cargo_van",
+    "light_truck",
+    "box_truck",
+    "vehicle_with_trailer",
+    "other_cargo_vehicle",
+  ] as const) {
+    assert.equal(
+      postSatisfiesAdmissionAuthority({
+        ...demand,
+        category: "deliver",
+        service_subtype: "cargo_with_escort",
+        transport_mode: mode,
+        escort_seats: 1,
+      }),
+      true,
+      `cargo_with_escort + ${mode}`,
+    );
+  }
+
+  // Counterpart side also fail-closed when only right is illegal.
+  assert.equal(
+    evaluatePairCompatibility(demand, {
+      ...provider,
+      transport_mode: "bus",
+    }).ok,
+    false,
+  );
+  assert.equal(
+    evaluatePairCompatibility(
+      {
+        ...demand,
+        category: "deliver",
+        service_subtype: "cargo_only",
+        transport_mode: "cargo_van",
+      },
+      {
+        ...provider,
+        category: "deliver",
+        service_subtype: "cargo_only",
+        transport_mode: "bus",
+      },
+    ).ok,
     false,
   );
 }

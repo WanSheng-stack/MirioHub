@@ -310,23 +310,27 @@ export function postSatisfiesOfficialTransport(post: MatchAdmissionPost): boolea
  */
 export function postSatisfiesAdmissionAuthority(post: MatchAdmissionPost): boolean {
   const category = post.category;
-  const subtype = post.service_subtype ?? null;
+  const subtypeRaw = post.service_subtype ?? null;
+  const subtype =
+    subtypeRaw == null ? null : String(subtypeRaw).trim() || null;
   const country = post.origin_country_code;
-  const timezone = post.origin_timezone;
+  const timezoneRaw = post.origin_timezone;
+  const timezone =
+    timezoneRaw == null ? null : String(timezoneRaw).trim() || null;
   const policy = post.night_policy_version;
 
   if (category === "buy" || category === "onsite" || category === "errand") {
-    if (subtype != null && subtype !== "") return false;
+    if (subtype != null) return false;
     return true;
   }
   if (category !== "travel" && category !== "deliver") return false;
 
-  // Travel/Deliver NULL subtype = legacy_unknown — not eligible for new matching.
-  if (subtype == null || subtype === "") return false;
+  // Travel/Deliver NULL/blank subtype = legacy_unknown — not eligible.
+  if (subtype == null) return false;
   if (country == null || country === "" || !/^[A-Z]{2}$/.test(country)) {
     return false;
   }
-  if (timezone == null || timezone === "") return false;
+  if (timezone == null) return false;
   if (policy == null || !Number.isSafeInteger(policy) || policy <= 0) {
     return false;
   }
@@ -345,6 +349,31 @@ export function postSatisfiesAdmissionAuthority(post: MatchAdmissionPost): boole
   return true;
 }
 
+/** Travel/Deliver pair must share the exact same service_subtype (no downgrade). */
+export function pairHasExactAdmissionSubtype(
+  left: MatchAdmissionPost,
+  right: MatchAdmissionPost,
+): boolean {
+  if (left.category !== right.category) return false;
+  if (
+    left.category !== "travel" &&
+    left.category !== "deliver"
+  ) {
+    const ls = left.service_subtype;
+    const rs = right.service_subtype;
+    const leftBlank = ls == null || String(ls).trim() === "";
+    const rightBlank = rs == null || String(rs).trim() === "";
+    return leftBlank && rightBlank;
+  }
+  const leftSubtype = left.service_subtype;
+  const rightSubtype = right.service_subtype;
+  if (leftSubtype == null || rightSubtype == null) return false;
+  const ls = String(leftSubtype).trim();
+  const rs = String(rightSubtype).trim();
+  if (ls === "" || rs === "") return false;
+  return ls === rs;
+}
+
 export function pairHasCompatibleRolesAndCategory(
   left: MatchAdmissionPost,
   right: MatchAdmissionPost,
@@ -360,6 +389,9 @@ export function evaluatePairCompatibility(
   right: MatchAdmissionPost,
 ): { ok: true } | { ok: false; reasons: MatchAdmissionReason[] } {
   if (!pairHasCompatibleRolesAndCategory(left, right)) {
+    return { ok: false, reasons: ["incompatible_pair"] };
+  }
+  if (!pairHasExactAdmissionSubtype(left, right)) {
     return { ok: false, reasons: ["incompatible_pair"] };
   }
   if (

@@ -41,7 +41,101 @@ fn AS (
       AND strpos(p.prosrc, 'error.match_request_creation_disabled') > 0) AS fresh_fail_closed,
     (strpos(p.prosrc, 'idempotency_payload_hash') > 0
       AND strpos(p.prosrc, 'created := false') > 0
-      AND strpos(p.prosrc, 'RETURN NEXT') > 0) AS exact_retry_shape
+      AND strpos(p.prosrc, 'RETURN NEXT') > 0) AS exact_retry_shape,
+    (strpos(p.prosrc, 'v_init_subtype IS DISTINCT FROM v_ctr_subtype') > 0) AS pair_subtype_exact,
+    (strpos(p.prosrc, 'v98_people_travel_car_only') > 0
+      AND strpos(p.prosrc, 'passenger_with_small_item') > 0
+      AND strpos(p.prosrc, 'v_init_transport IS DISTINCT FROM ''car''') > 0
+      AND strpos(p.prosrc, 'v_ctr_transport IS DISTINCT FROM ''car''') > 0) AS travel_people_car_both,
+    (strpos(p.prosrc, 'v98_small_item_travel_all_modes') > 0
+      AND strpos(p.prosrc, '''walking''') > 0
+      AND strpos(p.prosrc, '''bicycle''') > 0
+      AND strpos(p.prosrc, '''ebike''') > 0
+      AND strpos(p.prosrc, '''scooter''') > 0
+      AND strpos(p.prosrc, '''motorbike''') > 0
+      AND strpos(p.prosrc, '''subway''') > 0
+      AND strpos(p.prosrc, '''bus''') > 0
+      AND strpos(p.prosrc, '''train''') > 0
+      AND strpos(p.prosrc, '''flight''') > 0
+      AND strpos(p.prosrc, '''ferry''') > 0
+      AND strpos(p.prosrc, '''passenger_boat''') > 0
+      AND strpos(p.prosrc, '''private_boat''') > 0
+      AND strpos(p.prosrc, 'v_init_transport NOT IN') > 0
+      AND strpos(p.prosrc, 'v_ctr_transport NOT IN') > 0) AS travel_small_item_full_allowlist,
+    (strpos(p.prosrc, 'v98_cargo_only_full_deliver') > 0
+      AND strpos(p.prosrc, '''cargo_van''') > 0
+      AND strpos(p.prosrc, '''light_truck''') > 0
+      AND strpos(p.prosrc, '''box_truck''') > 0
+      AND strpos(p.prosrc, '''vehicle_with_trailer''') > 0
+      AND strpos(p.prosrc, '''cargo_boat''') > 0
+      AND strpos(p.prosrc, '''private_cargo_boat''') > 0
+      AND strpos(p.prosrc, '''other_cargo_vehicle''') > 0) AS deliver_cargo_only_full_allowlist,
+    (strpos(p.prosrc, 'v98_cargo_escort_land_only') > 0
+      AND strpos(p.prosrc, 'cargo_with_escort') > 0
+      AND (length(p.prosrc) - length(replace(p.prosrc, '''cargo_van''', ''))) / length('''cargo_van''') >= 2
+      AND strpos(p.prosrc, 'v_init_transport = ''van''') > 0
+      AND strpos(p.prosrc, 'v_ctr_transport = ''van''') > 0) AS escort_land_and_van_reject,
+    (
+      -- Escort land allowlist must include five land modes and must NOT allow boats
+      -- as members of the escort NOT IN list (boats only appear in cargo_only list).
+      strpos(p.prosrc, 'v98_cargo_escort_land_only') > 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''cargo_van'''
+      ) > 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''light_truck'''
+      ) > 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''box_truck'''
+      ) > 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''vehicle_with_trailer'''
+      ) > 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''other_cargo_vehicle'''
+      ) > 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''cargo_boat'''
+      ) = 0
+      AND strpos(
+        substring(
+          p.prosrc
+          from strpos(p.prosrc, 'v98_cargo_escort_land_only')
+          for 800
+        ),
+        '''private_cargo_boat'''
+      ) = 0
+    ) AS escort_land_five_no_boats
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
@@ -86,6 +180,12 @@ exact_resolved AS (
     f.locks_authority_fields,
     f.fresh_fail_closed,
     f.exact_retry_shape,
+    f.pair_subtype_exact,
+    f.travel_people_car_both,
+    f.travel_small_item_full_allowlist,
+    f.deliver_cargo_only_full_allowlist,
+    f.escort_land_and_van_reject,
+    f.escort_land_five_no_boats,
     f.proowner,
     f.proacl
   FROM exact e
@@ -191,6 +291,33 @@ checks AS (
       'exact_retry='||COALESCE(exact_retry_shape::text, 'null'))
       FROM exact_resolved WHERE proname = 'create_match_request_v99'),
     'writer uses v99 helpers, locks authority columns, fresh fail-closed, exact retry'
+  UNION ALL SELECT 102, 'rpc', 'pair subtype exact-match gate',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM exact_resolved r
+      WHERE r.proname = 'create_match_request_v99'
+        AND r.pair_subtype_exact IS TRUE
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT 'pair_exact='||COALESCE(pair_subtype_exact::text, 'null')
+      FROM exact_resolved WHERE proname = 'create_match_request_v99') AS observed,
+    'v_init_subtype IS DISTINCT FROM v_ctr_subtype fail-closed'::text AS expected
+  UNION ALL SELECT 103, 'rpc', 'transport authority v98 truth table',
+    CASE WHEN EXISTS (
+      SELECT 1 FROM exact_resolved r
+      WHERE r.proname = 'create_match_request_v99'
+        AND r.travel_people_car_both IS TRUE
+        AND r.travel_small_item_full_allowlist IS TRUE
+        AND r.deliver_cargo_only_full_allowlist IS TRUE
+        AND r.escort_land_and_van_reject IS TRUE
+        AND r.escort_land_five_no_boats IS TRUE
+    ) THEN 'PASS' ELSE 'FAIL' END,
+    (SELECT concat_ws(' | ',
+      'people_car='||COALESCE(travel_people_car_both::text, 'null'),
+      'small_item='||COALESCE(travel_small_item_full_allowlist::text, 'null'),
+      'cargo_only='||COALESCE(deliver_cargo_only_full_allowlist::text, 'null'),
+      'van_reject='||COALESCE(escort_land_and_van_reject::text, 'null'),
+      'escort_land='||COALESCE(escort_land_five_no_boats::text, 'null'))
+      FROM exact_resolved WHERE proname = 'create_match_request_v99') AS observed,
+    'both sides: people car-only, small_item full travel, cargo_only full deliver, escort five land, van reject'::text AS expected
   UNION ALL SELECT 110, 'acl', 'writer ACL service_role only',
     CASE WHEN EXISTS (
       SELECT 1 FROM public_acl p

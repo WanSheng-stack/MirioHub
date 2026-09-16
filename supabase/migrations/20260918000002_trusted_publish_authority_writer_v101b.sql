@@ -482,10 +482,13 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
   END IF;
 
-  -- Deterministic xact advisory lock BEFORE any posts read (same contract all writers).
+  -- Global client_request_id xact advisory lock BEFORE any posts read
+  -- (same contract all writers; key must not include userId — posts.crid is globally unique).
   PERFORM pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtext('v101_publish_user:' || p_user_id::text),
-    pg_catalog.hashtext('v101_publish_crid:' || p_client_request_id::text)
+    pg_catalog.hashtextextended(
+      'v101_publish_crid:' || p_client_request_id::text,
+      0
+    )
   );
 
   SELECT
@@ -815,9 +818,13 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
   END IF;
 
+  -- Global client_request_id xact advisory lock BEFORE any posts read
+  -- (same contract all writers; key must not include userId).
   PERFORM pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtext('v101_publish_user:' || p_user_id::text),
-    pg_catalog.hashtext('v101_publish_crid:' || p_client_request_id::text)
+    pg_catalog.hashtextextended(
+      'v101_publish_crid:' || p_client_request_id::text,
+      0
+    )
   );
 
   SELECT
@@ -1071,17 +1078,24 @@ DECLARE
   v_complete         boolean;
   v_legacy           boolean;
   v_updated          integer;
+  v_path             text; -- 'fresh' | 'complete_draft' | 'legacy_draft'
+  v_cred_owner       uuid;
+  v_cred_pk          text;
 BEGIN
   IF p_user_id IS NULL OR p_client_request_id IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
   END IF;
 
+  -- Global client_request_id xact advisory lock BEFORE any posts read
+  -- (same contract all writers; key must not include userId).
   PERFORM pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtext('v101_publish_user:' || p_user_id::text),
-    pg_catalog.hashtext('v101_publish_crid:' || p_client_request_id::text)
+    pg_catalog.hashtextextended(
+      'v101_publish_crid:' || p_client_request_id::text,
+      0
+    )
   );
 
-  -- Ownership / authority classification first — same boundary as v98 (before challenge).
+  -- Ownership / authority classification first — before any challenge/passkey mutation.
   SELECT
     id, payload_hash, status, user_id,
     origin_gps, origin_country_code, origin_timezone, night_policy_version
@@ -1132,7 +1146,7 @@ BEGIN
       IF v_existing_status IS DISTINCT FROM 'draft' THEN
         RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
       END IF;
-      -- complete draft → fencing + credential + status-only activate (authority unchanged)
+      v_path := 'complete_draft';
     ELSIF v_legacy THEN
       IF v_existing_status IS DISTINCT FROM 'draft' THEN
         RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_legacy_missing');
@@ -1140,55 +1154,109 @@ BEGIN
       IF v_existing_hash IS DISTINCT FROM p_canonical_payload_hash THEN
         RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
       END IF;
-      -- legacy draft → fencing + credential + authority upgrade + activate
+      v_path := 'legacy_draft';
     END IF;
+  ELSE
+    v_path := 'fresh';
   END IF;
 
-  UPDATE public.auth_challenges
-  SET status = 'consumed', used_at = NOW()
-  WHERE id                 = p_challenge_id
-    AND client_request_id  = p_client_request_id
-    AND user_id            = p_user_id
-    AND processing_token   = p_processing_token
-    AND status             = 'processing';
-
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.challenge_fencing_stale');
+  -- Pre-mutation validation (fail closed before challenge/passkey/posts writes).
+  IF p_ceremony_type IS DISTINCT FROM 'registration'
+     AND p_ceremony_type IS DISTINCT FROM 'authentication' THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.passkey_transaction_failed');
   END IF;
 
   IF p_ceremony_type = 'registration' THEN
-    UPDATE public.profiles
-    SET has_passkey = true, updated_at = NOW()
-    WHERE id = p_user_id;
-
-    INSERT INTO public.passkeys (
-      user_id, credential_id, public_key, sign_count,
-      credential_device_type, credential_backed_up, created_at
-    )
-    VALUES (
-      p_user_id, p_credential_id, p_public_key, p_sign_count,
-      p_device_type, p_backed_up, NOW()
-    )
-    ON CONFLICT (credential_id) DO NOTHING;
+    IF p_credential_id IS NULL
+       OR p_public_key IS NULL
+       OR p_sign_count IS NULL
+       OR p_device_type IS NULL
+       OR p_backed_up IS NULL THEN
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.passkey_transaction_failed');
+    END IF;
   ELSE
-    UPDATE public.passkeys
-    SET sign_count = GREATEST(sign_count, p_sign_count), last_used_at = NOW()
-    WHERE credential_id = p_credential_id AND user_id = p_user_id;
+    IF p_credential_id IS NULL OR p_sign_count IS NULL THEN
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.authentication_credential_not_found');
+    END IF;
   END IF;
 
-  IF v_existing_post_id IS NOT NULL THEN
-    v_complete :=
-      v_stored_gps IS NOT NULL
-      AND v_stored_cc IS NOT NULL
-      AND v_stored_tz IS NOT NULL;
-    v_legacy :=
-      v_stored_gps IS NULL
-      AND v_stored_cc IS NULL
-      AND v_stored_tz IS NULL
-      AND v_stored_night IS NULL;
+  IF v_path IN ('fresh', 'legacy_draft') THEN
+    v_final_hash := public.trusted_publish_facts_hash_v101(
+      p_canonical_payload_hash,
+      p_origin_gps,
+      p_origin_country_code,
+      p_origin_timezone,
+      p_night_policy_version
+    );
+    IF v_final_hash IS NULL THEN
+      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_invalid');
+    END IF;
+  END IF;
 
-    IF v_complete THEN
-      -- CASE C: status-only activate; authority unchanged
+  -- ── Mutation phase (nested subtransaction) ───────────────────────────────
+  -- After challenge consume succeeds, failures MUST RAISE so this block rolls
+  -- back challenge/profile/passkey/posts together. No plain failure RETURN here.
+  BEGIN
+    UPDATE public.auth_challenges
+    SET status = 'consumed', used_at = NOW()
+    WHERE id                 = p_challenge_id
+      AND client_request_id  = p_client_request_id
+      AND user_id            = p_user_id
+      AND processing_token   = p_processing_token
+      AND status             = 'processing';
+
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+    IF v_updated IS DISTINCT FROM 1 THEN
+      RAISE EXCEPTION 'error.challenge_fencing_stale';
+    END IF;
+
+    IF p_ceremony_type = 'registration' THEN
+      UPDATE public.profiles
+      SET has_passkey = true, updated_at = NOW()
+      WHERE id = p_user_id;
+
+      GET DIAGNOSTICS v_updated = ROW_COUNT;
+      IF v_updated IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'error.passkey_transaction_failed';
+      END IF;
+
+      INSERT INTO public.passkeys (
+        user_id, credential_id, public_key, sign_count,
+        credential_device_type, credential_backed_up, created_at
+      )
+      VALUES (
+        p_user_id, p_credential_id, p_public_key, p_sign_count,
+        p_device_type, p_backed_up, NOW()
+      )
+      ON CONFLICT (credential_id) DO NOTHING;
+
+      SELECT user_id, public_key
+      INTO v_cred_owner, v_cred_pk
+      FROM public.passkeys
+      WHERE credential_id = p_credential_id
+      FOR UPDATE;
+
+      IF v_cred_owner IS NULL THEN
+        RAISE EXCEPTION 'error.passkey_transaction_failed';
+      END IF;
+      IF v_cred_owner IS DISTINCT FROM p_user_id THEN
+        RAISE EXCEPTION 'error.security_boundary_compromised';
+      END IF;
+      IF v_cred_pk IS DISTINCT FROM p_public_key THEN
+        RAISE EXCEPTION 'error.security_boundary_compromised';
+      END IF;
+    ELSE
+      UPDATE public.passkeys
+      SET sign_count = GREATEST(sign_count, p_sign_count), last_used_at = NOW()
+      WHERE credential_id = p_credential_id AND user_id = p_user_id;
+
+      GET DIAGNOSTICS v_updated = ROW_COUNT;
+      IF v_updated IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'error.authentication_credential_not_found';
+      END IF;
+    END IF;
+
+    IF v_path = 'complete_draft' THEN
       UPDATE public.posts
       SET status = 'active', updated_at = NOW()
       WHERE id = v_existing_post_id
@@ -1200,202 +1268,76 @@ BEGIN
         AND origin_timezone IS NOT NULL;
 
       GET DIAGNOSTICS v_updated = ROW_COUNT;
-      IF v_updated = 1 THEN
-        RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
+      IF v_updated IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'error.invalid_post_status';
       END IF;
+      v_post_id := v_existing_post_id;
 
-      SELECT
-        id, payload_hash, status, user_id,
-        origin_gps, origin_country_code, origin_timezone, night_policy_version
-      INTO
-        v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner,
-        v_stored_gps, v_stored_cc, v_stored_tz, v_stored_night
-      FROM public.posts
-      WHERE client_request_id = p_client_request_id
-      FOR UPDATE;
-
-      IF v_existing_owner IS DISTINCT FROM p_user_id THEN
-        RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
-      END IF;
-      v_expected_hash := public.trusted_publish_facts_hash_v101(
-        p_canonical_payload_hash,
-        v_stored_gps,
-        v_stored_cc,
-        v_stored_tz,
-        v_stored_night
-      );
-      IF v_expected_hash IS NULL
-         OR v_expected_hash IS DISTINCT FROM v_existing_hash THEN
-        RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
-      END IF;
-      IF v_existing_status = 'active' THEN
-        RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
-      END IF;
-      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
-    END IF;
-
-    -- Legacy draft upgrade + activate in same transaction as challenge consume
-    v_final_hash := public.trusted_publish_facts_hash_v101(
-      p_canonical_payload_hash,
-      p_origin_gps,
-      p_origin_country_code,
-      p_origin_timezone,
-      p_night_policy_version
-    );
-    IF v_final_hash IS NULL THEN
-      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_invalid');
-    END IF;
-
-    UPDATE public.posts
-    SET
-      status = 'active',
-      payload_hash = v_final_hash,
-      origin_gps = p_origin_gps,
-      origin_country_code = p_origin_country_code,
-      origin_timezone = p_origin_timezone,
-      night_policy_version = p_night_policy_version,
-      updated_at = NOW()
-    WHERE id = v_existing_post_id
-      AND user_id = p_user_id
-      AND status = 'draft'
-      AND payload_hash = p_canonical_payload_hash
-      AND origin_gps IS NULL
-      AND origin_country_code IS NULL
-      AND origin_timezone IS NULL
-      AND night_policy_version IS NULL;
-
-    GET DIAGNOSTICS v_updated = ROW_COUNT;
-    IF v_updated = 1 THEN
-      RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
-    END IF;
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_partial_state');
-  END IF;
-
-  -- Fresh active insert
-  v_final_hash := public.trusted_publish_facts_hash_v101(
-    p_canonical_payload_hash,
-    p_origin_gps,
-    p_origin_country_code,
-    p_origin_timezone,
-    p_night_policy_version
-  );
-  IF v_final_hash IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_invalid');
-  END IF;
-
-  v_post_id := public.insert_stage1_post_v101(
-    p_user_id,
-    p_client_request_id,
-    v_final_hash,
-    'active',
-    p_post_payload,
-    p_server_fee_minor,
-    NULL,
-    p_origin_gps,
-    p_origin_country_code,
-    p_origin_timezone,
-    p_night_policy_version
-  );
-
-  RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_post_id);
-
-EXCEPTION WHEN unique_violation THEN
-  SELECT
-    id, payload_hash, status, user_id,
-    origin_gps, origin_country_code, origin_timezone, night_policy_version
-  INTO
-    v_existing_post_id, v_existing_hash, v_existing_status, v_existing_owner,
-    v_stored_gps, v_stored_cc, v_stored_tz, v_stored_night
-  FROM public.posts
-  WHERE client_request_id = p_client_request_id
-  FOR UPDATE;
-
-  IF v_existing_owner IS DISTINCT FROM p_user_id THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.security_boundary_compromised');
-  END IF;
-
-  v_complete :=
-    v_stored_gps IS NOT NULL
-    AND v_stored_cc IS NOT NULL
-    AND v_stored_tz IS NOT NULL;
-  v_legacy :=
-    v_stored_gps IS NULL
-    AND v_stored_cc IS NULL
-    AND v_stored_tz IS NULL
-    AND v_stored_night IS NULL;
-
-  IF NOT v_complete AND NOT v_legacy THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_partial_state');
-  END IF;
-
-  IF v_complete THEN
-    v_expected_hash := public.trusted_publish_facts_hash_v101(
-      p_canonical_payload_hash,
-      v_stored_gps,
-      v_stored_cc,
-      v_stored_tz,
-      v_stored_night
-    );
-    IF v_expected_hash IS NULL
-       OR v_expected_hash IS DISTINCT FROM v_existing_hash THEN
-      RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
-    END IF;
-    IF v_existing_status = 'active' THEN
-      RETURN jsonb_build_object('ok', true, 'is_duplicate', true, 'post_id', v_existing_post_id);
-    END IF;
-    IF v_existing_status = 'draft' THEN
+    ELSIF v_path = 'legacy_draft' THEN
       UPDATE public.posts
-      SET status = 'active', updated_at = NOW()
+      SET
+        status = 'active',
+        payload_hash = v_final_hash,
+        origin_gps = p_origin_gps,
+        origin_country_code = p_origin_country_code,
+        origin_timezone = p_origin_timezone,
+        night_policy_version = p_night_policy_version,
+        updated_at = NOW()
       WHERE id = v_existing_post_id
         AND user_id = p_user_id
         AND status = 'draft'
-        AND payload_hash = v_existing_hash;
-      GET DIAGNOSTICS v_updated = ROW_COUNT;
-      IF v_updated = 1 THEN
-        RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
-      END IF;
-    END IF;
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.invalid_post_status');
-  END IF;
+        AND payload_hash = p_canonical_payload_hash
+        AND origin_gps IS NULL
+        AND origin_country_code IS NULL
+        AND origin_timezone IS NULL
+        AND night_policy_version IS NULL;
 
-  IF v_existing_status IS DISTINCT FROM 'draft' THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_legacy_missing');
-  END IF;
-  IF v_existing_hash IS DISTINCT FROM p_canonical_payload_hash THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.idempotency_payload_conflict');
-  END IF;
-  v_final_hash := public.trusted_publish_facts_hash_v101(
-    p_canonical_payload_hash,
-    p_origin_gps,
-    p_origin_country_code,
-    p_origin_timezone,
-    p_night_policy_version
-  );
-  IF v_final_hash IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_invalid');
-  END IF;
-  UPDATE public.posts
-  SET
-    status = 'active',
-    payload_hash = v_final_hash,
-    origin_gps = p_origin_gps,
-    origin_country_code = p_origin_country_code,
-    origin_timezone = p_origin_timezone,
-    night_policy_version = p_night_policy_version,
-    updated_at = NOW()
-  WHERE id = v_existing_post_id
-    AND user_id = p_user_id
-    AND status = 'draft'
-    AND payload_hash = p_canonical_payload_hash
-    AND origin_gps IS NULL
-    AND origin_country_code IS NULL
-    AND origin_timezone IS NULL
-    AND night_policy_version IS NULL;
-  GET DIAGNOSTICS v_updated = ROW_COUNT;
-  IF v_updated = 1 THEN
-    RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_existing_post_id);
-  END IF;
-  RETURN jsonb_build_object('ok', false, 'error_msg', 'error.publish_authority_partial_state');
+      GET DIAGNOSTICS v_updated = ROW_COUNT;
+      IF v_updated IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'error.publish_authority_partial_state';
+      END IF;
+      v_post_id := v_existing_post_id;
+
+    ELSE
+      -- fresh: insert failure / unique_violation must abort entire RPC (no soft success)
+      v_post_id := public.insert_stage1_post_v101(
+        p_user_id,
+        p_client_request_id,
+        v_final_hash,
+        'active',
+        p_post_payload,
+        p_server_fee_minor,
+        NULL,
+        p_origin_gps,
+        p_origin_country_code,
+        p_origin_timezone,
+        p_night_policy_version
+      );
+    END IF;
+
+    RETURN jsonb_build_object('ok', true, 'is_duplicate', false, 'post_id', v_post_id);
+
+  EXCEPTION
+    WHEN raise_exception THEN
+      -- Nested block already rolled back challenge/profile/passkey/posts.
+      -- Map only known stable keys; rethrow anything else so the whole RPC aborts.
+      IF SQLERRM IN (
+        'error.challenge_fencing_stale',
+        'error.authentication_credential_not_found',
+        'error.security_boundary_compromised',
+        'error.idempotency_payload_conflict',
+        'error.invalid_post_status',
+        'error.publish_authority_invalid',
+        'error.publish_authority_partial_state',
+        'error.passkey_transaction_failed'
+      ) THEN
+        RETURN jsonb_build_object('ok', false, 'error_msg', SQLERRM);
+      END IF;
+      RAISE;
+    -- unique_violation and other DB errors are intentionally NOT caught here:
+    -- they abort the nested subtransaction and then the outer function, rolling
+    -- back challenge/passkey mutations. No duplicate-success after mutation.
+  END;
 END;
 $fn$;
 

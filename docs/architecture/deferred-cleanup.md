@@ -589,24 +589,30 @@ OWNER against PostGIS.
 
 ## 28. Authority-bound publish writers (2C.3G / v101B)
 
-- **Current state:** PHASE 6.7C.2C.3G / v101B. Forward-only migration
+- **Current state:** PHASE 6.7C.2C.3G / v101B (+ **3G.1 rollback-safe Passkey
+  fix**). Forward-only migration
   `20260918000002_trusted_publish_authority_writer_v101b.sql` (+ verify) adds:
-  (1) internal `public.trusted_publish_facts_hash_v101(text, extensions.geography,
-  text, text, integer) RETURNS text` — STABLE SECURITY DEFINER, versioned
-  publish facts SHA-256 (schema=101) including EWKB hex + authority fields;
-  PUBLIC/anon/authenticated/service_role all REVOKE EXECUTE; (2–4) outer writers
-  `publish_active_post_idempotent_v101`, `create_shadow_draft_idempotent_v101`,
-  `commit_phase3_business_idempotent_v101` — VOLATILE SECURITY DEFINER,
-  service_role EXECUTE only; advisory lock before posts read; fresh →
-  `insert_stage1_post_v101` with final authority-bound hash; exact retry from
-  stored authority; legacy draft atomic upgrade; legacy active / partial
-  fail-closed; Passkey challenge+credential+posts in one function. **Not
-  applied** in this phase. Production APIs still call v98. No v98 ACL revoke,
-  no `posts_update_own` change, creation=false, RS night=false. No v102.
+  (1) internal `public.trusted_publish_facts_hash_v101(...)` — STABLE SECURITY
+  DEFINER, versioned publish facts SHA-256 (schema=101); all app roles REVOKE
+  EXECUTE; (2–4) outer writers `publish_active_post_idempotent_v101`,
+  `create_shadow_draft_idempotent_v101`, `commit_phase3_business_idempotent_v101`
+  — VOLATILE SECURITY DEFINER, service_role EXECUTE only. **Global**
+  `client_request_id` advisory lock via `hashtextextended('v101_publish_crid:'
+  || crid, 0)` (no userId in key; same contract all three writers) before posts
+  read. Fresh → `insert_stage1_post_v101` with authority-bound hash; exact retry
+  from stored authority; legacy draft atomic upgrade; legacy active / partial
+  fail-closed. **Passkey mutation phase** uses a nested PL/pgSQL subtransaction:
+  after challenge consume, failures `RAISE` stable keys (no soft `RETURN`) so
+  challenge/profile/passkey/posts roll back together; no `WHEN OTHERS`; no
+  `unique_violation` soft-success handler (exact duplicate success only from
+  pre-mutation complete active read). **Not applied.** Production APIs still
+  v98. No v98 ACL revoke, no `posts_update_own` change, creation=false, RS
+  night=false. No v102.
 - **Still unresolved / later phases:** apply v101B; API cutover to v101 writers;
   revoke v98 EXECUTE; seal posts_update_own; enable creation / RS night.
 - **Earliest safe production use:** after apply + API cutover only.
 - **Preconditions:** v101A applied (35/35); PostGIS/pgcrypto in `extensions`;
   creation=false; RS night enabled=false.
 - **Risk if wired early:** browser roles calling writers; cutting APIs before
-  apply; treating v98 canonical hash as final publish hash.
+  apply; treating v98 canonical hash as final publish hash; Passkey soft-fail
+  after challenge (addressed in 3G.1).

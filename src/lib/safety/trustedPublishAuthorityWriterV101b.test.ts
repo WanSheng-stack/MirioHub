@@ -157,15 +157,34 @@ async function main() {
     assert.ok(guard.includes("trusted_publish_facts_hash_v101 already exists"));
   }
 
-  // Lock before SELECT posts (all three writers)
+  // Global crid lock before SELECT posts (all three writers; no userId in key)
   {
     assert.equal(lockBeforeSelect(bodies.active), true);
     assert.equal(lockBeforeSelect(bodies.shadow), true);
     assert.equal(lockBeforeSelect(bodies.commit), true);
-    assert.ok(bodies.active.includes("v101_publish_user:"));
-    assert.ok(bodies.active.includes("v101_publish_crid:"));
-    assert.ok(bodies.shadow.includes("v101_publish_user:"));
-    assert.ok(bodies.commit.includes("v101_publish_crid:"));
+
+    function lockExpr(body: string): string {
+      const m = /pg_advisory_xact_lock\s*\(([\s\S]*?)\)\s*;/.exec(body);
+      assert.ok(m, "lock expression required");
+      return m![1]!.replace(/\s+/g, " ").trim();
+    }
+    const la = lockExpr(bodies.active);
+    const ls = lockExpr(bodies.shadow);
+    const lc = lockExpr(bodies.commit);
+    assert.equal(la, ls, "active/shadow lock contract must match");
+    assert.equal(la, lc, "active/commit lock contract must match");
+    assert.ok(la.includes("hashtextextended"));
+    assert.ok(la.includes("v101_publish_crid:"));
+    assert.ok(la.includes("p_client_request_id"));
+    assert.equal(la.includes("p_user_id"), false);
+    assert.equal(la.includes("v101_publish_user:"), false);
+    // Same crid text → same lock key expression regardless of userId (userId absent)
+    assert.equal(
+      la.includes("p_client_request_id::text") ||
+        la.includes("p_client_request_id :: text") ||
+        /p_client_request_id\s*::\s*text/.test(la),
+      true,
+    );
   }
 
   // Fresh → v101 insert; no v98 insert/outer
@@ -203,7 +222,9 @@ async function main() {
       assert.ok(b.includes("origin_gps IS NULL"));
       assert.ok(b.includes("night_policy_version IS NULL"));
       assert.ok(b.includes("GET DIAGNOSTICS v_updated = ROW_COUNT"));
-      assert.ok(b.includes("v_updated = 1"));
+      assert.ok(
+        b.includes("v_updated = 1") || b.includes("v_updated IS DISTINCT FROM 1"),
+      );
     }
     // Shadow legacy keeps draft (no status='active' in legacy UPDATE of shadow)
     const shadowLegacyUpdate =
@@ -213,7 +234,7 @@ async function main() {
     assert.equal(/SET\s+status\s*=\s*'active'/.test(sm![0]!), false);
   }
 
-  // Passkey atomicity structure
+  // Passkey: nested mutation subtransaction; no soft-fail after challenge; no unique soft success
   {
     assert.ok(bodies.commit.includes("auth_challenges"));
     assert.ok(bodies.commit.includes("processing_token"));
@@ -221,12 +242,226 @@ async function main() {
     assert.ok(bodies.commit.includes("passkeys"));
     assert.ok(bodies.commit.includes("has_passkey"));
     assert.ok(bodies.commit.includes("insert_stage1_post_v101"));
-    // Exact retry active returns before challenge consume
-    const activeDupIdx = bodies.commit.indexOf(
-      "Exact retry existing active",
+    assert.ok(bodies.commit.includes("Mutation phase"));
+    assert.ok(bodies.commit.includes("WHEN raise_exception THEN"));
+    assert.equal(bodies.commit.includes("WHEN OTHERS"), false);
+    assert.equal(
+      /EXCEPTION\s+WHEN\s+unique_violation/i.test(bodies.commit),
+      false,
     );
+    assert.ok(bodies.commit.includes("v_cred_owner"));
+    assert.ok(bodies.commit.includes("v_cred_pk"));
+    assert.ok(bodies.commit.includes("error.passkey_transaction_failed"));
+    assert.ok(bodies.commit.includes("error.authentication_credential_not_found"));
+    assert.ok(bodies.commit.includes("RAISE EXCEPTION 'error.invalid_post_status'"));
+    assert.ok(
+      bodies.commit.includes(
+        "RAISE EXCEPTION 'error.publish_authority_partial_state'",
+      ),
+    );
+
+    const activeDupIdx = bodies.commit.indexOf("Exact retry existing active");
     const challengeIdx = bodies.commit.indexOf("UPDATE public.auth_challenges");
     assert.ok(activeDupIdx >= 0 && challengeIdx > activeDupIdx);
+
+    const mutStart = bodies.commit.indexOf("Mutation phase");
+    const excStart = bodies.commit.indexOf("WHEN raise_exception THEN", mutStart);
+    assert.ok(mutStart >= 0 && excStart > mutStart);
+    const mutBody = bodies.commit.slice(mutStart, excStart);
+    assert.equal(
+      /RETURN\s+jsonb_build_object\(\s*'ok'\s*,\s*false/i.test(mutBody),
+      false,
+      "no soft failure RETURN after entering mutation phase",
+    );
+    assert.ok(/RAISE\s+EXCEPTION\s+'error\.challenge_fencing_stale'/i.test(mutBody));
+    assert.ok(/RAISE\s+EXCEPTION\s+'error\.passkey_transaction_failed'/i.test(mutBody));
+    assert.ok(
+      /RAISE\s+EXCEPTION\s+'error\.authentication_credential_not_found'/i.test(
+        mutBody,
+      ),
+    );
+  }
+
+  // Pure mutation-phase state machine (mirrors nested subtransaction rollback)
+  {
+    type Snap = {
+      challenge: "processing" | "consumed";
+      hasPasskey: boolean;
+      passkey: { userId: string; publicKey: string } | null;
+      postStatus: "none" | "draft" | "active";
+      postAuth: boolean;
+    };
+    type FailAt =
+      | "challenge"
+      | "profile"
+      | "cred_conflict"
+      | "auth_cred"
+      | "posts_update"
+      | "posts_insert"
+      | null;
+
+    function runPhase(opts: {
+      path: "fresh" | "complete_draft" | "legacy_draft" | "exact_active";
+      ceremony: "registration" | "authentication";
+      failAt: FailAt;
+      existingCredOwner?: string;
+      existingCredKey?: string;
+    }): { ok: boolean; error?: string; snap: Snap; challengeConsumed: boolean } {
+      const USER = "user-a";
+      const snap: Snap = {
+        challenge: "processing",
+        hasPasskey: false,
+        passkey: null,
+        postStatus: opts.path === "fresh" ? "none" : "draft",
+        postAuth: opts.path === "complete_draft",
+      };
+      if (opts.path === "exact_active") {
+        return {
+          ok: true,
+          snap: { ...snap, postStatus: "active", postAuth: true, challenge: "processing" },
+          challengeConsumed: false,
+        };
+      }
+
+      // Nested subtransaction simulation
+      const checkpoint = structuredClone(snap);
+      try {
+        // challenge
+        if (opts.failAt === "challenge") {
+          throw new Error("error.challenge_fencing_stale");
+        }
+        snap.challenge = "consumed";
+
+        if (opts.ceremony === "registration") {
+          if (opts.failAt === "profile") {
+            throw new Error("error.passkey_transaction_failed");
+          }
+          snap.hasPasskey = true;
+          if (opts.failAt === "cred_conflict") {
+            snap.passkey = {
+              userId: opts.existingCredOwner ?? "other",
+              publicKey: opts.existingCredKey ?? "other-key",
+            };
+            if (
+              snap.passkey.userId !== USER ||
+              snap.passkey.publicKey !== "pk-ok"
+            ) {
+              throw new Error("error.security_boundary_compromised");
+            }
+          } else {
+            snap.passkey = { userId: USER, publicKey: "pk-ok" };
+          }
+        } else {
+          if (opts.failAt === "auth_cred") {
+            throw new Error("error.authentication_credential_not_found");
+          }
+          snap.passkey = { userId: USER, publicKey: "pk-ok" };
+        }
+
+        if (opts.failAt === "posts_update" || opts.failAt === "posts_insert") {
+          throw new Error(
+            opts.path === "legacy_draft"
+              ? "error.publish_authority_partial_state"
+              : opts.failAt === "posts_insert"
+                ? "error.insert_failed"
+                : "error.invalid_post_status",
+          );
+        }
+        snap.postStatus = "active";
+        if (opts.path === "legacy_draft" || opts.path === "fresh") {
+          snap.postAuth = true;
+        }
+        return { ok: true, snap, challengeConsumed: true };
+      } catch (e) {
+        // rollback nested mutations
+        Object.assign(snap, checkpoint);
+        const msg = e instanceof Error ? e.message : "unknown";
+        return {
+          ok: false,
+          error: msg,
+          snap,
+          challengeConsumed: false,
+        };
+      }
+    }
+
+    // Failures roll back challenge
+    for (const failAt of [
+      "profile",
+      "cred_conflict",
+      "auth_cred",
+      "posts_update",
+      "posts_insert",
+    ] as FailAt[]) {
+      const r = runPhase({
+        path: failAt === "posts_insert" ? "fresh" : "complete_draft",
+        ceremony: failAt === "auth_cred" ? "authentication" : "registration",
+        failAt,
+        existingCredOwner: "other",
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.snap.challenge, "processing");
+      assert.equal(r.snap.hasPasskey, false);
+      assert.equal(r.snap.passkey, null);
+      assert.equal(r.challengeConsumed, false);
+    }
+
+    // challenge fencing itself
+    {
+      const r = runPhase({
+        path: "fresh",
+        ceremony: "registration",
+        failAt: "challenge",
+      });
+      assert.equal(r.error, "error.challenge_fencing_stale");
+      assert.equal(r.snap.challenge, "processing");
+    }
+
+    // exact active does not consume
+    {
+      const r = runPhase({
+        path: "exact_active",
+        ceremony: "authentication",
+        failAt: null,
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.challengeConsumed, false);
+      assert.equal(r.snap.challenge, "processing");
+    }
+
+    // successes commit together
+    for (const path of ["fresh", "complete_draft", "legacy_draft"] as const) {
+      const r = runPhase({
+        path,
+        ceremony: "registration",
+        failAt: null,
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.snap.challenge, "consumed");
+      assert.equal(r.snap.hasPasskey, true);
+      assert.equal(r.snap.postStatus, "active");
+      assert.equal(r.challengeConsumed, true);
+    }
+
+    // unique_violation must NOT yield post-success with challenge unconsumed
+    // (Passkey writer has no unique soft-success handler; simulated as hard fail)
+    {
+      const r = runPhase({
+        path: "fresh",
+        ceremony: "registration",
+        failAt: "posts_insert",
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.snap.challenge, "processing");
+      assert.notEqual(r.ok && !r.challengeConsumed, true);
+    }
+  }
+
+  // active/shadow may keep unique_violation re-check; Passkey must not
+  {
+    assert.ok(/EXCEPTION\s+WHEN\s+unique_violation/i.test(bodies.active));
+    assert.ok(/EXCEPTION\s+WHEN\s+unique_violation/i.test(bodies.shadow));
+    assert.equal(/EXCEPTION\s+WHEN\s+unique_violation/i.test(bodies.commit), false);
   }
 
   // ACL: hash sealed; writers service_role only
@@ -261,10 +496,20 @@ async function main() {
     assert.ok(verify.includes("check_order"));
     assert.ok(verify.includes("overall_pass"));
     assert.ok(verify.includes("advisory before posts SELECT"));
+    assert.ok(verify.includes("global crid lock contract"));
+    assert.ok(verify.includes("lock expr excludes p_user_id"));
+    assert.ok(verify.includes("mutation nested EXCEPTION subtransaction"));
+    assert.ok(verify.includes("no unique_violation soft success"));
+    assert.ok(verify.includes("challenge success then no soft fail RETURN"));
     assert.ok(verify.includes("writers service_role only"));
     assert.ok(verify.includes("no insert_stage1_post_v98"));
     assert.equal(/PERFORM\s+public\.(publish_active|create_shadow|commit_phase3)/i.test(verify), false);
     assert.equal(/INSERT INTO public\.posts/i.test(verify), false);
+    const checkOrders = [...verify.matchAll(/UNION ALL SELECT (\d+)/g)].map((m) =>
+      Number(m[1]),
+    );
+    assert.ok(checkOrders.includes(49));
+    assert.equal(Math.max(1, ...checkOrders), 49);
   }
 
   // APIs still v98; no v102; frozen zero-diff

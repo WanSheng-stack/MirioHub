@@ -498,17 +498,20 @@ checks AS (
       THEN 'PASS' ELSE 'FAIL'
     END,
     COALESCE((SELECT proargnames[5] FROM commit_fn), 'null'), 'p_canonical_payload_hash'
-  UNION ALL SELECT 40, 'lock', 'shared advisory key contract',
+  UNION ALL SELECT 40, 'lock', 'global crid lock contract',
     CASE
-      WHEN (SELECT active_src FROM src_tokens) LIKE '%v101_publish_user:%'
+      WHEN (SELECT active_src FROM src_tokens) LIKE '%hashtextextended%'
        AND (SELECT active_src FROM src_tokens) LIKE '%v101_publish_crid:%'
-       AND (SELECT shadow_src FROM src_tokens) LIKE '%v101_publish_user:%'
+       AND (SELECT shadow_src FROM src_tokens) LIKE '%hashtextextended%'
        AND (SELECT shadow_src FROM src_tokens) LIKE '%v101_publish_crid:%'
-       AND (SELECT commit_src FROM src_tokens) LIKE '%v101_publish_user:%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%hashtextextended%'
        AND (SELECT commit_src FROM src_tokens) LIKE '%v101_publish_crid:%'
+       AND (SELECT active_src FROM src_tokens) NOT LIKE '%v101_publish_user:%'
+       AND (SELECT shadow_src FROM src_tokens) NOT LIKE '%v101_publish_user:%'
+       AND (SELECT commit_src FROM src_tokens) NOT LIKE '%v101_publish_user:%'
       THEN 'PASS' ELSE 'FAIL'
     END,
-    'same keys', 'v101_publish_user/crid'
+    'global crid', 'hashtextextended(v101_publish_crid) no userId'
   UNION ALL SELECT 41, 'fresh', 'FOR UPDATE on existing',
     CASE
       WHEN (SELECT active_src FROM src_tokens) LIKE '%FOR UPDATE%'
@@ -523,9 +526,93 @@ checks AS (
        AND (SELECT active_src FROM src_tokens) LIKE '%error.idempotency_payload_conflict%'
        AND (SELECT active_src FROM src_tokens) LIKE '%error.publish_authority_invalid%'
        AND (SELECT commit_src FROM src_tokens) LIKE '%error.challenge_fencing_stale%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%error.passkey_transaction_failed%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%error.authentication_credential_not_found%'
       THEN 'PASS' ELSE 'FAIL'
     END,
     'keys', 'stable set'
+  UNION ALL SELECT 43, 'lock', 'lock expr excludes p_user_id',
+    CASE
+      WHEN position('pg_advisory_xact_lock' in (SELECT active_src FROM src_tokens)) > 0
+       AND substring(
+             (SELECT active_src FROM src_tokens)
+             from position('pg_advisory_xact_lock' in (SELECT active_src FROM src_tokens))
+             for 220
+           ) NOT LIKE '%p_user_id%'
+       AND substring(
+             (SELECT shadow_src FROM src_tokens)
+             from position('pg_advisory_xact_lock' in (SELECT shadow_src FROM src_tokens))
+             for 220
+           ) NOT LIKE '%p_user_id%'
+       AND substring(
+             (SELECT commit_src FROM src_tokens)
+             from position('pg_advisory_xact_lock' in (SELECT commit_src FROM src_tokens))
+             for 220
+           ) NOT LIKE '%p_user_id%'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'lock snippet', 'no p_user_id in lock call'
+  UNION ALL SELECT 44, 'passkey', 'exact-active before challenge mutation',
+    CASE
+      WHEN position('Exact retry existing active' in (SELECT commit_src FROM src_tokens))
+           < position('UPDATE public.auth_challenges' in (SELECT commit_src FROM src_tokens))
+       AND position('is_duplicate'', true' in (SELECT commit_src FROM src_tokens))
+           < position('UPDATE public.auth_challenges' in (SELECT commit_src FROM src_tokens))
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'order', 'exact active < challenge UPDATE'
+  UNION ALL SELECT 45, 'passkey', 'mutation nested EXCEPTION subtransaction',
+    CASE
+      WHEN (SELECT commit_src FROM src_tokens) LIKE '%Mutation phase%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%WHEN raise_exception THEN%'
+       AND (SELECT commit_src FROM src_tokens) NOT LIKE '%WHEN OTHERS%'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'nested', 'raise_exception only, no OTHERS'
+  UNION ALL SELECT 46, 'passkey', 'no unique_violation soft success',
+    CASE
+      WHEN (SELECT commit_src FROM src_tokens) NOT LIKE '%EXCEPTION WHEN unique_violation%'
+       AND (SELECT commit_src FROM src_tokens) NOT LIKE '%WHEN unique_violation THEN%'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'absent', 'no unique_violation handler'
+  UNION ALL SELECT 47, 'passkey', 'profile/passkey row_count checks',
+    CASE
+      WHEN (SELECT commit_src FROM src_tokens) LIKE '%GET DIAGNOSTICS v_updated = ROW_COUNT%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%error.passkey_transaction_failed%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%error.authentication_credential_not_found%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%v_cred_owner%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%v_cred_pk%'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'row_count+recheck', 'profile/passkey fail-closed'
+  UNION ALL SELECT 48, 'passkey', 'posts 0-row RAISE not soft RETURN',
+    CASE
+      WHEN (SELECT commit_src FROM src_tokens) LIKE '%RAISE EXCEPTION ''error.invalid_post_status''%'
+       AND (SELECT commit_src FROM src_tokens) LIKE '%RAISE EXCEPTION ''error.publish_authority_partial_state''%'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'RAISE', 'posts 0-row via exception'
+  UNION ALL SELECT 49, 'passkey', 'challenge success then no soft fail RETURN',
+    CASE
+      WHEN position('Mutation phase' in (SELECT commit_src FROM src_tokens)) > 0
+       AND position('WHEN raise_exception THEN' in (SELECT commit_src FROM src_tokens))
+           > position('Mutation phase' in (SELECT commit_src FROM src_tokens))
+       AND position(
+             'RETURN jsonb_build_object(''ok'', false'
+             in substring(
+               (SELECT commit_src FROM src_tokens)
+               from position('Mutation phase' in (SELECT commit_src FROM src_tokens))
+               for (
+                 position('WHEN raise_exception THEN' in (SELECT commit_src FROM src_tokens))
+                 - position('Mutation phase' in (SELECT commit_src FROM src_tokens))
+               )
+             )
+           ) = 0
+       AND (SELECT commit_src FROM src_tokens) LIKE '%RAISE EXCEPTION ''error.challenge_fencing_stale''%'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'mutation soft-fail count=0', 'RAISE only after challenge'
 ),
 summary AS (
   SELECT

@@ -512,3 +512,12 @@ OWNER against PostGIS.
   no Supabase ops. `trustedPublishAuthority.ts` zero diff.
 - **Still unresolved / later phases:** unchanged from §21 (writer, API cutover,
   posts_update_own, creation / RS night).
+
+## 24. Trusted publish authority row-shape / region null (2C.3D.2A)
+
+- **Current state:** PHASE 6.7C.2C.3D.2A. Pure core only: `isPlainObject`
+  requires `Object.prototype` or `null` prototype (rejects Date/class/Map/Set/
+  RegExp); `region_code` must be exact `null` (missing/`undefined`/string/
+  other → `error.night_policy_invalid`). No migration/v101, no API cutover,
+  no Supabase ops. `trustedPublishAuthority.ts` zero diff.
+- **Still unresolved / later phases:** unchanged from §21.

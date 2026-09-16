@@ -23,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
-const PHASE_BASELINE = "e917bfb4e56a08cb72f68b9f0300623a19e9a963";
+const PHASE_BASELINE = "c390f9e2f86c410f23e6490663e4e4ccde90cef1";
 const T0 = TRUSTED_PUBLISH_AUTHORITY_TEST_INSTANT;
 
 const FROZEN = [
@@ -771,6 +771,68 @@ async function main() {
     if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
   }
 
+  // 3D.2A — non-plain single-row objects rejected at shape gate
+  {
+    class PolicyRowLike {}
+    const nonPlain: unknown[] = [
+      new Date("2026-06-15T12:00:00.000Z"),
+      new PolicyRowLike(),
+      new Map(),
+      new Set(),
+      /policy/,
+    ];
+    for (const bad of nonPlain) {
+      const res = await buildTrustedPublishAuthority({
+        canonical: baseCanonical(),
+        evaluationTime: T0,
+        resolveTrustedOrigin: async () => okOrigin(),
+        selectNightPolicy: async () => [bad],
+      });
+      assert.equal(res.ok, false, `nonplain=${Object.prototype.toString.call(bad)}`);
+      if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+    }
+  }
+
+  // 3D.2A — region_code must be exact null
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "14:00" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([policyRow({ region_code: null })]),
+    });
+    assert.equal(res.ok, true, "region-null-ok");
+  }
+  {
+    const { region_code: _omit, ...rest } = policyRow();
+    void _omit;
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: async () => [rest],
+    });
+    assert.equal(res.ok, false, "region-omitted");
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  for (const [label, region] of [
+    ["undefined", undefined],
+    ["empty", ""],
+    ["string", "Vojvodina"],
+    ["zero", 0],
+  ] as const) {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: async () => [
+        { ...policyRow(), region_code: region as never },
+      ],
+    });
+    assert.equal(res.ok, false, `region=${label}`);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+
   // 14. resolver typed errors pass through
   for (const errorKey of [
     "error.geocode_failed",
@@ -944,6 +1006,7 @@ async function main() {
   const ledger = read("docs/architecture/deferred-cleanup.md");
   assert.ok(ledger.includes("2C.3D") || ledger.includes("trusted publish authority"));
   assert.ok(ledger.includes("3D.2") || ledger.includes("2C.3D.2"));
+  assert.ok(ledger.includes("3D.2A") || ledger.includes("2C.3D.2A"));
   assert.ok(ledger.includes("31/31 PASS") || ledger.includes("31/31"));
   assert.equal(
     /Forward-only unapplied migration[\s\S]*night_policy_selector_v100/.test(

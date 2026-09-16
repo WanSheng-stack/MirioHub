@@ -243,7 +243,11 @@ function isPositiveInt(value: unknown): value is number {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /**
@@ -293,7 +297,7 @@ function validateSelectedPolicy(
   if (row.timezone_name !== origin.timezone) {
     return "error.night_policy_invalid";
   }
-  if (row.region_code != null) {
+  if (row.region_code !== null) {
     return "error.night_policy_invalid";
   }
 

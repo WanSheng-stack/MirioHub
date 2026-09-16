@@ -521,3 +521,27 @@ OWNER against PostGIS.
   other → `error.night_policy_invalid`). No migration/v101, no API cutover,
   no Supabase ops. `trustedPublishAuthority.ts` zero diff.
 - **Still unresolved / later phases:** unchanged from §21.
+
+## 25. Trusted publish authority writer foundation (2C.3E)
+
+- **Current state:** PHASE 6.7C.2C.3E. Library-only writer foundation:
+  pure `trustedPublishAuthorityWriterCore.ts` + server-only
+  `trustedPublishAuthorityWriter.ts` (imports `createAdminClient` for the
+  service-role boundary). Materializes existing posts columns
+  (`origin_gps`, `origin_country_code`, `origin_timezone`,
+  `night_policy_version`) from a validated `TrustedPublishAuthorityValue`.
+  Persist is injected (no live RPC/API write). Client authority keys cannot
+  override trusted values. **No migration/v101** — columns already exist from
+  v96; `nightPolicyApplied`/`policyId` are consistency-checked only (no posts
+  `policy_id` / `night_policy_applied` columns required for matching). Does
+  **not** cut over the three publish APIs (still v98), does not touch
+  `posts_update_own`, does not enable creation / RS night, does not operate
+  Supabase.
+- **Still unresolved / later phases:** API cutover still pending; posts_update_own
+  seal; enabling creation / RS night.
+- **Earliest safe production use:** after a later cutover phase wires this
+  writer into publish RPCs/routes behind service_role.
+- **Preconditions:** 2C.3D–3D.2A authority libraries; v96 authority columns;
+  creation=false; RS night enabled=false.
+- **Risk if wired early:** writing authority into posts via anon/authenticated
+  paths or before matching understands NULL policy versions.

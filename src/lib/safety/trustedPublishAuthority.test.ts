@@ -14,6 +14,7 @@ import type { TrustedOriginResolution } from "@/lib/route-kms";
 import {
   TRUSTED_PUBLISH_AUTHORITY_TEST_INSTANT,
   buildTrustedPublishAuthority,
+  isStrictEvaluationInstant,
   type NightPolicySelectorRow,
   type SelectNightPolicyFn,
 } from "@/lib/safety/trustedPublishAuthorityCore";
@@ -22,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
-const PHASE_BASELINE = "db4aae05173c5bed4a6260475f2e8f1dae3d88fc";
+const PHASE_BASELINE = "95ab9b4164055243f950618ebf3c5736c95e5233";
 const T0 = TRUSTED_PUBLISH_AUTHORITY_TEST_INSTANT;
 
 const FROZEN = [
@@ -345,50 +346,150 @@ async function main() {
     if (!res.ok) assert.equal(res.errorKey, "error.night_policy_time_invalid");
   }
 
-  // 13. evaluation time null/illegal before selector
-  {
+  // 13. evaluation time null/illegal before resolver/selector
+  async function assertInstantRejectedBeforeGeo(
+    evaluationTime: string,
+    label: string,
+  ) {
+    let resolverCalls = 0;
     let selectorCalls = 0;
     const res = await buildTrustedPublishAuthority({
       canonical: baseCanonical(),
-      evaluationTime: "",
-      resolveTrustedOrigin: async () => okOrigin(),
+      evaluationTime,
+      resolveTrustedOrigin: async () => {
+        resolverCalls += 1;
+        return okOrigin();
+      },
       selectNightPolicy: async () => {
         selectorCalls += 1;
         return [];
+      },
+    });
+    assert.equal(res.ok, false, label);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid", label);
+    assert.equal(resolverCalls, 0, `${label} resolver`);
+    assert.equal(selectorCalls, 0, `${label} selector`);
+  }
+  await assertInstantRejectedBeforeGeo("", "empty");
+  await assertInstantRejectedBeforeGeo("  2026-06-15T12:00:00.000Z", "padded");
+  await assertInstantRejectedBeforeGeo("not-an-instant", "garbage");
+  await assertInstantRejectedBeforeGeo("2026-06-15", "date-only");
+  await assertInstantRejectedBeforeGeo("2026-06-15T12:00:00", "timezone-less");
+  await assertInstantRejectedBeforeGeo("2026-02-30T12:00:00Z", "invalid-date");
+  assert.equal(isStrictEvaluationInstant("2026-06-15T12:00:00Z"), true);
+  assert.equal(isStrictEvaluationInstant("2026-06-15T14:00:00+02:00"), true);
+  assert.equal(isStrictEvaluationInstant("NaN"), false);
+
+  // 3D.1 — selector non-array fail-closed
+  for (const bad of [
+    null,
+    undefined,
+    { policy_id: "x" },
+    "not-rows",
+  ] as const) {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: async () => bad,
+    });
+    assert.equal(res.ok, false, String(bad));
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: async () => {
+        throw new Error("selector boom");
       },
     });
     assert.equal(res.ok, false);
     if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
-    assert.equal(selectorCalls, 0);
   }
   {
-    let selectorCalls = 0;
     const res = await buildTrustedPublishAuthority({
       canonical: baseCanonical(),
-      evaluationTime: "  2026-06-15T12:00:00.000Z",
+      evaluationTime: T0,
       resolveTrustedOrigin: async () => okOrigin(),
-      selectNightPolicy: async () => {
-        selectorCalls += 1;
-        return [];
-      },
+      selectNightPolicy: () => Promise.reject(new Error("selector reject")),
     });
     assert.equal(res.ok, false);
     if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
-    assert.equal(selectorCalls, 0);
   }
   {
-    let selectorCalls = 0;
     const res = await buildTrustedPublishAuthority({
       canonical: baseCanonical(),
-      evaluationTime: "not-an-instant",
+      evaluationTime: T0,
       resolveTrustedOrigin: async () => okOrigin(),
-      selectNightPolicy: async () => {
-        selectorCalls += 1;
-        return [];
-      },
+      selectNightPolicy: selectRows([]),
     });
-    assert.equal(res.ok, false);
-    assert.equal(selectorCalls, 0);
+    assert.equal(res.ok, true);
+    if (res.ok) assert.equal(res.value.nightPolicyVersion, null);
+  }
+
+  // 3D.1 — resolver success defensive validation
+  async function assertOriginShapeInvalid(
+    origin: TrustedOriginResolution,
+    label: string,
+  ) {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => origin,
+      selectNightPolicy: selectRows([]),
+    });
+    assert.equal(res.ok, false, label);
+    if (!res.ok) assert.equal(res.errorKey, "error.geocode_invalid_response", label);
+  }
+  await assertOriginShapeInvalid(
+    okOrigin({ countryCode: "rs" }),
+    "lowercase-country",
+  );
+  await assertOriginShapeInvalid(
+    okOrigin({ timezone: " Europe/Belgrade" }),
+    "padded-timezone",
+  );
+  await assertOriginShapeInvalid(
+    okOrigin({ timezone: "Not/A/Timezone" }),
+    "bad-iana",
+  );
+  await assertOriginShapeInvalid(
+    okOrigin({ wkt: "" }),
+    "empty-wkt",
+  );
+  await assertOriginShapeInvalid(
+    okOrigin({ lat: 91, lon: 0, wkt: "SRID=4326;POINT(0 91)" }),
+    "oob-lat",
+  );
+  await assertOriginShapeInvalid(
+    okOrigin({
+      lat: 44.8178131,
+      lon: 20.4568974,
+      wkt: "SRID=4326;POINT(21 44.8178131)",
+    }),
+    "wkt-lon-mismatch",
+  );
+
+  // 3D.1 — zero-row path does not invoke night evaluate (structural + night-time ok)
+  {
+    const core = read("src/lib/safety/trustedPublishAuthorityCore.ts");
+    const zeroIdx = core.indexOf("if (rows.length === 0)");
+    const evalIdx = core.indexOf("evaluateNightServicePolicy(");
+    assert.ok(zeroIdx >= 0 && evalIdx >= 0);
+    assert.ok(zeroIdx < evalIdx, "zero-row return precedes night evaluate");
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "23:30" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([]),
+    });
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.equal(res.value.nightPolicyApplied, false);
+      assert.equal(res.value.nightPolicyVersion, null);
+    }
   }
 
   // 14. resolver typed errors pass through

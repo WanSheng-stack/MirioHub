@@ -487,3 +487,14 @@ OWNER against PostGIS.
 - **Risk if wired early:** writing NULL policy version into posts before
   matching understands the zero-row publish path; calling from Client
   Components (blocked by server-only).
+
+## 22. Trusted publish authority fail-closed boundaries (2C.3D.1)
+
+- **Current state:** PHASE 6.7C.2C.3D.1. Pure core hardening only:
+  selector runtime `unknown` → non-array fail-closed
+  (`error.night_policy_invalid`); strict RFC3339 evaluation instant (requires
+  `T` + `Z` or `±HH:MM`, no trim/default UTC); defensive validation of resolver
+  `{ ok: true }` origin (country `^[A-Z]{2}$`, IANA tz, WKT/lat-lon consistency
+  via route-kms helpers). No migration/v101, no API cutover, no Supabase ops.
+- **Still unresolved / later phases:** unchanged from §21 (writer, API cutover,
+  posts_update_own, creation / RS night).

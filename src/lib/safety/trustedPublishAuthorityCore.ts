@@ -1,15 +1,19 @@
 /**
- * PHASE 6.7C.2C.3D — trusted publish authority context (pure core).
+ * PHASE 6.7C.2C.3D / 3D.1 — trusted publish authority context (pure core).
  * Assembles origin GPS/country/timezone + optional night policy for a later
  * service_role writer. Does not write posts, call Supabase, or hit the network.
  * Production wrapper binds resolveTrustedOrigin behind server-only.
  */
 
 import type { CanonicalStage1Payload } from "@/lib/auth/canonicalStage1Core";
-import type {
-  TrustedGeocodePoint,
-  TrustedOriginErrorKey,
-  TrustedOriginResolution,
+import {
+  assertValidIanaTimezone,
+  isValidLatLon,
+  parseFiniteCoordinate,
+  toGeographyPointWkt,
+  type TrustedGeocodePoint,
+  type TrustedOriginErrorKey,
+  type TrustedOriginResolution,
 } from "@/lib/route-kms";
 import {
   evaluateNightServicePolicy,
@@ -36,9 +40,10 @@ export type NightPolicySelectInput = {
   evaluationTime: string;
 };
 
+/** Runtime result validated as unknown; only true arrays proceed. */
 export type SelectNightPolicyFn = (
   input: NightPolicySelectInput,
-) => Promise<NightPolicySelectorRow[]> | NightPolicySelectorRow[];
+) => Promise<unknown> | unknown;
 
 export type ResolveTrustedOriginFn = (
   address: string,
@@ -68,18 +73,143 @@ export type TrustedPublishAuthorityResult =
 
 export type BuildTrustedPublishAuthorityArgs = {
   canonical: CanonicalStage1Payload;
-  /** Server-generated ISO timestamptz; never browser clock. */
+  /** Server-generated RFC3339 instant with explicit timezone (Z or ±HH:MM). */
   evaluationTime: string;
   resolveTrustedOrigin: ResolveTrustedOriginFn;
   selectNightPolicy: SelectNightPolicyFn;
 };
 
-function isFiniteIsoInstant(value: string): boolean {
-  if (typeof value !== "string" || value.trim() === "" || value !== value.trim()) {
+const STRICT_INSTANT_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+const WKT_POINT_RE =
+  /^SRID=4326;POINT\(([-+0-9.eE]+)\s+([-+0-9.eE]+)\)$/;
+
+function isValidUtcOffsetSuffix(suffix: string): boolean {
+  if (suffix === "Z") return true;
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(suffix);
+  if (!m) return false;
+  const hours = Number(m[2]);
+  const mins = Number(m[3]);
+  return (
+    Number.isInteger(hours) &&
+    Number.isInteger(mins) &&
+    hours >= 0 &&
+    hours <= 23 &&
+    mins >= 0 &&
+    mins <= 59
+  );
+}
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function isValidGregorianYmd(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  const daysInMonth = [
+    31,
+    isLeapYear(year) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return day <= daysInMonth[month - 1]!;
+}
+
+/**
+ * RFC3339/ISO instant with explicit timezone. Rejects date-only, timezone-less,
+ * padded, and non-finite parses. Does not default missing timezone to UTC.
+ */
+export function isStrictEvaluationInstant(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
     return false;
   }
+  const m = STRICT_INSTANT_RE.exec(value);
+  if (!m) return false;
+  if (!isValidUtcOffsetSuffix(m[8]!)) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6]);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    !Number.isInteger(second) ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return false;
+  }
+  if (!isValidGregorianYmd(year, month, day)) return false;
   const ms = Date.parse(value);
   return Number.isFinite(ms);
+}
+
+function parseWktPoint4326(
+  wkt: string,
+): { lat: number; lon: number } | null {
+  const m = WKT_POINT_RE.exec(wkt);
+  if (!m) return null;
+  const lon = parseFiniteCoordinate(m[1]);
+  const lat = parseFiniteCoordinate(m[2]);
+  if (lon == null || lat == null || !isValidLatLon(lat, lon)) return null;
+  return { lat, lon };
+}
+
+function validateTrustedOriginPoint(
+  origin: TrustedGeocodePoint,
+): TrustedOriginErrorKey | null {
+  if (
+    typeof origin.countryCode !== "string" ||
+    !/^[A-Z]{2}$/.test(origin.countryCode)
+  ) {
+    return "error.geocode_invalid_response";
+  }
+  if (
+    typeof origin.timezone !== "string" ||
+    origin.timezone === "" ||
+    origin.timezone !== origin.timezone.trim()
+  ) {
+    return "error.geocode_invalid_response";
+  }
+  if (!assertValidIanaTimezone(origin.timezone)) {
+    return "error.geocode_invalid_response";
+  }
+  if (
+    typeof origin.wkt !== "string" ||
+    origin.wkt === "" ||
+    origin.wkt !== origin.wkt.trim()
+  ) {
+    return "error.geocode_invalid_response";
+  }
+  if (!isValidLatLon(origin.lat, origin.lon)) {
+    return "error.geocode_invalid_response";
+  }
+  const fromWkt = parseWktPoint4326(origin.wkt);
+  if (fromWkt == null) {
+    return "error.geocode_invalid_response";
+  }
+  if (fromWkt.lat !== origin.lat || fromWkt.lon !== origin.lon) {
+    return "error.geocode_invalid_response";
+  }
+  if (origin.wkt !== toGeographyPointWkt(origin.lat, origin.lon)) {
+    return "error.geocode_invalid_response";
+  }
+  return null;
 }
 
 function mapNightDenial(
@@ -119,7 +249,6 @@ function validateSelectedPolicy(
   if (row.timezone_name !== origin.timezone) {
     return "error.night_policy_invalid";
   }
-  // Production region resolver does not exist yet; only country-default rows.
   if (row.region_code != null) {
     return "error.night_policy_invalid";
   }
@@ -137,6 +266,11 @@ function validateSelectedPolicy(
   return null;
 }
 
+function assertSelectorRows(raw: unknown): NightPolicySelectorRow[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw as NightPolicySelectorRow[];
+}
+
 /**
  * Build trusted publish authority from canonical Stage-1 + injected geo/policy.
  * Fail-closed typed result; never throws internal geo/DB/fetch errors.
@@ -145,7 +279,7 @@ export async function buildTrustedPublishAuthority(
   args: BuildTrustedPublishAuthorityArgs,
 ): Promise<TrustedPublishAuthorityResult> {
   try {
-    if (!isFiniteIsoInstant(args.evaluationTime)) {
+    if (!isStrictEvaluationInstant(args.evaluationTime)) {
       return { ok: false, errorKey: "error.night_policy_invalid" };
     }
 
@@ -155,6 +289,10 @@ export async function buildTrustedPublishAuthority(
     if (!originResult.ok) {
       return { ok: false, errorKey: originResult.errorKey };
     }
+    const originErr = validateTrustedOriginPoint(originResult.value);
+    if (originErr != null) {
+      return { ok: false, errorKey: originErr };
+    }
     const origin = originResult.value;
 
     const rowsRaw = await args.selectNightPolicy({
@@ -163,15 +301,16 @@ export async function buildTrustedPublishAuthority(
       originTimezone: origin.timezone,
       evaluationTime: args.evaluationTime,
     });
-    const rows = Array.isArray(rowsRaw) ? rowsRaw : [];
+    const rows = assertSelectorRows(rowsRaw);
+    if (rows == null) {
+      return { ok: false, errorKey: "error.night_policy_invalid" };
+    }
 
     if (rows.length > 1) {
       return { ok: false, errorKey: "error.night_policy_ambiguous" };
     }
 
     if (rows.length === 0) {
-      // Enabled policy absent (e.g. RS seed enabled=false). Publish authority
-      // may still succeed with null version; matching later fail-closes on NULL.
       return {
         ok: true,
         value: {

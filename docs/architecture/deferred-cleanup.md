@@ -498,3 +498,17 @@ OWNER against PostGIS.
   via route-kms helpers). No migration/v101, no API cutover, no Supabase ops.
 - **Still unresolved / later phases:** unchanged from §21 (writer, API cutover,
   posts_update_own, creation / RS night).
+
+## 23. Trusted publish authority selected-row validation (2C.3D.2)
+
+- **Current state:** PHASE 6.7C.2C.3D.2. Pure core only: unconditional
+  `blocked_start_local` / `blocked_end_local` validation (`HH:MM` /
+  `HH:MM:SS`, no pad, no `24:00`, start≠end) before
+  `evaluateNightServicePolicy` so non-night-sensitive subtypes cannot accept
+  malformed clocks; UUID `policy_id`; strict `effective_from` /
+  `effective_until` interval vs evaluationTime; single-element selector rows
+  must be plain objects (`[null]`/`[123]`/… → `error.night_policy_invalid`).
+  Selector 0 / 1 / >1 semantics unchanged. No migration/v101, no API cutover,
+  no Supabase ops. `trustedPublishAuthority.ts` zero diff.
+- **Still unresolved / later phases:** unchanged from §21 (writer, API cutover,
+  posts_update_own, creation / RS night).

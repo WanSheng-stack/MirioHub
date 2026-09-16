@@ -23,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
-const PHASE_BASELINE = "95ab9b4164055243f950618ebf3c5736c95e5233";
+const PHASE_BASELINE = "e917bfb4e56a08cb72f68b9f0300623a19e9a963";
 const T0 = TRUSTED_PUBLISH_AUTHORITY_TEST_INSTANT;
 
 const FROZEN = [
@@ -492,6 +492,285 @@ async function main() {
     }
   }
 
+  // 3D.2 — unconditional blocked-time validation (incl. non-night-sensitive)
+  async function assertBlockedTimeInvalid(
+    canonical: CanonicalStage1Payload,
+    start: string,
+    end: string,
+    label: string,
+  ) {
+    const res = await buildTrustedPublishAuthority({
+      canonical,
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({ blocked_start_local: start, blocked_end_local: end }),
+      ]),
+    });
+    assert.equal(res.ok, false, label);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_time_invalid", label);
+  }
+  await assertBlockedTimeInvalid(
+    baseCanonical({ service_subtype: "passenger", departure_time: "14:00" }),
+    "not-a-time",
+    "06:00",
+    "passenger-bad-start",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical({
+      service_subtype: "small_item_only",
+      departure_time: "23:00",
+    }),
+    "not-a-time",
+    "06:00",
+    "small_item_only-bad-start",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical({
+      category: "deliver",
+      service_subtype: "cargo_only",
+      transport_mode: "cargo_van",
+      share_mode: null,
+      delivery_mode: "spot",
+      max_companions: null,
+      departure_time: "23:00",
+    }),
+    "22:00",
+    "not-a-time",
+    "cargo_only-bad-end",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical({
+      category: "buy",
+      service_subtype: null,
+      transport_mode: null,
+      share_mode: null,
+      max_companions: null,
+      departure_time: "23:00",
+    }),
+    "xx:yy",
+    "06:00",
+    "buy-bad-time",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical({
+      category: "errand",
+      service_subtype: null,
+      transport_mode: null,
+      share_mode: null,
+      max_companions: null,
+      departure_time: "23:00",
+    }),
+    "22:00",
+    "bad",
+    "errand-bad-time",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical(),
+    "22:00",
+    "22:00",
+    "start-eq-end-hhmm",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical(),
+    "22:00:00",
+    "22:00",
+    "start-eq-end-mixed",
+  );
+  await assertBlockedTimeInvalid(baseCanonical(), "24:00", "06:00", "24:00");
+  await assertBlockedTimeInvalid(
+    baseCanonical(),
+    " 22:00",
+    "06:00",
+    "padded-start",
+  );
+  await assertBlockedTimeInvalid(
+    baseCanonical(),
+    "22:00",
+    "06:00 ",
+    "padded-end",
+  );
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "14:00" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          blocked_start_local: "22:00",
+          blocked_end_local: "06:00",
+        }),
+      ]),
+    });
+    assert.equal(res.ok, true, "hhmm-ok");
+    if (res.ok) assert.equal(res.value.nightPolicyApplied, true);
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "14:00" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          blocked_start_local: "22:00:00",
+          blocked_end_local: "06:00:00",
+        }),
+      ]),
+    });
+    assert.equal(res.ok, true, "hhmmss-ok");
+    if (res.ok) assert.equal(res.value.nightPolicyApplied, true);
+  }
+
+  // 3D.2 — policy_id UUID
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([policyRow({ policy_id: "not-a-uuid" })]),
+    });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          policy_id: " 11111111-1111-4111-8111-111111111111",
+        }),
+      ]),
+    });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "14:00" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          policy_id: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+        }),
+      ]),
+    });
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.equal(res.value.policyId, "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE");
+    }
+  }
+
+  // 3D.2 — effective interval
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({ effective_from: "2026-01-01" }),
+      ]),
+    });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({ effective_until: "2026-12-31T00:00:00" }),
+      ]),
+    });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({ effective_from: "2026-12-01T00:00:00.000Z" }),
+      ]),
+    });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "14:00" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({ effective_from: T0 }),
+      ]),
+    });
+    assert.equal(res.ok, true, "eval-eq-from");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          effective_from: "2026-01-01T00:00:00.000Z",
+          effective_until: T0,
+        }),
+      ]),
+    });
+    assert.equal(res.ok, false, "eval-eq-until");
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+  {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical({ departure_time: "14:00" }),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          effective_from: "2026-01-01T00:00:00.000Z",
+          effective_until: "2026-12-31T00:00:00.000Z",
+        }),
+      ]),
+    });
+    assert.equal(res.ok, true, "eval-before-until");
+  }
+  for (const until of [
+    "2026-01-01T00:00:00.000Z",
+    "2025-12-31T00:00:00.000Z",
+  ] as const) {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: selectRows([
+        policyRow({
+          effective_from: "2026-01-01T00:00:00.000Z",
+          effective_until: until,
+        }),
+      ]),
+    });
+    assert.equal(res.ok, false, `until=${until}`);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+
+  // 3D.2 — malformed single-element selector arrays
+  for (const bad of [null, undefined, "row", 123, []] as const) {
+    const res = await buildTrustedPublishAuthority({
+      canonical: baseCanonical(),
+      evaluationTime: T0,
+      resolveTrustedOrigin: async () => okOrigin(),
+      selectNightPolicy: async () => [bad],
+    });
+    assert.equal(res.ok, false, `single=${String(bad)}`);
+    if (!res.ok) assert.equal(res.errorKey, "error.night_policy_invalid");
+  }
+
   // 14. resolver typed errors pass through
   for (const errorKey of [
     "error.geocode_failed",
@@ -664,6 +943,7 @@ async function main() {
 
   const ledger = read("docs/architecture/deferred-cleanup.md");
   assert.ok(ledger.includes("2C.3D") || ledger.includes("trusted publish authority"));
+  assert.ok(ledger.includes("3D.2") || ledger.includes("2C.3D.2"));
   assert.ok(ledger.includes("31/31 PASS") || ledger.includes("31/31"));
   assert.equal(
     /Forward-only unapplied migration[\s\S]*night_policy_selector_v100/.test(

@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3D / 3D.1 — trusted publish authority context (pure core).
+ * PHASE 6.7C.2C.3D / 3D.1 / 3D.2 — trusted publish authority context (pure core).
  * Assembles origin GPS/country/timezone + optional night policy for a later
  * service_role writer. Does not write posts, call Supabase, or hit the network.
  * Production wrapper binds resolveTrustedOrigin behind server-only.
@@ -84,6 +84,12 @@ const STRICT_INSTANT_RE =
 
 const WKT_POINT_RE =
   /^SRID=4326;POINT\(([-+0-9.eE]+)\s+([-+0-9.eE]+)\)$/;
+
+/** HH:MM or HH:MM:SS — matches nightServicePolicy toMinutes shapes, no trim. */
+const BLOCKED_LOCAL_RE = /^(\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+const UUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 function isValidUtcOffsetSuffix(suffix: string): boolean {
   if (suffix === "Z") return true;
@@ -236,10 +242,48 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Parse blocked local clock to seconds-of-day. Rejects padding, 24:00, and
+ * non HH:MM / HH:MM:SS shapes before evaluateNightServicePolicy runs.
+ */
+function parseBlockedLocalSeconds(value: unknown): number | null {
+  if (typeof value !== "string" || value === "" || value !== value.trim()) {
+    return null;
+  }
+  const matched = BLOCKED_LOCAL_RE.exec(value);
+  if (!matched) return null;
+  const hours = Number(matched[1]);
+  const minutes = Number(matched[2]);
+  const seconds = Number(matched[3] ?? "0");
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    !Number.isInteger(seconds) ||
+    hours > 23 ||
+    minutes > 59 ||
+    seconds > 59
+  ) {
+    return null;
+  }
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
 function validateSelectedPolicy(
   row: NightPolicySelectorRow,
   origin: TrustedGeocodePoint,
+  evaluationTime: string,
 ): TrustedPublishAuthorityErrorKey | null {
+  if (
+    typeof row.policy_id !== "string" ||
+    row.policy_id !== row.policy_id.trim() ||
+    !UUID_RE.test(row.policy_id)
+  ) {
+    return "error.night_policy_invalid";
+  }
   if (!isPositiveInt(row.policy_version)) {
     return "error.night_policy_invalid";
   }
@@ -252,23 +296,43 @@ function validateSelectedPolicy(
   if (row.region_code != null) {
     return "error.night_policy_invalid";
   }
-  if (
-    typeof row.blocked_start_local !== "string" ||
-    typeof row.blocked_end_local !== "string" ||
-    row.blocked_start_local.trim() === "" ||
-    row.blocked_end_local.trim() === ""
-  ) {
+
+  const startSec = parseBlockedLocalSeconds(row.blocked_start_local);
+  const endSec = parseBlockedLocalSeconds(row.blocked_end_local);
+  if (startSec == null || endSec == null || startSec === endSec) {
     return "error.night_policy_time_invalid";
   }
-  if (typeof row.policy_id !== "string" || row.policy_id.trim() === "") {
+
+  if (!isStrictEvaluationInstant(row.effective_from)) {
     return "error.night_policy_invalid";
   }
+  if (row.effective_until !== null) {
+    if (!isStrictEvaluationInstant(row.effective_until)) {
+      return "error.night_policy_invalid";
+    }
+  }
+
+  const fromMs = Date.parse(row.effective_from);
+  const evalMs = Date.parse(evaluationTime);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(evalMs)) {
+    return "error.night_policy_invalid";
+  }
+  if (fromMs > evalMs) {
+    return "error.night_policy_invalid";
+  }
+  if (row.effective_until !== null) {
+    const untilMs = Date.parse(row.effective_until);
+    if (!Number.isFinite(untilMs) || !(untilMs > fromMs) || !(evalMs < untilMs)) {
+      return "error.night_policy_invalid";
+    }
+  }
+
   return null;
 }
 
-function assertSelectorRows(raw: unknown): NightPolicySelectorRow[] | null {
+function assertSelectorRows(raw: unknown): unknown[] | null {
   if (!Array.isArray(raw)) return null;
-  return raw as NightPolicySelectorRow[];
+  return raw;
 }
 
 /**
@@ -324,8 +388,16 @@ export async function buildTrustedPublishAuthority(
       };
     }
 
-    const row = rows[0]!;
-    const policyErr = validateSelectedPolicy(row, origin);
+    const rawRow = rows[0];
+    if (!isPlainObject(rawRow)) {
+      return { ok: false, errorKey: "error.night_policy_invalid" };
+    }
+    const row = rawRow as NightPolicySelectorRow;
+    const policyErr = validateSelectedPolicy(
+      row,
+      origin,
+      args.evaluationTime,
+    );
     if (policyErr != null) {
       return { ok: false, errorKey: policyErr };
     }

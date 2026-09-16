@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
-const PHASE_BASELINE = "93b7fe136bb09229e31a0bbd2149fd0c47ab8280";
+const PHASE_BASELINE = "3e69094a325afe2dbb1d226e64174a82550302c0";
 
 const V101_REL =
   "supabase/migrations/20260918000001_trusted_publish_authority_insert_v101.sql";
@@ -104,6 +104,44 @@ function insertLists(fnBody: string): { cols: string[]; values: string[] } {
   return { cols, values };
 }
 
+/** Mirrors v101A guard: only exact Point/4326 geography typmods. */
+function guardAcceptsOriginGpsFormattedType(formatted: string): boolean {
+  return (
+    formatted === "geography(Point,4326)" ||
+    formatted === "extensions.geography(Point,4326)"
+  );
+}
+
+/** Mirrors live verify INSERT tail map (whitespace-normalized). */
+function insertAuthorityMapOk(prosrc: string): boolean {
+  const inserts = prosrc.match(/INSERT\s+INTO\s+public\.posts/gi) ?? [];
+  if (inserts.length !== 1) return false;
+  if (/UPDATE\s+public\.posts/i.test(prosrc)) return false;
+  const norm = prosrc.replace(/\s+/g, " ");
+  const m = /INSERT INTO public\.posts \((.*)\) VALUES \((.*)\) RETURNING/i.exec(
+    norm,
+  );
+  if (!m) return false;
+  const cols = m[1]!.trim();
+  const vals = m[2]!.trim();
+  if (
+    !/origin_gps, origin_country_code, origin_timezone, night_policy_version$/.test(
+      cols,
+    )
+  ) {
+    return false;
+  }
+  if (
+    !/p_origin_gps, p_origin_country_code, p_origin_timezone, p_night_policy_version$/.test(
+      vals,
+    )
+  ) {
+    return false;
+  }
+  const gpsHits = cols.toLowerCase().split("origin_gps").length - 1;
+  return gpsHits === 1;
+}
+
 const migration = read(V101_REL);
 const verifySql = read(V101_VERIFY_REL);
 const v98 = read(V98_REL);
@@ -169,6 +207,46 @@ assert.ok(guard.includes("enabled must be false") || guard.includes("enabled IS 
 assert.equal(/schema_migrations/i.test(guard), false);
 assert.equal(guard.includes("INSERT INTO public.posts"), false);
 assert.equal(/perform\s+public\.insert_stage1_post_v98/i.test(guard), false);
+
+// 3F.1 — origin_gps guard exact typmod (v97 pattern); reject loose geography
+assert.ok(guard.includes("'geography(Point,4326)'"));
+assert.ok(guard.includes("'extensions.geography(Point,4326)'"));
+assert.ok(guard.includes("typname") || guard.includes("v_typname"));
+assert.equal(/!~\*\s*'geography'/i.test(guard), false);
+assert.equal(
+  /IS DISTINCT FROM 'extensions\.geography'[\s\S]{0,80}IS DISTINCT FROM 'geography'/i.test(
+    guard,
+  ),
+  false,
+);
+for (const bad of [
+  "geography",
+  "geography(Point)",
+  "geography(Point,3857)",
+  "geography(LineString,4326)",
+  "geometry(Point,4326)",
+  "extensions.geography",
+  "text",
+]) {
+  assert.equal(
+    guardAcceptsOriginGpsFormattedType(bad),
+    false,
+    `guard must reject typmod: ${bad}`,
+  );
+}
+assert.equal(guardAcceptsOriginGpsFormattedType("geography(Point,4326)"), true);
+assert.equal(
+  guardAcceptsOriginGpsFormattedType("extensions.geography(Point,4326)"),
+  true,
+);
+
+// Comment accuracy: night_policy_version nullable, GPS/country/tz required
+assert.ok(migration.includes("night_policy_version is nullable"));
+assert.ok(migration.includes("GPS / country / timezone"));
+assert.equal(
+  /authority is NOT NULL/i.test(migration),
+  false,
+);
 
 const body = dollarBody(migration, "fn");
 assert.ok(body.length > 500, "v101 function body present");
@@ -255,6 +333,64 @@ assert.deepEqual(v101ValTail, [
   "p_night_policy_version",
 ]);
 
+assert.equal(insertAuthorityMapOk(body), true, "live body must satisfy INSERT map");
+
+// 3F.1 — tamper matrix: INSERT map must fail closed
+{
+  const replaceAll = (src: string, from: string, to: string) =>
+    src.split(from).join(to);
+  assert.equal(
+    insertAuthorityMapOk(replaceAll(body, "p_origin_gps", "NULL")),
+    false,
+    "p_origin_gps → NULL",
+  );
+  assert.equal(
+    insertAuthorityMapOk(
+      body
+        .replace(
+          /p_origin_gps,\s*p_origin_country_code,\s*p_origin_timezone,\s*p_night_policy_version/,
+          "p_origin_gps, p_origin_timezone, p_origin_country_code, p_night_policy_version",
+        ),
+    ),
+    false,
+    "country/timezone param swap",
+  );
+  assert.equal(
+    insertAuthorityMapOk(
+      body
+        .replace(/,\s*night_policy_version/, "")
+        .replace(/,\s*p_night_policy_version/, ""),
+    ),
+    false,
+    "delete night_policy_version column",
+  );
+  {
+    const commentOnly = body.replace(
+      /origin_gps,\s*origin_country_code,\s*origin_timezone,\s*night_policy_version/,
+      "/* origin_gps origin_country_code origin_timezone night_policy_version */ fallback_reason",
+    );
+    assert.equal(
+      insertAuthorityMapOk(commentOnly),
+      false,
+      "authority only in comment",
+    );
+  }
+  assert.equal(
+    insertAuthorityMapOk(
+      body + "\n  INSERT INTO public.posts (id) VALUES (NULL);\n",
+    ),
+    false,
+    "second posts INSERT",
+  );
+  assert.equal(
+    insertAuthorityMapOk(
+      body + "\n  UPDATE public.posts SET origin_gps = p_origin_gps;\n",
+    ),
+    false,
+    "post-insert UPDATE",
+  );
+}
+
 // Shared VALUES head (canonical) must match length
 assert.equal(
   v101Ins.values.length - 4,
@@ -327,14 +463,18 @@ const checkOrders = [
   ),
 ].map((m) => Number(m[1]));
 assert.ok(
-  checkOrders.length >= 30,
-  `expected >=30 checks, got ${checkOrders.length}`,
+  checkOrders.length >= 35,
+  `expected >=35 checks, got ${checkOrders.length}`,
 );
 for (const name of [
   "v101 exact OID",
   "PUBLIC no EXECUTE",
   "service_role no EXECUTE",
+  "anon role unique",
+  "authenticated role unique",
+  "service_role unique",
   "single posts INSERT",
+  "INSERT authority column/value tail map",
   "no post-insert UPDATE posts",
   "no upper(country)",
   "no Europe/Belgrade fallback",
@@ -345,6 +485,22 @@ for (const name of [
 ]) {
   assert.ok(verifySql.includes(name), `verify missing: ${name}`);
 }
+
+// 3F.1 — ACL fail-closed: missing role / missing fn must not COALESCE to PASS
+assert.ok(verifySql.includes("role_counts") || verifySql.includes("anon_n"));
+assert.ok(verifySql.includes("WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN 'FAIL'"));
+assert.ok(verifySql.includes("WHEN (SELECT anon_n FROM roles) IS DISTINCT FROM 1 THEN 'FAIL'"));
+assert.ok(verifySql.includes("insert_map"));
+assert.ok(
+  verifySql.includes(
+    "origin_gps, origin_country_code, origin_timezone, night_policy_version$",
+  ),
+);
+assert.ok(
+  verifySql.includes(
+    "p_origin_gps, p_origin_country_code, p_origin_timezone, p_night_policy_version$",
+  ),
+);
 
 // Production APIs still v98; writer foundation unwired; no outer v101
 const trusted = read("src/app/api/posts/trusted-publish/route.ts");
@@ -379,10 +535,12 @@ assert.equal(gitDiff("src/lib/safety/trustedPublishAuthorityWriterCore.ts"), "")
 assert.equal(gitDiff("src/lib/safety/trustedPublishAuthority.ts"), "");
 
 assert.ok(ledger.includes("2C.3F") || ledger.includes("v101A"));
+assert.ok(ledger.includes("3F.1") || ledger.includes("2C.3F.1"));
 assert.ok(ledger.includes("API cutover still pending") || ledger.includes("cutover"));
 
 console.log("trustedPublishAuthorityInsertV101.test.ts: ok");
 console.log(`v101 identity: ${FN_IDENTITY}`);
+console.log(`verify checks: ${checkOrders.length}`);
 console.log(
   `INSERT delta: +origin_gps column; authority VALUES NULL,NULL,NULL → four p_origin_* params`,
 );

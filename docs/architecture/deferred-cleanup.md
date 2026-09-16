@@ -570,3 +570,17 @@ OWNER against PostGIS.
   libraries present; creation=false; RS night enabled=false.
 - **Risk if wired early:** API calling v101A with a v98-only payload hash
   (exact-retry collisions); granting EXECUTE to app roles.
+
+## 27. v101A guard/verify fail-closed hardening (2C.3F.1)
+
+- **Current state:** PHASE 6.7C.2C.3F.1. Unapplied migration/verify only:
+  `origin_gps` guard now exact-accepts
+  `geography(Point,4326)` / `extensions.geography(Point,4326)` (v97 pattern;
+  rejects bare geography / wrong SRID / non-Point / geometry); ACL verify
+  requires unique anon/authenticated/service_role resolution before
+  EXECUTE=false (missing role / missing fn → FAIL, no COALESCE false-PASS);
+  live verify locks whitespace-normalized INSERT column/value **tails** for the
+  four authority fields on the unique `posts` INSERT. Comment clarifies
+  GPS/country/timezone required, `night_policy_version` nullable on zero-row
+  selector. Still **not applied**. No API cutover / v101B / v102.
+- **Still unresolved / later phases:** unchanged from §26.

@@ -27,6 +27,8 @@ DECLARE
   v_typ text;
   v_nullable text;
   v_default text;
+  v_type_schema text;
+  v_typname text;
   v_creation boolean;
   v_cfg_n integer;
   v_seed_n integer;
@@ -62,19 +64,29 @@ BEGIN
   SELECT
     pg_catalog.format_type(a.atttypid, a.atttypmod),
     CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END,
-    pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)
-  INTO v_typ, v_nullable, v_default
+    pg_catalog.pg_get_expr(ad.adbin, ad.adrelid),
+    tn.nspname,
+    t.typname
+  INTO v_typ, v_nullable, v_default, v_type_schema, v_typname
   FROM pg_catalog.pg_attribute a
+  JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+  JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
   LEFT JOIN pg_catalog.pg_attrdef ad
     ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
   WHERE a.attrelid = 'public.posts'::regclass
     AND a.attname = 'origin_gps'
     AND a.attnum > 0
     AND NOT a.attisdropped;
-  IF v_typ IS DISTINCT FROM 'extensions.geography'
-     AND v_typ IS DISTINCT FROM 'geography'
-     AND v_typ !~* 'geography' THEN
-    RAISE EXCEPTION 'v101A_guard: origin_gps type drift: %', v_typ;
+  -- Exact typmod lock (v97 live-verified pattern). Reject bare geography /
+  -- wrong SRID / non-Point / geometry.
+  IF v_type_schema IS DISTINCT FROM 'extensions'
+     OR v_typname IS DISTINCT FROM 'geography'
+     OR v_typ NOT IN (
+       'geography(Point,4326)',
+       'extensions.geography(Point,4326)'
+     ) THEN
+    RAISE EXCEPTION 'v101A_guard: origin_gps type/typmod drift: %',
+      COALESCE(v_typ, 'null');
   END IF;
   IF v_nullable IS DISTINCT FROM 'YES' THEN
     RAISE EXCEPTION 'v101A_guard: origin_gps must remain nullable';
@@ -270,8 +282,10 @@ END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 1. Internal Stage-1 insert with atomic authority columns
--- Frozen business body from insert_stage1_post_v98; authority is NOT NULL and
--- is validated then written in the SAME posts INSERT (no post-insert UPDATE).
+-- Frozen business body from insert_stage1_post_v98. GPS / country / timezone
+-- are required server authority inputs. night_policy_version is nullable when
+-- the selector returns zero enabled rows. All four are validated then written
+-- in the SAME posts INSERT (no post-insert UPDATE).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE FUNCTION public.insert_stage1_post_v101(

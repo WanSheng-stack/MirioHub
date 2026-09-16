@@ -7,11 +7,30 @@
 -- Catalog "char" fields cast to text before UNION.
 
 WITH
+role_counts AS (
+  SELECT
+    (SELECT count(*)::int FROM pg_catalog.pg_roles WHERE rolname = 'anon') AS anon_n,
+    (SELECT count(*)::int FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') AS authenticated_n,
+    (SELECT count(*)::int FROM pg_catalog.pg_roles WHERE rolname = 'service_role') AS service_role_n
+),
 roles AS (
   SELECT
-    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'anon') AS anon_oid,
-    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') AS authenticated_oid,
-    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'service_role') AS service_role_oid
+    c.anon_n,
+    c.authenticated_n,
+    c.service_role_n,
+    CASE WHEN c.anon_n = 1
+      THEN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'anon')
+      ELSE NULL
+    END AS anon_oid,
+    CASE WHEN c.authenticated_n = 1
+      THEN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'authenticated')
+      ELSE NULL
+    END AS authenticated_oid,
+    CASE WHEN c.service_role_n = 1
+      THEN (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'service_role')
+      ELSE NULL
+    END AS service_role_oid
+  FROM role_counts c
 ),
 exact AS (
   SELECT
@@ -66,40 +85,60 @@ identity_obs AS (
   FROM target t
 ),
 public_fn_acl AS (
-  SELECT COALESCE((
-    SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'EXECUTE')
-    FROM target t
-    CROSS JOIN LATERAL pg_catalog.aclexplode(
-      COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
-    ) a
-  ), false) AS has_public_execute
+  SELECT
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN NULL
+      ELSE COALESCE((
+        SELECT bool_or(a.grantee = 0 AND a.privilege_type = 'EXECUTE')
+        FROM target t
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
+        ) a
+        WHERE t.oid IS NOT NULL
+      ), false)
+    END AS has_public_execute
 ),
 role_fn_acl AS (
   SELECT
-    COALESCE((
-      SELECT bool_or(a.grantee = r.anon_oid AND a.privilege_type = 'EXECUTE')
-      FROM target t
-      CROSS JOIN roles r
-      CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
-      ) a
-    ), false) AS anon_execute,
-    COALESCE((
-      SELECT bool_or(a.grantee = r.authenticated_oid AND a.privilege_type = 'EXECUTE')
-      FROM target t
-      CROSS JOIN roles r
-      CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
-      ) a
-    ), false) AS authenticated_execute,
-    COALESCE((
-      SELECT bool_or(a.grantee = r.service_role_oid AND a.privilege_type = 'EXECUTE')
-      FROM target t
-      CROSS JOIN roles r
-      CROSS JOIN LATERAL pg_catalog.aclexplode(
-        COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
-      ) a
-    ), false) AS service_role_execute
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN NULL
+      WHEN (SELECT anon_oid FROM roles) IS NULL THEN NULL
+      ELSE COALESCE((
+        SELECT bool_or(a.grantee = r.anon_oid AND a.privilege_type = 'EXECUTE')
+        FROM target t
+        CROSS JOIN roles r
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
+        ) a
+        WHERE t.oid IS NOT NULL
+      ), false)
+    END AS anon_execute,
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN NULL
+      WHEN (SELECT authenticated_oid FROM roles) IS NULL THEN NULL
+      ELSE COALESCE((
+        SELECT bool_or(a.grantee = r.authenticated_oid AND a.privilege_type = 'EXECUTE')
+        FROM target t
+        CROSS JOIN roles r
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
+        ) a
+        WHERE t.oid IS NOT NULL
+      ), false)
+    END AS authenticated_execute,
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN NULL
+      WHEN (SELECT service_role_oid FROM roles) IS NULL THEN NULL
+      ELSE COALESCE((
+        SELECT bool_or(a.grantee = r.service_role_oid AND a.privilege_type = 'EXECUTE')
+        FROM target t
+        CROSS JOIN roles r
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(t.proacl, pg_catalog.acldefault('f'::"char", t.proowner))
+        ) a
+        WHERE t.oid IS NOT NULL
+      ), false)
+    END AS service_role_execute
 ),
 src AS (
   SELECT COALESCE(t.prosrc, '') AS prosrc FROM target t
@@ -114,6 +153,18 @@ insert_count AS (
       SELECT count(*)::int
       FROM regexp_matches((SELECT prosrc FROM src), 'UPDATE[[:space:]]+public\.posts', 'gi')
     ) AS posts_update_n
+),
+insert_map AS (
+  SELECT
+    m[1] AS cols_norm,
+    m[2] AS vals_norm
+  FROM (
+    SELECT regexp_match(
+      regexp_replace((SELECT prosrc FROM src), E'\\s+', ' ', 'g'),
+      'INSERT INTO public\.posts \((.*)\) VALUES \((.*)\) RETURNING',
+      'i'
+    ) AS m
+  ) x
 ),
 v98 AS (
   SELECT
@@ -272,39 +323,83 @@ checks AS (
     COALESCE((SELECT array_to_string(proconfig, '|') FROM identity_obs), 'null'),
     'pg_catalog, public, pg_temp'
   UNION ALL SELECT 9, 'acl', 'PUBLIC no EXECUTE',
-    CASE WHEN (SELECT has_public_execute FROM public_fn_acl) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
-    'public_execute=' || COALESCE((SELECT has_public_execute FROM public_fn_acl)::text, 'null'),
-    'false'
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN 'FAIL'
+      WHEN (SELECT has_public_execute FROM public_fn_acl) IS FALSE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    'fn=' || COALESCE((SELECT fn_oid FROM identity_obs)::text, 'null')
+      || ' public_execute=' || COALESCE((SELECT has_public_execute FROM public_fn_acl)::text, 'null'),
+    'fn present and public_execute=false'
   UNION ALL SELECT 10, 'acl', 'anon no EXECUTE',
-    CASE WHEN (SELECT anon_execute FROM role_fn_acl) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
-    'anon_execute=' || COALESCE((SELECT anon_execute FROM role_fn_acl)::text, 'null'),
-    'false'
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN 'FAIL'
+      WHEN (SELECT anon_n FROM roles) IS DISTINCT FROM 1 THEN 'FAIL'
+      WHEN (SELECT anon_oid FROM roles) IS NULL THEN 'FAIL'
+      WHEN (SELECT anon_execute FROM role_fn_acl) IS FALSE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    concat_ws(
+      ' | ',
+      'anon_n=' || COALESCE((SELECT anon_n FROM roles)::text, 'null'),
+      'anon_execute=' || COALESCE((SELECT anon_execute FROM role_fn_acl)::text, 'null')
+    ),
+    'anon_n=1 and anon_execute=false'
   UNION ALL SELECT 11, 'acl', 'authenticated no EXECUTE',
-    CASE WHEN (SELECT authenticated_execute FROM role_fn_acl) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
-    'authenticated_execute=' || COALESCE((SELECT authenticated_execute FROM role_fn_acl)::text, 'null'),
-    'false'
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN 'FAIL'
+      WHEN (SELECT authenticated_n FROM roles) IS DISTINCT FROM 1 THEN 'FAIL'
+      WHEN (SELECT authenticated_oid FROM roles) IS NULL THEN 'FAIL'
+      WHEN (SELECT authenticated_execute FROM role_fn_acl) IS FALSE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    concat_ws(
+      ' | ',
+      'authenticated_n=' || COALESCE((SELECT authenticated_n FROM roles)::text, 'null'),
+      'authenticated_execute=' || COALESCE((SELECT authenticated_execute FROM role_fn_acl)::text, 'null')
+    ),
+    'authenticated_n=1 and authenticated_execute=false'
   UNION ALL SELECT 12, 'acl', 'service_role no EXECUTE',
-    CASE WHEN (SELECT service_role_execute FROM role_fn_acl) IS FALSE THEN 'PASS' ELSE 'FAIL' END,
-    'service_role_execute=' || COALESCE((SELECT service_role_execute FROM role_fn_acl)::text, 'null'),
-    'false'
+    CASE
+      WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN 'FAIL'
+      WHEN (SELECT service_role_n FROM roles) IS DISTINCT FROM 1 THEN 'FAIL'
+      WHEN (SELECT service_role_oid FROM roles) IS NULL THEN 'FAIL'
+      WHEN (SELECT service_role_execute FROM role_fn_acl) IS FALSE THEN 'PASS'
+      ELSE 'FAIL'
+    END,
+    concat_ws(
+      ' | ',
+      'service_role_n=' || COALESCE((SELECT service_role_n FROM roles)::text, 'null'),
+      'service_role_execute=' || COALESCE((SELECT service_role_execute FROM role_fn_acl)::text, 'null')
+    ),
+    'service_role_n=1 and service_role_execute=false'
   UNION ALL SELECT 13, 'atomicity', 'single posts INSERT',
     CASE WHEN (SELECT posts_insert_n FROM insert_count) = 1 THEN 'PASS' ELSE 'FAIL' END,
     'posts_insert_n=' || COALESCE((SELECT posts_insert_n FROM insert_count)::text, 'null'),
     '1'
-  UNION ALL SELECT 14, 'atomicity', 'INSERT includes four authority columns',
+  UNION ALL SELECT 14, 'atomicity', 'INSERT authority column/value tail map',
     CASE
-      WHEN strpos((SELECT prosrc FROM src), 'origin_gps') > 0
-       AND strpos((SELECT prosrc FROM src), 'origin_country_code') > 0
-       AND strpos((SELECT prosrc FROM src), 'origin_timezone') > 0
-       AND strpos((SELECT prosrc FROM src), 'night_policy_version') > 0
-       AND strpos((SELECT prosrc FROM src), 'p_origin_gps') > 0
-       AND strpos((SELECT prosrc FROM src), 'p_origin_country_code') > 0
-       AND strpos((SELECT prosrc FROM src), 'p_origin_timezone') > 0
-       AND strpos((SELECT prosrc FROM src), 'p_night_policy_version') > 0
-      THEN 'PASS' ELSE 'FAIL'
+      WHEN (SELECT posts_insert_n FROM insert_count) IS DISTINCT FROM 1 THEN 'FAIL'
+      WHEN (SELECT cols_norm FROM insert_map) IS NULL
+        OR (SELECT vals_norm FROM insert_map) IS NULL THEN 'FAIL'
+      WHEN btrim((SELECT cols_norm FROM insert_map)) !~
+        'origin_gps, origin_country_code, origin_timezone, night_policy_version$'
+        THEN 'FAIL'
+      WHEN btrim((SELECT vals_norm FROM insert_map)) !~
+        'p_origin_gps, p_origin_country_code, p_origin_timezone, p_night_policy_version$'
+        THEN 'FAIL'
+      WHEN (
+        length(lower(btrim((SELECT cols_norm FROM insert_map))))
+        - length(replace(lower(btrim((SELECT cols_norm FROM insert_map))), 'origin_gps', ''))
+      ) / length('origin_gps') IS DISTINCT FROM 1 THEN 'FAIL'
+      ELSE 'PASS'
     END,
-    'authority columns + params present',
-    'four columns in INSERT VALUES'
+    concat_ws(
+      ' | ',
+      'cols_tail=' || COALESCE(right(btrim((SELECT cols_norm FROM insert_map)), 80), 'null'),
+      'vals_tail=' || COALESCE(right(btrim((SELECT vals_norm FROM insert_map)), 100), 'null')
+    ),
+    'exact authority col/value tails on unique INSERT'
   UNION ALL SELECT 15, 'atomicity', 'no post-insert UPDATE posts',
     CASE WHEN (SELECT posts_update_n FROM insert_count) = 0 THEN 'PASS' ELSE 'FAIL' END,
     'posts_update_n=' || COALESCE((SELECT posts_update_n FROM insert_count)::text, 'null'),
@@ -438,6 +533,18 @@ checks AS (
     CASE WHEN (SELECT pronargs FROM identity_obs) = 11 THEN 'PASS' ELSE 'FAIL' END,
     'pronargs=' || COALESCE((SELECT pronargs FROM identity_obs)::text, 'null'),
     '11'
+  UNION ALL SELECT 33, 'acl', 'anon role unique',
+    CASE WHEN (SELECT anon_n FROM roles) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    'anon_n=' || COALESCE((SELECT anon_n FROM roles)::text, 'null'),
+    '1'
+  UNION ALL SELECT 34, 'acl', 'authenticated role unique',
+    CASE WHEN (SELECT authenticated_n FROM roles) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    'authenticated_n=' || COALESCE((SELECT authenticated_n FROM roles)::text, 'null'),
+    '1'
+  UNION ALL SELECT 35, 'acl', 'service_role unique',
+    CASE WHEN (SELECT service_role_n FROM roles) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    'service_role_n=' || COALESCE((SELECT service_role_n FROM roles)::text, 'null'),
+    '1'
 ),
 summary AS (
   SELECT

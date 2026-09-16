@@ -438,40 +438,52 @@ OWNER against PostGIS.
   service_role-only writer and UPDATE seal ship; public Nominatim rate limits
   across concurrent serverless instances.
 
-## 20. Night policy selector v100 (2C.3C / 2C.3C.1)
+## 20. Night policy selector v100 (2C.3C)
 
-- **Current state:** PHASE 6.7C.2C.3C.1. Forward-only unapplied migration
-  `20260917000001_night_policy_selector_v100.sql` adds
+- **Current state:** PHASE 6.7C.2C.3C complete and **applied**. Migration
+  `20260917000001_night_policy_selector_v100.sql` is live. Official verify
+  **31/31 PASS**. Function
   `public.select_night_service_policy_v100(text,text,text,timestamptz)` —
   LANGUAGE sql, SECURITY DEFINER, STABLE, fixed
   `search_path=pg_catalog, public, pg_temp`. service_role EXECUTE only;
   PUBLIC/anon/authenticated revoked. Does **not** grant table ACL on
   `night_service_policies`. Fail-closed on illegal country/region/timezone/
-  evaluation_time (zero rows, no uppercase coercion, no Europe/Belgrade
-  fallback). Selector requires `enabled IS TRUE`, exact timezone match,
+  evaluation_time. Selector requires `enabled IS TRUE`, exact timezone match,
   inclusive `effective_from`, exclusive `effective_until`, exact region over
   country default, then `policy_version DESC`, `effective_from DESC`,
-  `id ASC`, `LIMIT 1`. Guard/verify pin `system_configs.id = 1` (exact one
-  row, creation=false) and RS seed identity
-  `(RS, region NULL, policy_version=1)` with `22:00`/`06:00`,
-  `enabled=false`, `effective_until NULL`. Verify check 21 uses
-  `seed.effective_from + interval '1 second'` so a not-yet-effective seed
-  cannot fake disabled PASS; missing seed yields `selector_count` NULL → FAIL.
-  `overall_pass` is text `PASS`/`FAIL`. Pure TS fixture mirror:
-  `src/lib/safety/nightPolicySelectorV100.ts` (tests only).
+  `id ASC`, `LIMIT 1`. RS seed remains `enabled=false` so selector returns
+  zero rows for current RS/Europe/Belgrade calls.
+- **2C.3C.2:** Guard missing-column probe `SELECT a.attname` →
+  `SELECT need.attname` (SQLSTATE 42P01). Applied with main migration.
+- **2C.3C.3:** Live verify check 1 named-identity false FAIL fixed via
+  `oidvectortypes(proargtypes)` + `pronargs=4` + exact input names; field
+  verify **passed** after re-run.
 - **Still unresolved / later phases:** service_role publish writer that calls
   this selector; API cutover; posts_update_own seal; enabling creation / RS
   night.
-- **Earliest safe production use:** after live apply of v100 and a later
-  writer phase; not before.
-- **Preconditions:** v96 table+RS seed; v99A/v99B functions; creation=false.
-- **Risk if wired early:** calling selector from client roles (blocked by ACL);
-  treating disabled RS seed as an active policy (selector correctly returns
-  zero rows).
-- **2C.3C.2:** Guard missing-column probe used `SELECT a.attname` while `a`
-  existed only inside `NOT EXISTS`; fixed to `SELECT need.attname` (SQLSTATE
-  42P01). Selector body/verify unchanged; v100 still unapplied after ROLLBACK.
-- **2C.3C.3:** Live verify check 1 false-FAILED because
-  `pg_get_function_identity_arguments` returns named args while expected was
-  bare types. Verify now uses `oidvectortypes(proargtypes)`, `pronargs=4`, and
-  exact input `proargnames[1:pronargs]`; main migration unchanged.
+- **Earliest safe production use:** selector is live; publish writer cutover
+  still pending (see §21).
+- **Preconditions:** v96 table+RS seed; v99A/v99B; creation=false.
+- **Risk if wired early:** treating disabled RS seed as an active policy
+  (selector correctly returns zero rows).
+
+## 21. Trusted publish authority context (2C.3D)
+
+- **Current state:** PHASE 6.7C.2C.3D. Library-only
+  `src/lib/safety/trustedPublishAuthority.ts` (server-only) + pure core
+  `trustedPublishAuthorityCore.ts`. Assembles trusted origin
+  (WKT/country/IANA) via injectable `resolveTrustedOrigin` and optional
+  enabled night policy via injectable v100 selector contract. Selector 0 rows
+  → success with `nightPolicyVersion=null` / `nightPolicyApplied=false`
+  (RS disabled semantics). 1 row → validate + `evaluateNightServicePolicy`
+  (purpose=publish). >1 rows → `error.night_policy_ambiguous`. Does **not**
+  create migration/v101, does not cut over publish APIs, does not write posts.
+- **Still unresolved / later phases:** service_role v101 writer; three API
+  cutover; posts_update_own seal; enabling creation / RS night.
+- **Earliest safe production use:** after a later writer phase wires this
+  context into publish RPCs.
+- **Preconditions:** v100 applied; trusted origin resolver library present;
+  creation=false; RS night enabled=false.
+- **Risk if wired early:** writing NULL policy version into posts before
+  matching understands the zero-row publish path; calling from Client
+  Components (blocked by server-only).

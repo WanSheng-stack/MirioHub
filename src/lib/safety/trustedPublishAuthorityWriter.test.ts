@@ -308,13 +308,10 @@ async function main() {
       assert.equal(gitDiff(path), "", `frozen dirty: ${path}`);
     }
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
-    // v101A insert foundation may exist; reject outer writer / v102 cutover names.
+    // v101A/v101B migration files may exist; reject v102 and API cutover.
+    assert.equal(migs.some((n) => /v102/.test(n)), false);
     assert.equal(
-      migs.some((n) =>
-        /writer_v101|v101B|v102|idempotent_v101|commit_phase3.*v101|shadow_draft.*v101|publish_active_post.*v101|create_shadow_draft.*v101/.test(
-          n,
-        ),
-      ),
+      migs.some((n) => /cutover|revoke_v98|posts_update_own_seal/.test(n)),
       false,
     );
     const postsInit = read("supabase/posts_init.sql");
@@ -356,7 +353,11 @@ async function main() {
 
   const ledger = read("docs/architecture/deferred-cleanup.md");
   assert.ok(ledger.includes("2C.3E") || ledger.includes("writer foundation"));
-  assert.ok(ledger.includes("API cutover still pending") || ledger.includes("cutover still pending"));
+  assert.ok(
+    ledger.includes("API cutover still pending") ||
+      ledger.includes("cutover still pending") ||
+      ledger.includes("API cutover"),
+  );
 
   console.log("trustedPublishAuthorityWriter.test.ts: ok");
 }

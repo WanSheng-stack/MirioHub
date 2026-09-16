@@ -947,15 +947,12 @@ async function main() {
     assert.equal(contact.includes("buildTrustedPublishAuthority"), false);
   }
 
-  // No outer v101 writer/cutover; frozen history zero-diff vs phase baseline
+  // v101B may exist on disk; reject v102 / API still v98; frozen history zero-diff
   {
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
+    assert.equal(migs.some((n) => /v102/.test(n)), false);
     assert.equal(
-      migs.some((n) =>
-        /writer_v101|v101B|v102|idempotent_v101|commit_phase3.*v101|shadow_draft.*v101|publish_active_post.*v101|create_shadow_draft.*v101/.test(
-          n,
-        ),
-      ),
+      migs.some((n) => /cutover|revoke_v98|posts_update_own_seal/.test(n)),
       false,
     );
     for (const path of FROZEN) {

@@ -548,23 +548,23 @@ OWNER against PostGIS.
 
 ## 26. Atomic trusted authority Stage-1 insert (2C.3F / v101A)
 
-- **Current state:** PHASE 6.7C.2C.3F / v101A. Forward-only migration
-  `20260918000001_trusted_publish_authority_insert_v101.sql` (+ verify) adds
-  internal `public.insert_stage1_post_v101(... extensions.geography, text, text,
-  integer) RETURNS uuid`. Same canonical Stage-1 validation as v98, plus
-  fail-closed GPS/country/IANA/night-version checks; **one** `posts` INSERT
+- **Current state:** PHASE 6.7C.2C.3F / v101A — **applied**. Forward-only
+  migration `20260918000001_trusted_publish_authority_insert_v101.sql`
+  (+ verify) adds internal `public.insert_stage1_post_v101(... extensions.geography,
+  text, text, integer) RETURNS uuid`. Same canonical Stage-1 validation as v98,
+  plus fail-closed GPS/country/IANA/night-version checks; **one** `posts` INSERT
   writes canonical fields and
   `origin_gps` / `origin_country_code` / `origin_timezone` /
   `night_policy_version` together. No post-insert UPDATE. ACL: PUBLIC / anon /
-  authenticated / service_role all REVOKE EXECUTE (internal helper for a later
-  v101B outer writer). **Payload-hash:** v98 hash still covers canonical
-  publish payload only; v101A stores the caller hash as-is; v101B must lock a
-  versioned server hash that includes the four authority fields. No outer
-  publish RPCs, no API cutover, no v98 ACL change, no `posts_update_own`
-  change, creation=false, RS night=false. **Not applied** in this phase.
-- **Still unresolved / later phases:** v101B outer transactional writer; three
-  API cutover; posts_update_own seal; enabling creation / RS night.
-- **Earliest safe production use:** after v101B + API cutover; do not call
+  authenticated / service_role all REVOKE EXECUTE (internal helper for v101B
+  outer writers). **Verify:** **35/35 PASS**. Authority insert helper OID
+  present on the live site. **Payload-hash:** v98 hash covers canonical publish
+  payload only; v101A stores the caller hash as-is; v101B locks a versioned
+  server hash that includes the four authority fields. No API cutover, no v98
+  ACL change, no `posts_update_own` change, creation=false, RS night=false.
+- **Still unresolved / later phases:** three API cutover; posts_update_own seal;
+  enabling creation / RS night.
+- **Earliest safe production use:** after v101B apply + API cutover; do not call
   v101A from APIs before then.
 - **Preconditions:** v98–v100 applied; PostGIS in `extensions`; authority TS
   libraries present; creation=false; RS night enabled=false.
@@ -573,8 +573,8 @@ OWNER against PostGIS.
 
 ## 27. v101A guard/verify fail-closed hardening (2C.3F.1)
 
-- **Current state:** PHASE 6.7C.2C.3F.1. Unapplied migration/verify only:
-  `origin_gps` guard now exact-accepts
+- **Current state:** PHASE 6.7C.2C.3F.1 — **applied** with §26
+  (**35/35 PASS**). `origin_gps` guard exact-accepts
   `geography(Point,4326)` / `extensions.geography(Point,4326)` (v97 pattern;
   rejects bare geography / wrong SRID / non-Point / geometry); ACL verify
   requires unique anon/authenticated/service_role resolution before
@@ -582,5 +582,31 @@ OWNER against PostGIS.
   live verify locks whitespace-normalized INSERT column/value **tails** for the
   four authority fields on the unique `posts` INSERT. Comment clarifies
   GPS/country/timezone required, `night_policy_version` nullable on zero-row
-  selector. Still **not applied**. No API cutover / v101B / v102.
-- **Still unresolved / later phases:** unchanged from §26.
+  selector. Authority insert helper OID present on site. No API cutover /
+  v102.
+- **Still unresolved / later phases:** unchanged from §26 (API cutover /
+  posts_update_own / creation / RS night).
+
+## 28. Authority-bound publish writers (2C.3G / v101B)
+
+- **Current state:** PHASE 6.7C.2C.3G / v101B. Forward-only migration
+  `20260918000002_trusted_publish_authority_writer_v101b.sql` (+ verify) adds:
+  (1) internal `public.trusted_publish_facts_hash_v101(text, extensions.geography,
+  text, text, integer) RETURNS text` — STABLE SECURITY DEFINER, versioned
+  publish facts SHA-256 (schema=101) including EWKB hex + authority fields;
+  PUBLIC/anon/authenticated/service_role all REVOKE EXECUTE; (2–4) outer writers
+  `publish_active_post_idempotent_v101`, `create_shadow_draft_idempotent_v101`,
+  `commit_phase3_business_idempotent_v101` — VOLATILE SECURITY DEFINER,
+  service_role EXECUTE only; advisory lock before posts read; fresh →
+  `insert_stage1_post_v101` with final authority-bound hash; exact retry from
+  stored authority; legacy draft atomic upgrade; legacy active / partial
+  fail-closed; Passkey challenge+credential+posts in one function. **Not
+  applied** in this phase. Production APIs still call v98. No v98 ACL revoke,
+  no `posts_update_own` change, creation=false, RS night=false. No v102.
+- **Still unresolved / later phases:** apply v101B; API cutover to v101 writers;
+  revoke v98 EXECUTE; seal posts_update_own; enable creation / RS night.
+- **Earliest safe production use:** after apply + API cutover only.
+- **Preconditions:** v101A applied (35/35); PostGIS/pgcrypto in `extensions`;
+  creation=false; RS night enabled=false.
+- **Risk if wired early:** browser roles calling writers; cutting APIs before
+  apply; treating v98 canonical hash as final publish hash.

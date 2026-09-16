@@ -545,3 +545,28 @@ OWNER against PostGIS.
   creation=false; RS night enabled=false.
 - **Risk if wired early:** writing authority into posts via anon/authenticated
   paths or before matching understands NULL policy versions.
+
+## 26. Atomic trusted authority Stage-1 insert (2C.3F / v101A)
+
+- **Current state:** PHASE 6.7C.2C.3F / v101A. Forward-only migration
+  `20260918000001_trusted_publish_authority_insert_v101.sql` (+ verify) adds
+  internal `public.insert_stage1_post_v101(... extensions.geography, text, text,
+  integer) RETURNS uuid`. Same canonical Stage-1 validation as v98, plus
+  fail-closed GPS/country/IANA/night-version checks; **one** `posts` INSERT
+  writes canonical fields and
+  `origin_gps` / `origin_country_code` / `origin_timezone` /
+  `night_policy_version` together. No post-insert UPDATE. ACL: PUBLIC / anon /
+  authenticated / service_role all REVOKE EXECUTE (internal helper for a later
+  v101B outer writer). **Payload-hash:** v98 hash still covers canonical
+  publish payload only; v101A stores the caller hash as-is; v101B must lock a
+  versioned server hash that includes the four authority fields. No outer
+  publish RPCs, no API cutover, no v98 ACL change, no `posts_update_own`
+  change, creation=false, RS night=false. **Not applied** in this phase.
+- **Still unresolved / later phases:** v101B outer transactional writer; three
+  API cutover; posts_update_own seal; enabling creation / RS night.
+- **Earliest safe production use:** after v101B + API cutover; do not call
+  v101A from APIs before then.
+- **Preconditions:** v98–v100 applied; PostGIS in `extensions`; authority TS
+  libraries present; creation=false; RS night enabled=false.
+- **Risk if wired early:** API calling v101A with a v98-only payload hash
+  (exact-retry collisions); granting EXECUTE to app roles.

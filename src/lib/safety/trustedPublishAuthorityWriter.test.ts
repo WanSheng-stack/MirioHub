@@ -300,7 +300,7 @@ async function main() {
     assert.equal(trusted.includes("trustedPublishAuthorityWriter"), false);
   }
 
-  // posts_update_own / init.sql / v90–v100 frozen; no v101 migration
+  // posts_update_own / init.sql / v90–v100 frozen; no outer v101 writer/cutover
   {
     assert.equal(gitDiff("supabase/init.sql"), "");
     assert.equal(gitDiff("supabase/posts_init.sql"), "");
@@ -308,8 +308,13 @@ async function main() {
       assert.equal(gitDiff(path), "", `frozen dirty: ${path}`);
     }
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
+    // v101A insert foundation may exist; reject outer writer / v102 cutover names.
     assert.equal(
-      migs.some((n) => /v101|writer_v101|publish.*v101/.test(n)),
+      migs.some((n) =>
+        /writer_v101|v101B|v102|idempotent_v101|commit_phase3.*v101|shadow_draft.*v101|publish_active_post.*v101|create_shadow_draft.*v101/.test(
+          n,
+        ),
+      ),
       false,
     );
     const postsInit = read("supabase/posts_init.sql");

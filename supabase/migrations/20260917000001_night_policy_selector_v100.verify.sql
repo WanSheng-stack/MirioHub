@@ -29,10 +29,13 @@ fn AS (
     p.proowner,
     p.proacl,
     p.proconfig,
+    p.proargtypes,
+    p.pronargs,
     p.proargnames,
     p.proallargtypes,
     p.proargmodes,
     l.lanname,
+    pg_catalog.oidvectortypes(p.proargtypes) AS arg_types,
     pg_catalog.pg_get_function_identity_arguments(p.oid) AS identity_args,
     pg_catalog.pg_get_function_result(p.oid) AS result_def,
     p.prosrc
@@ -52,6 +55,19 @@ target AS (
   SELECT f.*
   FROM exact e
   LEFT JOIN fn f ON f.oid = e.reg_oid
+),
+identity_obs AS (
+  SELECT
+    (SELECT reg_oid FROM exact) AS reg_oid,
+    t.oid AS fn_oid,
+    t.arg_types,
+    t.pronargs,
+    t.identity_args,
+    CASE
+      WHEN t.proargnames IS NULL OR t.pronargs IS NULL THEN NULL
+      ELSE t.proargnames[1:t.pronargs]
+    END AS input_arg_names
+  FROM target t
 ),
 out_cols AS (
   SELECT
@@ -294,15 +310,44 @@ checks AS (
         'identity'::text,
         'function identity exact'::text,
         CASE
-          WHEN (SELECT reg_oid FROM exact) IS NULL THEN 'FAIL'
-          WHEN (SELECT oid FROM target) IS NULL THEN 'FAIL'
-          WHEN (SELECT identity_args FROM target)
-            = 'text, text, text, timestamp with time zone'
-          THEN 'PASS'
-          ELSE 'FAIL'
+          WHEN (SELECT reg_oid FROM identity_obs) IS NULL THEN 'FAIL'
+          WHEN (SELECT fn_oid FROM identity_obs) IS NULL THEN 'FAIL'
+          WHEN (SELECT reg_oid FROM identity_obs)
+            IS DISTINCT FROM (SELECT fn_oid FROM identity_obs)
+          THEN 'FAIL'
+          WHEN (SELECT arg_types FROM identity_obs)
+            IS DISTINCT FROM 'text, text, text, timestamp with time zone'
+          THEN 'FAIL'
+          WHEN (SELECT pronargs FROM identity_obs) IS DISTINCT FROM 4
+          THEN 'FAIL'
+          WHEN (SELECT input_arg_names FROM identity_obs)
+            IS DISTINCT FROM ARRAY[
+              'p_country_code',
+              'p_region_code',
+              'p_origin_timezone',
+              'p_evaluation_time'
+            ]::text[]
+          THEN 'FAIL'
+          ELSE 'PASS'
         END,
-        COALESCE((SELECT identity_args FROM target), 'NULL'),
-        'text, text, text, timestamp with time zone'::text
+        format(
+          'reg_oid_set=%s oid_match=%s arg_types=%s input_arg_names=%s pronargs=%s identity_args=%s',
+          ((SELECT reg_oid FROM identity_obs) IS NOT NULL),
+          (
+            (SELECT reg_oid FROM identity_obs) IS NOT NULL
+            AND (SELECT fn_oid FROM identity_obs) IS NOT NULL
+            AND (SELECT reg_oid FROM identity_obs)
+              IS NOT DISTINCT FROM (SELECT fn_oid FROM identity_obs)
+          ),
+          COALESCE((SELECT arg_types FROM identity_obs), 'NULL'),
+          COALESCE(
+            (SELECT array_to_string(input_arg_names, ',') FROM identity_obs),
+            'NULL'
+          ),
+          COALESCE((SELECT pronargs::text FROM identity_obs), 'NULL'),
+          COALESCE((SELECT identity_args FROM identity_obs), 'NULL')
+        ),
+        'reg_oid matched | arg_types=text, text, text, timestamp with time zone | input_arg_names=p_country_code,p_region_code,p_origin_timezone,p_evaluation_time | pronargs=4'::text
       ),
       (
         2,

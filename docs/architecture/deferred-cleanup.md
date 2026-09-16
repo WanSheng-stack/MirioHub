@@ -471,3 +471,7 @@ OWNER against PostGIS.
 - **2C.3C.2:** Guard missing-column probe used `SELECT a.attname` while `a`
   existed only inside `NOT EXISTS`; fixed to `SELECT need.attname` (SQLSTATE
   42P01). Selector body/verify unchanged; v100 still unapplied after ROLLBACK.
+- **2C.3C.3:** Live verify check 1 false-FAILED because
+  `pg_get_function_identity_arguments` returns named args while expected was
+  bare types. Verify now uses `oidvectortypes(proargtypes)`, `pronargs=4`, and
+  exact input `proargnames[1:pronargs]`; main migration unchanged.

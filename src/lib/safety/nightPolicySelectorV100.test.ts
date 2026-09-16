@@ -188,15 +188,20 @@ assert.equal(body.includes("upper("), false);
 assert.equal(body.includes("Europe/Belgrade"), false);
 assert.equal(body.includes("CREATE TABLE"), false);
 
-// Selector body must be byte-identical to 9a21dd1 (alias fix is guard-only)
+// Selector body + main migration must stay frozen at 67fd801 (verify-only fix)
 {
   const baselineMig = execFileSync(
     "git",
-    ["show", "9a21dd15469f88038509d55d2db3a5a0c100869d:" + V100_REL],
+    ["show", "67fd801498ebfc8bf42c7a565bfdbd25c78e83bc:" + V100_REL],
     { cwd: repoRoot, encoding: "utf8" },
   );
   const baselineBody = stripSqlComments(dollarBody(baselineMig, "fn"));
-  assert.equal(body, baselineBody, "selector $fn$ body drifted from 9a21dd1");
+  assert.equal(body, baselineBody, "selector $fn$ body drifted from 67fd801");
+  assert.equal(
+    gitDiff(V100_REL),
+    "",
+    "v100 main migration must be zero-diff for verify-only fix",
+  );
 }
 
 // First DDL must remain after the complete guard DO block
@@ -212,13 +217,6 @@ assert.equal(body.includes("CREATE TABLE"), false);
     false,
   );
 }
-
-// v100 verify must stay frozen at HEAD baseline for this alias-only fix
-assert.equal(
-  gitDiff(V100_VERIFY_REL),
-  "",
-  "v100 verify must be zero-diff for 42P01 alias fix",
-);
 
 const returnsBlock = migration.slice(
   migration.indexOf("RETURNS TABLE"),
@@ -257,6 +255,44 @@ assert.ok(checkOrders.length >= 31, `expected >=31 checks, got ${checkOrders.len
 for (let i = 1; i <= 31; i++) {
   assert.ok(checkOrders.includes(i), `missing check_order ${i}`);
 }
+
+// 2C.3C.3 — named identity arguments must not be compared as bare types
+assert.ok(verifySql.includes("oidvectortypes(p.proargtypes)"));
+assert.ok(verifySql.includes("p.pronargs"));
+assert.ok(verifySql.includes("p.proargtypes"));
+assert.ok(verifySql.includes("p.proargnames"));
+assert.ok(verifySql.includes("pronargs") && verifySql.includes("IS DISTINCT FROM 4"));
+assert.ok(verifySql.includes("'p_country_code'"));
+assert.ok(verifySql.includes("'p_region_code'"));
+assert.ok(verifySql.includes("'p_origin_timezone'"));
+assert.ok(verifySql.includes("'p_evaluation_time'"));
+assert.ok(verifySql.includes("proargnames[1:t.pronargs]"));
+assert.ok(verifySql.includes("input_arg_names"));
+assert.ok(verifySql.includes("arg_types"));
+assert.ok(
+  verifySql.includes(
+    "public.select_night_service_policy_v100(text,text,text,timestamptz)",
+  ),
+);
+assert.ok(verifySql.includes("LEFT JOIN fn f ON f.oid = e.reg_oid"));
+assert.equal(
+  /identity_args\s*\)\s*=\s*'text, text, text, timestamp with time zone'/.test(
+    verifySql,
+  ),
+  false,
+  "must not compare identity_args directly to bare type string",
+);
+assert.equal(
+  /WHEN \(SELECT identity_args FROM target\)\s*=\s*'text, text, text, timestamp with time zone'/.test(
+    verifySql,
+  ),
+  false,
+);
+// Output TABLE nine-field check remains
+assert.ok(verifySql.includes("matched=9 observed=9"));
+assert.ok(verifySql.includes("'policy_id'"));
+assert.ok(verifySql.includes("'blocked_start_local'"));
+assert.ok(verifySql.includes("'effective_until'"));
 
 assert.ok(verifySql.includes("RS disabled returns zero rows"));
 assert.ok(verifySql.includes("lowercase country zero rows"));

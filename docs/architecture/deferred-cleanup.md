@@ -625,22 +625,36 @@ OWNER against PostGIS.
 - **Preconditions:** v101A+v101B applied; creation=false; RS night enabled=false.
 - **Risk if wired early:** (n/a — app-only hardening on already-cutover routes).
 
-## 30. Seal direct posts writes (2C.3I-B / v102)
+## 30. Seal direct posts writes (2C.3I-B / 3I-B.1 / v102A+v102B)
 
-- **Current state:** PHASE 6.7C.2C.3I-B — forward migration
-  `20260919000001_posts_write_boundary_v102.sql` (+ verify). Narrow
-  `complete_post_contact_v102` / `activate_post_after_identity_v102`
-  (SECURITY DEFINER, fixed search_path, service_role EXECUTE only). Internal
-  `_posts_is_account_eligible_v102` sealed (no role EXECUTE). APIs cut over;
-  no direct `posts` INSERT/UPDATE/DELETE. `posts_update_own` /
-  `posts_insert_own` / `posts_delete_own` dropped; authenticated DML revoked.
-  SELECT policies + `public_posts_safe` retained. v98 outer writers fully
-  REVOKE ALL (functions kept). v101 writers unchanged (service_role only).
-  origin authority / payload_hash / locale immutable from Stage-2. Destination
-  geocode destination-only; scope computed in SQL. creation=false; RS night
-  enabled=false. **MANUAL APPLY + verify required — not auto-applied.**
+- **Current state:** PHASE 6.7C.2C.3I-B.1 — **split rollout** (no single
+  break-glass migration). **v102A**
+  `20260919000001_posts_write_boundary_v102a.sql`: creates
+  `_posts_is_account_eligible_v102`, `_posts_validate_authority_complete_v102`
+  (sealed), `complete_post_contact_v102`, `activate_post_after_identity_v102`
+  (service_role EXECUTE only). **Does not** drop write policies, revoke posts
+  DML, or revoke v98. Old + new APIs can coexist after A. **v102B**
+  `20260919000002_posts_write_boundary_v102b.sql`: drops
+  `posts_update_own`/`insert_own`/`delete_own`, revokes authenticated/anon
+  posts DML, REVOKE ALL on v98 outer writers (functions kept). SELECT +
+  `public_posts_safe` retained. v101 ACL unchanged.
+- **Authority gate:** activation requires POINT/4326/finite lon-lat ranges,
+  `^[A-Z]{2}$` country (no auto-upper), IANA `pg_timezone_names` timezone,
+  night NULL|positive, payload_hash **shape** `^[0-9a-f]{64}$` only. Ledger
+  note: posts store final authority-bound hash without separate canonical
+  hash — v102 does **not** claim provenance recomputation.
+- **Transport:** SQL+TS read `category`+`service_subtype`. Complete: same
+  non-NULL only (idempotent). Legacy NULL→fill once with v98 subtype matrix;
+  NULL subtype = frozen pre-subtype full Travel/Deliver allowlists.
+- **Manual deploy order (required):**
+  1) apply v102A 2) run v102A verify 3) deploy app with v102 API cutover
+  4) smoke (active contact / draft unverified / eligible activate /
+  activate-after-identity) 5) apply v102B 6) run v102B verify 7) smoke again.
+  **Do not** apply A+B as one unordered batch before app deploy.
 - **Still unresolved / later phases:** enable creation / RS night; matching UI.
-- **Earliest safe production use:** after v102 apply + verify PASS + app deploy.
-- **Preconditions:** v101A+v101B applied; APIs on v101; creation=false; RS night=false.
-- **Risk if wired early:** applying before app cutover leaves Stage-2 broken
-  (no posts_update_own).
+- **Earliest safe production use:** after ordered A→app→B + verifies.
+- **Preconditions:** v101A+v101B applied; APIs ready to call v102; creation=false;
+  RS night=false.
+- **Risk if wired early:** applying B before app cutover breaks Stage-2
+  (`posts.update` gone). Applying A alone is safe for dual-path window.
+- **Not applied from this chat:** Supabase not operated; v102A/B not executed.

@@ -25,7 +25,7 @@ const ALLOWED_ERROR_KEYS = new Set([
   "error.publish_authority_legacy_missing",
   "error.publish_authority_partial_state",
   "error.publish_authority_invalid",
-  "error.invalid_transport_mode",
+  "error.illegal_transport_combo",
   "error.transport_mode_already_set",
   "error.security_boundary_compromised",
   "error.submit_failed",

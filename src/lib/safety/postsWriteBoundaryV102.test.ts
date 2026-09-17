@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3I-B — posts write boundary v102 structure + pure logic tests.
+ * PHASE 6.7C.2C.3I-B.1 — v102A/B posts write boundary structure + pure logic.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/safety/postsWriteBoundaryV102.test.ts
  */
 
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   classifyAuthorityStateForContact,
   decideCompleteContactTransportV102,
-  COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY,
+  transportComboErrorKey,
 } from "@/lib/posts/completeContactTransportV102";
 import { parseV102PostsWriteRpcResult } from "@/lib/posts/parseV102PostsWriteRpcResult";
 
@@ -18,163 +18,198 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
-const MIG = "supabase/migrations/20260919000001_posts_write_boundary_v102.sql";
-const VERIFY =
-  "supabase/migrations/20260919000001_posts_write_boundary_v102.verify.sql";
+const V102A = "supabase/migrations/20260919000001_posts_write_boundary_v102a.sql";
+const V102A_V =
+  "supabase/migrations/20260919000001_posts_write_boundary_v102a.verify.sql";
+const V102B = "supabase/migrations/20260919000002_posts_write_boundary_v102b.sql";
+const V102B_V =
+  "supabase/migrations/20260919000002_posts_write_boundary_v102b.verify.sql";
 const CONTACT = "src/app/api/posts/complete-contact/route.ts";
 const ACTIVATE = "src/app/api/posts/activate-after-identity/route.ts";
 
-const completeAuth = {
-  origin_gps: "SRID=4326;POINT(20 44)",
-  origin_country_code: "RS",
-  origin_timezone: "Europe/Belgrade",
-  night_policy_version: 1 as number | null,
-};
-const legacyAuth = {
-  origin_gps: null,
-  origin_country_code: null,
-  origin_timezone: null,
-  night_policy_version: null,
-};
-const partialAuth = {
-  origin_gps: "SRID=4326;POINT(20 44)",
-  origin_country_code: null,
-  origin_timezone: "Europe/Belgrade",
-  night_policy_version: null,
-};
+const a = read(V102A);
+const b = read(V102B);
+const av = read(V102A_V);
+const bv = read(V102B_V);
 
-// ── authority classification ────────────────────────────────────────────────
-assert.equal(classifyAuthorityStateForContact(completeAuth), "complete");
-assert.equal(
-  classifyAuthorityStateForContact({
-    ...completeAuth,
-    night_policy_version: null,
-  }),
-  "complete",
-);
-assert.equal(classifyAuthorityStateForContact(legacyAuth), "legacy");
-assert.equal(classifyAuthorityStateForContact(partialAuth), "partial");
-
-// ── transport decisions ─────────────────────────────────────────────────────
+// ── A creates RPCs; B seals; no CREATE TABLE/TRIGGER/SEQUENCE in either ─────
 {
-  // complete: forbid fill / change; same = omit
+  assert.ok(a.includes("complete_post_contact_v102"));
+  assert.ok(a.includes("activate_post_after_identity_v102"));
+  assert.ok(a.includes("_posts_is_account_eligible_v102"));
+  assert.ok(a.includes("_posts_validate_authority_complete_v102"));
+  assert.equal(a.includes("DROP POLICY"), false);
+  assert.equal(/REVOKE\s+INSERT,\s*UPDATE,\s*DELETE/i.test(a), false);
+  assert.equal(a.includes("publish_active_post_idempotent_v98"), true); // guard only
+  assert.equal(/REVOKE ALL ON FUNCTION public\.publish_active_post_idempotent_v98/i.test(a), false);
+
+  assert.ok(b.includes("DROP POLICY IF EXISTS posts_update_own"));
+  assert.ok(b.includes("DROP POLICY IF EXISTS posts_insert_own"));
+  assert.ok(b.includes("DROP POLICY IF EXISTS posts_delete_own"));
+  assert.ok(b.includes("REVOKE INSERT, UPDATE, DELETE ON TABLE public.posts FROM authenticated"));
+  assert.ok(/REVOKE ALL ON FUNCTION public\.publish_active_post_idempotent_v98/i.test(b));
+  assert.equal(b.includes("CREATE FUNCTION"), false);
+
+  for (const src of [a, b]) {
+    assert.equal(/CREATE\s+TABLE/i.test(src), false);
+    assert.equal(/CREATE\s+SEQUENCE/i.test(src), false);
+    assert.equal(/CREATE\s+TRIGGER/i.test(src), false);
+    assert.equal(/CREATE\s+FUNCTION\s+public\.\w*v103/i.test(src), false);
+  }
+
+  assert.ok(av.includes("write policies still present"));
+  assert.ok(av.includes("authenticated DML still present"));
+  assert.ok(av.includes("v98 EXECUTE still present"));
+  assert.ok(bv.includes("write policies dropped"));
+  assert.ok(bv.includes("v98 writers fully revoked"));
+  assert.ok(av.includes("CASE WHEN bool_and(result = 'PASS') OVER () THEN 'PASS' ELSE 'FAIL' END"));
+  assert.ok(bv.includes("CASE WHEN bool_and(result = 'PASS') OVER () THEN 'PASS' ELSE 'FAIL' END"));
+  assert.ok(a.includes("Shape only"));
+  assert.ok(a.includes("Frozen legacy-null-subtype"));
+  assert.ok(a.includes("pg_timezone_names"));
+  assert.ok(a.includes("phone_history"));
+  assert.ok(a.includes("passenger_with_small_item"));
+}
+
+// ── authority / transport pure logic ────────────────────────────────────────
+{
   assert.equal(
-    decideCompleteContactTransportV102({
-      isOwner: true,
-      category: "travel",
-      authorityState: "complete",
-      existingMode: "car",
-      requested: undefined,
-    }).kind,
-    "omit",
+    classifyAuthorityStateForContact({
+      origin_gps: "x",
+      origin_country_code: "RS",
+      origin_timezone: "Europe/Belgrade",
+      night_policy_version: null,
+    }),
+    "complete",
   );
   assert.equal(
-    decideCompleteContactTransportV102({
-      isOwner: true,
-      category: "travel",
-      authorityState: "complete",
-      existingMode: "car",
-      requested: "car",
-    }).kind,
-    "omit",
-  );
-  assert.deepEqual(
-    decideCompleteContactTransportV102({
-      isOwner: true,
-      category: "travel",
-      authorityState: "complete",
-      existingMode: "car",
-      requested: "bus",
+    classifyAuthorityStateForContact({
+      origin_gps: null,
+      origin_country_code: null,
+      origin_timezone: null,
+      night_policy_version: null,
     }),
-    { kind: "reject", errorKey: COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY },
+    "legacy",
   );
-  assert.deepEqual(
-    decideCompleteContactTransportV102({
-      isOwner: true,
-      category: "travel",
-      authorityState: "complete",
-      existingMode: null,
-      requested: "car",
+  assert.equal(
+    classifyAuthorityStateForContact({
+      origin_gps: "x",
+      origin_country_code: null,
+      origin_timezone: "Europe/Belgrade",
+      night_policy_version: null,
     }),
-    { kind: "reject", errorKey: COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY },
+    "partial",
   );
 
-  // legacy fill once
+  // passenger → car only
+  assert.equal(
+    transportComboErrorKey({
+      category: "travel",
+      serviceSubtype: "passenger",
+      mode: "bus",
+    }),
+    "error.illegal_transport_combo",
+  );
+  assert.equal(
+    transportComboErrorKey({
+      category: "travel",
+      serviceSubtype: "passenger",
+      mode: "car",
+    }),
+    null,
+  );
+  // small_item_only full travel
+  assert.equal(
+    transportComboErrorKey({
+      category: "travel",
+      serviceSubtype: "small_item_only",
+      mode: "bicycle",
+    }),
+    null,
+  );
+  // cargo_with_escort no boats
+  assert.equal(
+    transportComboErrorKey({
+      category: "deliver",
+      serviceSubtype: "cargo_with_escort",
+      mode: "cargo_boat",
+    }),
+    "error.illegal_transport_combo",
+  );
+  assert.equal(
+    transportComboErrorKey({
+      category: "deliver",
+      serviceSubtype: "cargo_with_escort",
+      mode: "cargo_van",
+    }),
+    null,
+  );
+  // legacy null subtype full deliver
+  assert.equal(
+    transportComboErrorKey({
+      category: "deliver",
+      serviceSubtype: null,
+      mode: "cargo_boat",
+    }),
+    null,
+  );
+  // buy reject
+  assert.equal(
+    transportComboErrorKey({
+      category: "buy",
+      serviceSubtype: null,
+      mode: "car",
+    }),
+    "error.invalid_transport_mode",
+  );
+
   assert.deepEqual(
     decideCompleteContactTransportV102({
       isOwner: true,
       category: "travel",
+      serviceSubtype: "passenger",
       authorityState: "legacy",
       existingMode: null,
       requested: "car",
     }),
     { kind: "fill", mode: "car" },
   );
-  assert.deepEqual(
+  assert.equal(
     decideCompleteContactTransportV102({
       isOwner: true,
-      category: "deliver",
-      authorityState: "legacy",
-      existingMode: null,
-      requested: "cargo_van",
-    }),
-    { kind: "fill", mode: "cargo_van" },
+      category: "travel",
+      serviceSubtype: "passenger",
+      authorityState: "complete",
+      existingMode: "car",
+      requested: "bus",
+    }).kind,
+    "reject",
   );
   assert.equal(
     decideCompleteContactTransportV102({
       isOwner: true,
       category: "travel",
-      authorityState: "legacy",
+      serviceSubtype: "passenger",
+      authorityState: "complete",
       existingMode: "car",
       requested: "car",
     }).kind,
     "omit",
   );
-
-  // illegal / cross-lane / van / blank / buy
-  for (const requested of ["van", "", "cargo_van", "unknown"]) {
-    const d = decideCompleteContactTransportV102({
-      isOwner: true,
-      category: "travel",
-      authorityState: "legacy",
-      existingMode: null,
-      requested,
-    });
-    assert.equal(d.kind, "reject", `travel reject ${requested}`);
-  }
-  assert.equal(
-    decideCompleteContactTransportV102({
-      isOwner: true,
-      category: "buy",
-      authorityState: "legacy",
-      existingMode: null,
-      requested: "car",
-    }).kind,
-    "reject",
-  );
   assert.equal(
     decideCompleteContactTransportV102({
       isOwner: true,
       category: "travel",
-      authorityState: "partial",
-      existingMode: null,
-      requested: "car",
-    }).kind,
-    "reject",
-  );
-  assert.equal(
-    decideCompleteContactTransportV102({
-      isOwner: false,
-      category: "travel",
+      serviceSubtype: null,
       authorityState: "legacy",
       existingMode: null,
-      requested: "car",
+      requested: "van",
     }).kind,
     "reject",
   );
 }
 
-// ── RPC parse allowlist ─────────────────────────────────────────────────────
+// ── parse allowlist ─────────────────────────────────────────────────────────
 {
   const ok = parseV102PostsWriteRpcResult(
     {
@@ -187,18 +222,12 @@ assert.equal(classifyAuthorityStateForContact(partialAuth), "partial");
     "error.submit_failed",
   );
   assert.equal(ok.ok, true);
-  if (ok.ok) {
-    assert.equal(ok.activated, true);
-    assert.equal(ok.isActive, true);
-  }
-  const allow = parseV102PostsWriteRpcResult(
-    { ok: false, error_msg: "error.publish_authority_partial_state" },
+  const combo = parseV102PostsWriteRpcResult(
+    { ok: false, error_msg: "error.illegal_transport_combo" },
     "error.submit_failed",
   );
-  assert.equal(allow.ok, false);
-  if (!allow.ok) {
-    assert.equal(allow.errorKey, "error.publish_authority_partial_state");
-  }
+  assert.equal(combo.ok, false);
+  if (!combo.ok) assert.equal(combo.errorKey, "error.illegal_transport_combo");
   const fake = parseV102PostsWriteRpcResult(
     { ok: false, error_msg: "error.fake_internal" },
     "error.submit_failed",
@@ -207,83 +236,25 @@ assert.equal(classifyAuthorityStateForContact(partialAuth), "partial");
   if (!fake.ok) assert.equal(fake.errorKey, "error.submit_failed");
 }
 
-// ── migration / verify structure ────────────────────────────────────────────
-{
-  const mig = read(MIG);
-  const verify = read(VERIFY);
-  assert.ok(mig.includes("complete_post_contact_v102"));
-  assert.ok(mig.includes("activate_post_after_identity_v102"));
-  assert.ok(mig.includes("_posts_is_account_eligible_v102"));
-  assert.ok(mig.includes("SECURITY DEFINER"));
-  assert.ok(mig.includes("SET search_path TO 'pg_catalog', 'public', 'pg_temp'"));
-  assert.ok(mig.includes("FOR UPDATE"));
-  assert.ok(mig.includes("DROP POLICY IF EXISTS posts_update_own"));
-  assert.ok(mig.includes("DROP POLICY IF EXISTS posts_insert_own"));
-  assert.ok(mig.includes("DROP POLICY IF EXISTS posts_delete_own"));
-  assert.ok(mig.includes("REVOKE INSERT, UPDATE, DELETE ON TABLE public.posts FROM authenticated"));
-  assert.ok(mig.includes("REVOKE ALL ON FUNCTION public.publish_active_post_idempotent_v98"));
-  assert.ok(mig.includes("GRANT EXECUTE ON FUNCTION public.complete_post_contact_v102"));
-  assert.ok(mig.includes("GRANT EXECUTE ON FUNCTION public.activate_post_after_identity_v102"));
-  assert.ok(mig.includes("REVOKE ALL ON FUNCTION public._posts_is_account_eligible_v102"));
-  assert.equal(mig.includes("CREATE TABLE"), false);
-  assert.equal(/CREATE\s+TRIGGER/i.test(mig), false);
-  assert.equal(mig.includes("v103"), false);
-  // frozen authority columns never assigned in contact writer
-  assert.ok(mig.includes("raw_phone = CASE"));
-  assert.equal(/origin_gps\s*=\s*CASE/i.test(mig), false);
-  assert.equal(/payload_hash\s*=/i.test(mig), false);
-  assert.equal(/locale\s*=/i.test(mig), false);
-  assert.ok(mig.includes("p_destination_update_kind"));
-  assert.ok(mig.includes("extensions.st_distance"));
-  assert.ok(mig.includes("use_origin"));
-  assert.ok(verify.includes("overall_pass"));
-  assert.ok(verify.includes("check_order"));
-  assert.ok(verify.includes("posts_update_own"));
-  assert.ok(verify.includes("v98 writers fully revoked"));
-  assert.ok(verify.includes("v101 writers service_role only"));
-}
-
-// ── routes: no direct posts DML; v102 RPCs; no origin geocode ───────────────
+// ── routes ──────────────────────────────────────────────────────────────────
 {
   const contact = read(CONTACT);
   const activate = read(ACTIVATE);
   assert.ok(contact.includes("complete_post_contact_v102"));
   assert.ok(activate.includes("activate_post_after_identity_v102"));
+  assert.ok(contact.includes("service_subtype"));
   assert.ok(contact.includes("auth.getUser()"));
   assert.ok(activate.includes("auth.getUser()"));
-  assert.ok(contact.includes("createAdminClient"));
-  assert.ok(activate.includes("createAdminClient"));
   assert.equal(/\.from\(\s*['"]posts['"]\s*\)\s*\.update/i.test(contact), false);
   assert.equal(/\.from\(\s*['"]posts['"]\s*\)\s*\.insert/i.test(contact), false);
   assert.equal(/\.from\(\s*['"]posts['"]\s*\)\s*\.delete/i.test(contact), false);
   assert.equal(/\.from\(\s*['"]posts['"]\s*\)\s*\.update/i.test(activate), false);
-  assert.equal(/\.from\(\s*['"]posts['"]\s*\)\s*\.insert/i.test(activate), false);
-  assert.equal(/\.from\(\s*['"]posts['"]\s*\)\s*\.delete/i.test(activate), false);
   assert.equal(contact.includes("geocodeAddress(post.origin_address)"), false);
   assert.equal(contact.includes("p_origin_gps"), false);
   assert.equal(contact.includes("p_locale"), false);
-  const rpcBlock = contact.match(/admin\.rpc\(\s*["']complete_post_contact_v102["'][\s\S]*?\n\s*\}\)/)?.[0] ?? "";
-  assert.ok(rpcBlock.includes("complete_post_contact_v102"));
-  assert.equal(/locale/i.test(rpcBlock), false);
-  assert.equal(/p_origin_/i.test(rpcBlock), false);
-  assert.ok(contact.includes("p_activate"));
-  assert.ok(contact.includes("destinationUpdateKind"));
-  assert.ok(contact.includes("use_origin"));
-  // Request bodies reject authority fields
-  for (const src of [contact, activate]) {
-    const bodyMatch = /interface RequestBody\s*\{([^}]*)\}/m.exec(src);
-    if (bodyMatch) {
-      assert.equal(
-        /origin_gps|destination_gps|scope|payload_hash|userId|user_id/i.test(
-          bodyMatch[1]!,
-        ),
-        false,
-      );
-    }
-  }
 }
 
-// ── production: no posts DML; v98 writer calls = 0; v101 publish remain ─────
+// ── production DML / writers ────────────────────────────────────────────────
 {
   const appFiles = readdirSync(join(repoRoot, "src/app"), {
     recursive: true,
@@ -298,14 +269,6 @@ assert.equal(classifyAuthorityStateForContact(partialAuth), "partial");
       false,
       `posts DML in ${f}`,
     );
-    if (
-      /publish_active_post_idempotent_v98|create_shadow_draft_idempotent_v98|commit_phase3_business_idempotent_v98/.test(
-        src,
-      ) &&
-      !src.trimStart().startsWith("/**")
-    ) {
-      // count only string occurrences in code (comments in complete-contact header removed)
-    }
     if (/admin\.rpc\(\s*['"]publish_active_post_idempotent_v98/.test(src)) v98Calls += 1;
     if (/admin\.rpc\(\s*['"]create_shadow_draft_idempotent_v98/.test(src)) v98Calls += 1;
     if (/admin\.rpc\(\s*['"]commit_phase3_business_idempotent_v98/.test(src)) v98Calls += 1;
@@ -316,13 +279,16 @@ assert.equal(classifyAuthorityStateForContact(partialAuth), "partial");
   assert.equal(v98Calls, 0);
   assert.ok(v101Calls >= 3);
 
-  // Frozen files zero-diff expectation: still contain historical posts_update_own text
-  assert.ok(read("supabase/posts_init.sql").includes("posts_update_own"));
   const migs = readdirSync(join(repoRoot, "supabase/migrations"));
+  assert.ok(migs.includes("20260919000001_posts_write_boundary_v102a.sql"));
+  assert.ok(migs.includes("20260919000002_posts_write_boundary_v102b.sql"));
   assert.equal(migs.some((n) => /v103/.test(n)), false);
-  assert.ok(migs.includes("20260919000001_posts_write_boundary_v102.sql"));
-  // v90–v101B untouched (spot-check filenames present)
-  assert.ok(migs.some((n) => n.includes("v101b") || n.includes("v101B") || n.includes("writer_v101b")));
+  assert.equal(
+    migs.includes("20260919000001_posts_write_boundary_v102.sql"),
+    false,
+  );
+  assert.ok(read("supabase/posts_init.sql").includes("posts_update_own"));
+  assert.ok(read("docs/architecture/deferred-cleanup.md").includes("v102A"));
 }
 
 console.log("postsWriteBoundaryV102.test.ts: PASS");

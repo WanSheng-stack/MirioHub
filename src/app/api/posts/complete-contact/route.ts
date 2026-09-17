@@ -71,6 +71,7 @@ interface ExistingPost {
   status: string;
   post_type: string;
   category: string;
+  service_subtype: string | null;
   departure_date: string | null;
   departure_time_window: string | null;
   destination_address: string;
@@ -140,7 +141,7 @@ export async function POST(request: Request) {
   const { data: rawPost, error: postErr } = await supabase
     .from("posts")
     .select(
-      "id, user_id, status, post_type, category, departure_date, departure_time_window, destination_address, origin_gps, origin_country_code, origin_timezone, night_policy_version, transport_mode",
+      "id, user_id, status, post_type, category, service_subtype, departure_date, departure_time_window, destination_address, origin_gps, origin_country_code, origin_timezone, night_policy_version, transport_mode",
     )
     .eq("id", postId)
     .eq("user_id", user.id)
@@ -159,6 +160,7 @@ export async function POST(request: Request) {
   const transportDecision = decideCompleteContactTransportV102({
     isOwner: post.user_id === user.id,
     category: post.category,
+    serviceSubtype: post.service_subtype,
     authorityState,
     existingMode: post.transport_mode,
     requested: transport_mode,

@@ -1,37 +1,81 @@
 /**
- * PHASE 6.7C.2C.3I-B — complete-contact transport decision for v102.
- * SQL remains authoritative; this is early reject / fill intent only.
+ * PHASE 6.7C.2C.3I-B.1 — complete-contact transport decision (v102).
+ * SQL remains authoritative. Mirrors v98 subtype×mode when subtype non-NULL.
+ * Legacy NULL subtype: frozen pre-subtype full Travel/Deliver allowlists.
  */
 
 import {
   isTargetDeliverTransportMode,
   isTargetTravelTransportMode,
   LEGACY_VAN,
+  TARGET_DELIVER_TRANSPORT_MODES,
+  TARGET_TRAVEL_TRANSPORT_MODES,
   type TargetTransportMode,
 } from "@/lib/transport/transportPolicy";
 
 export const COMPLETE_CONTACT_TRANSPORT_CONFLICT_KEY =
   "error.transport_mode_already_set";
 
-export const COMPLETE_CONTACT_TRANSPORT_REREAD_FAILED_LOG =
-  "[complete-contact] transport reread failed";
-
-export const COMPLETE_CONTACT_TRANSPORT_REREAD_MISSING_LOG =
-  "[complete-contact] transport reread missing";
-
 export type CompleteContactTransportDecision =
   | { kind: "omit" }
   | { kind: "fill"; mode: TargetTransportMode }
   | { kind: "reject"; errorKey: string };
 
-/**
- * Authority-complete: never fill; same non-null mode is idempotent omit.
- * Legacy: NULL → target lane mode once. Partial: reject.
- * Buy/onsite/errand: non-null request rejected. van rejected.
- */
+const TRAVEL_FULL = new Set<string>(TARGET_TRAVEL_TRANSPORT_MODES);
+const DELIVER_FULL = new Set<string>(TARGET_DELIVER_TRANSPORT_MODES);
+const DELIVER_ESCORT_LAND = new Set([
+  "cargo_van",
+  "light_truck",
+  "box_truck",
+  "vehicle_with_trailer",
+  "other_cargo_vehicle",
+]);
+
+/** Returns null if mode is legal for category×subtype; else error key. */
+export function transportComboErrorKey(input: {
+  category: string;
+  serviceSubtype: string | null;
+  mode: string;
+}): string | null {
+  const { category, serviceSubtype, mode } = input;
+  if (category === "buy" || category === "onsite" || category === "errand") {
+    return "error.invalid_transport_mode";
+  }
+  if (category === "travel") {
+    if (
+      serviceSubtype === "passenger" ||
+      serviceSubtype === "passenger_with_small_item"
+    ) {
+      return mode === "car" ? null : "error.illegal_transport_combo";
+    }
+    if (serviceSubtype === "small_item_only" || serviceSubtype == null) {
+      // NULL subtype = frozen legacy-null-subtype compat (full Travel).
+      return TRAVEL_FULL.has(mode) ? null : "error.illegal_transport_combo";
+    }
+    return "error.illegal_transport_combo";
+  }
+  if (category === "deliver") {
+    if (serviceSubtype === "cargo_only" || serviceSubtype == null) {
+      // NULL subtype = frozen legacy-null-subtype compat (full Deliver).
+      return DELIVER_FULL.has(mode) ? null : "error.illegal_transport_combo";
+    }
+    if (serviceSubtype === "cargo_with_escort") {
+      if (mode === "cargo_boat" || mode === "private_cargo_boat") {
+        return "error.illegal_transport_combo";
+      }
+      return DELIVER_ESCORT_LAND.has(mode)
+        ? null
+        : "error.illegal_transport_combo";
+    }
+    return "error.illegal_transport_combo";
+  }
+  return "error.invalid_transport_mode";
+}
+
 export function decideCompleteContactTransportV102(input: {
   isOwner: boolean;
   category: string;
+  serviceSubtype: string | null;
   authorityState: "complete" | "legacy" | "partial";
   existingMode: string | null;
   requested: unknown;
@@ -55,19 +99,21 @@ export function decideCompleteContactTransportV102(input: {
   if (trimmed === "" || trimmed === LEGACY_VAN) {
     return { kind: "reject", errorKey: "error.invalid_transport_mode" };
   }
-  if (input.category === "buy" || input.category === "onsite" || input.category === "errand") {
+  if (
+    !isTargetTravelTransportMode(trimmed) &&
+    !isTargetDeliverTransportMode(trimmed)
+  ) {
     return { kind: "reject", errorKey: "error.invalid_transport_mode" };
   }
-  let mode: TargetTransportMode | null = null;
-  if (input.category === "travel" && isTargetTravelTransportMode(trimmed)) {
-    mode = trimmed;
-  } else if (input.category === "deliver" && isTargetDeliverTransportMode(trimmed)) {
-    mode = trimmed;
+  const comboErr = transportComboErrorKey({
+    category: input.category,
+    serviceSubtype: input.serviceSubtype,
+    mode: trimmed,
+  });
+  if (comboErr) {
+    return { kind: "reject", errorKey: comboErr };
   }
-  if (mode == null) {
-    return { kind: "reject", errorKey: "error.invalid_transport_mode" };
-  }
-
+  const mode = trimmed as TargetTransportMode;
   const existing =
     input.existingMode === "" || input.existingMode == null
       ? null
@@ -111,7 +157,9 @@ export function classifyAuthorityStateForContact(row: {
     !gpsNull &&
     !ccNull &&
     !tzNull &&
-    (nightNull || (typeof row.night_policy_version === "number" && row.night_policy_version > 0))
+    (nightNull ||
+      (typeof row.night_policy_version === "number" &&
+        row.night_policy_version > 0))
   ) {
     return "complete";
   }

@@ -1,3 +1,11 @@
+/**
+ * POST /api/posts/shadow-draft
+ *
+ * Shadow draft persistence via create_shadow_draft_idempotent_v101 (service_role).
+ * Trusted authority is always built before write — never creates a four-NULL
+ * authority row. Session auth derives user id.
+ */
+
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -6,6 +14,9 @@ import {
   CanonicalStage1Error,
   toRpcStage1Payload,
 } from "@/lib/auth/buildCanonicalStage1PublishContext";
+import { buildAuthorityForPublishFromOriginHit } from "@/lib/safety/buildAuthorityForPublishFromOriginHit";
+import { parseV101PublishRpcResult } from "@/lib/safety/parseV101PublishRpcResult";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -31,12 +42,6 @@ interface RequestBody {
   clientRequestId: string;
   rawPostInput: Record<string, unknown>;
   fallbackReason?: string;
-}
-
-interface ShadowDraftResult {
-  ok: boolean;
-  error_msg?: string;
-  post_id?: string;
 }
 
 export async function POST(request: Request) {
@@ -67,25 +72,41 @@ export async function POST(request: Request) {
     }
 
     const ctx = await buildCanonicalStage1PublishContext(rawPostInput);
+    const authority = await buildAuthorityForPublishFromOriginHit(
+      ctx.canonicalPayload,
+      ctx.originNominatimHit,
+    );
+    if (!authority.ok) {
+      return NextResponse.json(
+        { success: false, errorKey: authority.errorKey },
+        { status: 400 },
+      );
+    }
 
-    const { data: txData, error: txErr } = await supabase.rpc(
-      "create_shadow_draft_idempotent_v98",
+    const admin = createAdminClient();
+    const { data: txData, error: txErr } = await admin.rpc(
+      "create_shadow_draft_idempotent_v101",
       {
         p_user_id: current_uid,
         p_client_request_id: clientRequestId,
-        p_payload_hash: ctx.payloadHash,
+        p_canonical_payload_hash: ctx.payloadHash,
         p_fallback_reason: fallbackReason ?? "USER_ABORT",
-        p_post_payload: toRpcStage1Payload(ctx.canonicalPayload, ctx.serverFeeMinor),
+        p_post_payload: toRpcStage1Payload(
+          ctx.canonicalPayload,
+          ctx.serverFeeMinor,
+        ),
         p_server_fee_minor: ctx.serverFeeMinor,
+        p_origin_gps: authority.fields.origin_gps,
+        p_origin_country_code: authority.fields.origin_country_code,
+        p_origin_timezone: authority.fields.origin_timezone,
+        p_night_policy_version: authority.fields.night_policy_version,
       },
     );
 
     if (txErr) {
       console.error("[shadow-draft] RPC error:", {
-        message: txErr.message,
         code: txErr.code,
-        details: txErr.details,
-        hint: txErr.hint,
+        category: "v101_rpc_failed",
       });
       return NextResponse.json(
         { success: false, errorKey: "error.shadow_draft_transaction_failed" },
@@ -93,18 +114,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const tx = txData as ShadowDraftResult | null;
-
-    if (!tx?.ok) {
+    const parsed = parseV101PublishRpcResult(
+      txData,
+      "error.shadow_draft_transaction_failed",
+    );
+    if (!parsed.ok) {
       return NextResponse.json(
-        { success: false, errorKey: tx?.error_msg ?? "error.shadow_draft_transaction_failed" },
+        { success: false, errorKey: parsed.errorKey },
         { status: 400 },
       );
     }
 
     return NextResponse.json({
       success: true,
-      postId: tx.post_id,
+      postId: parsed.postId,
       shadowUserId: current_uid,
     });
   } catch (error: unknown) {
@@ -116,7 +139,10 @@ export async function POST(request: Request) {
     }
     const msg =
       error instanceof Error ? error.message : "error.server_internal_crash";
-    console.error("[shadow-draft] unexpected error:", msg);
-    return NextResponse.json({ success: false, errorKey: msg }, { status: 500 });
+    console.error("[shadow-draft] unexpected error:", {
+      category: "internal_exception",
+    });
+    const errorKey = msg.startsWith("error.") ? msg : "error.server_internal_crash";
+    return NextResponse.json({ success: false, errorKey }, { status: 500 });
   }
 }

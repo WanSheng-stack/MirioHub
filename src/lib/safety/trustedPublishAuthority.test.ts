@@ -929,25 +929,25 @@ async function main() {
     }
   }
 
-  // Publish paths still on v98; no v101; complete-contact does not write authority
+  // Publish paths on v101; complete-contact does not write authority
   {
     const trusted = read("src/app/api/posts/trusted-publish/route.ts");
     const shadow = read("src/app/api/posts/shadow-draft/route.ts");
     const passkey = read("src/app/api/auth/passkey/verify/route.ts");
     const contact = read("src/app/api/posts/complete-contact/route.ts");
-    assert.ok(trusted.includes("publish_active_post_idempotent_v98"));
-    assert.ok(shadow.includes("create_shadow_draft_idempotent_v98"));
-    assert.ok(passkey.includes("commit_phase3_business_idempotent_v98"));
-    assert.equal(trusted.includes("v101"), false);
-    assert.equal(shadow.includes("v101"), false);
-    assert.equal(passkey.includes("v101"), false);
+    assert.ok(trusted.includes("publish_active_post_idempotent_v101"));
+    assert.ok(shadow.includes("create_shadow_draft_idempotent_v101"));
+    assert.ok(passkey.includes("commit_phase3_business_idempotent_v101"));
+    assert.equal(trusted.includes("publish_active_post_idempotent_v98"), false);
+    assert.equal(shadow.includes("create_shadow_draft_idempotent_v98"), false);
+    assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
     assert.equal(contact.includes("origin_country_code"), false);
     assert.equal(contact.includes("origin_timezone"), false);
     assert.equal(contact.includes("night_policy_version"), false);
     assert.equal(contact.includes("buildTrustedPublishAuthority"), false);
   }
 
-  // v101B may exist on disk; reject v102 / API still v98; frozen history zero-diff
+  // v101B/cutover may exist; reject v102; frozen history zero-diff
   {
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
     assert.equal(migs.some((n) => /v102/.test(n)), false);

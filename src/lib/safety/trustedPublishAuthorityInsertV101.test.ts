@@ -502,16 +502,16 @@ assert.ok(
   ),
 );
 
-// Production APIs still v98; writer foundation unwired; no outer v101
+// Production APIs cut over to v101 writers (3H); insert helper still unwired from routes
 const trusted = read("src/app/api/posts/trusted-publish/route.ts");
 const shadow = read("src/app/api/posts/shadow-draft/route.ts");
 const passkey = read("src/app/api/auth/passkey/verify/route.ts");
-assert.ok(trusted.includes("publish_active_post_idempotent_v98"));
-assert.ok(shadow.includes("create_shadow_draft_idempotent_v98"));
-assert.ok(passkey.includes("commit_phase3_business_idempotent_v98"));
-assert.equal(trusted.includes("v101"), false);
-assert.equal(shadow.includes("v101"), false);
-assert.equal(passkey.includes("v101"), false);
+assert.ok(trusted.includes("publish_active_post_idempotent_v101"));
+assert.ok(shadow.includes("create_shadow_draft_idempotent_v101"));
+assert.ok(passkey.includes("commit_phase3_business_idempotent_v101"));
+assert.equal(trusted.includes("publish_active_post_idempotent_v98"), false);
+assert.equal(shadow.includes("create_shadow_draft_idempotent_v98"), false);
+assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
 assert.equal(trusted.includes("writeTrustedPublishAuthority"), false);
 assert.equal(trusted.includes("insert_stage1_post_v101"), false);
 

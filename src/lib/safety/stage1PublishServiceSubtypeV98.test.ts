@@ -130,12 +130,15 @@ assert.ok(migration.includes("v98_normalize_cargo_escort_demand_provider"));
 assert.ok(core.includes("parsePublishTransportMode"));
 assert.equal(core.includes("parseV1TransportMode"), false);
 
-assert.ok(passkey.includes("commit_phase3_business_idempotent_v98"));
-assert.ok(trusted.includes("publish_active_post_idempotent_v98"));
-assert.ok(shadow.includes("create_shadow_draft_idempotent_v98"));
+assert.ok(passkey.includes("commit_phase3_business_idempotent_v101"));
+assert.ok(trusted.includes("publish_active_post_idempotent_v101"));
+assert.ok(shadow.includes("create_shadow_draft_idempotent_v101"));
 assert.equal(passkey.includes("commit_phase3_business_idempotent_v86"), false);
 assert.equal(trusted.includes("publish_active_post_idempotent_v86"), false);
 assert.equal(shadow.includes("create_shadow_draft_idempotent_v86"), false);
+assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
+assert.equal(trusted.includes("publish_active_post_idempotent_v98"), false);
+assert.equal(shadow.includes("create_shadow_draft_idempotent_v98"), false);
 
 assert.ok(core.includes("service_subtype"));
 assert.ok(core.includes("sst: payload.service_subtype"));

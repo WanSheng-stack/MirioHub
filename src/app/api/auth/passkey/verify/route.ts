@@ -33,6 +33,9 @@ import {
   getWebAuthnConfig,
   WebAuthnConfigError,
 } from '@/lib/auth/webauthnConfig';
+import { buildAuthorityForPublishFromOriginHit } from '@/lib/safety/buildAuthorityForPublishFromOriginHit';
+import { parseV101PublishRpcResult } from '@/lib/safety/parseV101PublishRpcResult';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -70,13 +73,6 @@ interface DbPasskey {
   transports: string[] | null;
   credential_device_type: string;
   credential_backed_up: boolean;
-}
-
-interface TxResult {
-  ok: boolean;
-  error_msg?: string;
-  post_id?: string;
-  is_duplicate?: boolean;
 }
 
 function jsonError(errorKey: string, status = 400) {
@@ -151,7 +147,12 @@ export async function POST(request: Request) {
       supabase,
       clientRequestId,
     );
-    if (!isIdempotentActiveRetry(existing, current_uid, ctx.payloadHash)) {
+    const exactRetry = isIdempotentActiveRetry(
+      existing,
+      current_uid,
+      ctx.payloadHash,
+    );
+    if (!exactRetry) {
       const risk = await evaluateStage1ActivePublicationRisk(
         supabase,
         current_uid,
@@ -246,14 +247,37 @@ export async function POST(request: Request) {
         ? regInfo!.credential.id
         : dbKey!.credential_id;
 
-    const { data: txData, error: txErr } = await supabase.rpc(
-      'commit_phase3_business_idempotent_v98',
+    // Authority after successful WebAuthn crypto. Exact active retry may omit
+    // fresh authority (v101 uses stored). Fresh/legacy/draft paths require it.
+    let originGps: string | null = null;
+    let originCountry: string | null = null;
+    let originTimezone: string | null = null;
+    let nightVersion: number | null = null;
+
+    if (!exactRetry) {
+      const authority = await buildAuthorityForPublishFromOriginHit(
+        ctx.canonicalPayload,
+        ctx.originNominatimHit,
+      );
+      if (!authority.ok) {
+        await markChallengeFailed(supabase, fence, 'authority_rejected');
+        return jsonError(authority.errorKey);
+      }
+      originGps = authority.fields.origin_gps;
+      originCountry = authority.fields.origin_country_code;
+      originTimezone = authority.fields.origin_timezone;
+      nightVersion = authority.fields.night_policy_version;
+    }
+
+    const admin = createAdminClient();
+    const { data: txData, error: txErr } = await admin.rpc(
+      'commit_phase3_business_idempotent_v101',
       {
         p_user_id: current_uid,
         p_challenge_id: challengeId,
         p_client_request_id: clientRequestId,
         p_processing_token: challengeRow.processing_token,
-        p_payload_hash: ctx.payloadHash,
+        p_canonical_payload_hash: ctx.payloadHash,
         p_installation_id: installationId,
         p_credential_id: final_credential_id,
         p_public_key: final_public_key,
@@ -264,23 +288,36 @@ export async function POST(request: Request) {
         p_post_payload: toRpcStage1Payload(ctx.canonicalPayload, ctx.serverFeeMinor),
         p_server_fee_minor: ctx.serverFeeMinor,
         p_ceremony_type: ceremonyType,
+        p_origin_gps: originGps,
+        p_origin_country_code: originCountry,
+        p_origin_timezone: originTimezone,
+        p_night_policy_version: nightVersion,
       },
     );
 
-    const tx = txData as TxResult | null;
+    if (txErr) {
+      console.error('[verify] v101 RPC error', {
+        code: txErr.code,
+        category: 'v101_rpc_failed',
+        client_request_id: clientRequestId,
+        ceremony_type: ceremonyType,
+      });
+      await markChallengeFailed(supabase, fence, 'commit_rejected');
+      return jsonError('error.transaction_failed');
+    }
 
-    if (txErr || !tx?.ok) {
-      const commitKey = tx?.error_msg ?? 'error.transaction_failed';
-      if (commitKey !== 'error.challenge_fencing_stale') {
+    const parsed = parseV101PublishRpcResult(txData, 'error.transaction_failed');
+    if (!parsed.ok) {
+      if (parsed.errorKey !== 'error.challenge_fencing_stale') {
         await markChallengeFailed(supabase, fence, 'commit_rejected');
       }
-      return jsonError(commitKey);
+      return jsonError(parsed.errorKey);
     }
 
     return NextResponse.json({
       success: true,
-      postId: tx.post_id,
-      isDuplicate: tx.is_duplicate,
+      postId: parsed.postId,
+      isDuplicate: parsed.isDuplicate,
     });
   } catch (error: unknown) {
     if (error instanceof CanonicalStage1Error) {

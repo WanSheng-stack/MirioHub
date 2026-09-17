@@ -560,11 +560,14 @@ for (const src of [
   read("src/app/api/posts/shadow-draft/route.ts"),
   read("src/app/api/auth/passkey/verify/route.ts"),
 ]) {
-  assert.ok(src.includes("_v98"));
+  assert.ok(src.includes("_v101"));
   assert.equal(src.includes("insert_stage1_post_v86"), false);
   assert.equal(src.includes("publish_active_post_idempotent_v86"), false);
   assert.equal(src.includes("create_shadow_draft_idempotent_v86"), false);
   assert.equal(src.includes("commit_phase3_business_idempotent_v86"), false);
+  assert.equal(src.includes("publish_active_post_idempotent_v98"), false);
+  assert.equal(src.includes("create_shadow_draft_idempotent_v98"), false);
+  assert.equal(src.includes("commit_phase3_business_idempotent_v98"), false);
 }
 
 function walk(dir: string, acc: string[] = []): string[] {

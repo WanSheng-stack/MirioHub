@@ -569,3 +569,84 @@ export function buildDemandRouteLocations(
 export function locationsFingerprint(locations: string[]): string {
   return locations.map(normalizeLocationKey).join("|");
 }
+
+export type Stage1RouteWithOriginHitDeps = NominatimFetchDeps &
+  OsrmFetchDeps & {
+    fetchHits?: typeof fetchNominatimCoordinateHitsSequential;
+    computeFromCoords?: typeof computeRouteDistanceFromCoords;
+  };
+
+export type Stage1RouteWithOriginHitResult =
+  | {
+      ok: true;
+      serverKms: number;
+      originNominatimHit: NominatimCoordinateHit;
+    }
+  | { ok: false; errorKey: string };
+
+/**
+ * One Nominatim pass for Stage-1: ordered route hits + OSRM kms, returning the
+ * origin hit for trusted authority reuse (no second geocode).
+ * onsite/errand with fewer than two locations → serverKms=0, origin resolved once.
+ */
+export async function resolveStage1RouteWithOriginHit(
+  args: {
+    category: string;
+    originAddress: string;
+    destinationAddress: string;
+    waypoints: string[];
+  },
+  deps: Stage1RouteWithOriginHitDeps = {},
+): Promise<Stage1RouteWithOriginHitResult> {
+  const locations = buildDemandRouteLocations(
+    args.originAddress,
+    args.destinationAddress,
+    args.waypoints,
+  );
+  const fetchHits = deps.fetchHits ?? fetchNominatimCoordinateHitsSequential;
+  const computeFromCoords =
+    deps.computeFromCoords ?? computeRouteDistanceFromCoords;
+
+  if (locations.length < 2) {
+    if (args.category !== "onsite" && args.category !== "errand") {
+      return { ok: false, errorKey: "error.address_required" };
+    }
+    const batch = await fetchHits([args.originAddress], deps);
+    if (!batch.ok) {
+      return { ok: false, errorKey: batch.errorKey };
+    }
+    const hit = batch.hits[0];
+    if (hit == null) {
+      return { ok: false, errorKey: "error.geocode_failed" };
+    }
+    return { ok: true, serverKms: 0, originNominatimHit: hit };
+  }
+
+  const batch = await fetchHits(locations, deps);
+  if (!batch.ok) {
+    return { ok: false, errorKey: batch.errorKey };
+  }
+  if (batch.hits.length !== locations.length) {
+    return { ok: false, errorKey: "error.geocode_invalid_response" };
+  }
+  const hit = batch.hits[0];
+  if (hit == null) {
+    return { ok: false, errorKey: "error.geocode_failed" };
+  }
+  const coords = batch.hits.map((h) => ({ lat: h.lat, lon: h.lon }));
+  const dist = await computeFromCoords(
+    coords,
+    locations,
+    undefined,
+    undefined,
+    deps,
+  );
+  if (!dist.ok) {
+    return { ok: false, errorKey: dist.errorKey };
+  }
+  return {
+    ok: true,
+    serverKms: dist.totalKms,
+    originNominatimHit: hit,
+  };
+}

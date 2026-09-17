@@ -5,7 +5,8 @@
  * Does NOT create a Passkey challenge, processing_token, or credential.
  *
  * Server re-checks getAccountActivationEligibility() before calling
- * publish_active_post_idempotent_v98. Client identity flags are ignored.
+ * publish_active_post_idempotent_v101 via service_role. Session auth still
+ * derives user id. Client identity / authority flags are ignored.
  */
 
 import { NextResponse } from "next/server";
@@ -22,6 +23,9 @@ import {
   findPublishIntentByClientRequestId,
   isIdempotentActiveRetry,
 } from "@/lib/auth/stage1ActiveRisk";
+import { buildAuthorityForPublishFromOriginHit } from "@/lib/safety/buildAuthorityForPublishFromOriginHit";
+import { parseV101PublishRpcResult } from "@/lib/safety/parseV101PublishRpcResult";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -46,13 +50,6 @@ async function createClient() {
 interface RequestBody {
   clientRequestId?: unknown;
   rawPostInput?: Record<string, unknown>;
-}
-
-interface PublishResult {
-  ok: boolean;
-  error_msg?: string;
-  post_id?: string;
-  is_duplicate?: boolean;
 }
 
 export async function POST(request: Request) {
@@ -103,7 +100,12 @@ export async function POST(request: Request) {
       supabase,
       clientRequestId,
     );
-    if (!isIdempotentActiveRetry(existing, user.id, ctx.payloadHash)) {
+    const exactRetry = isIdempotentActiveRetry(
+      existing,
+      user.id,
+      ctx.payloadHash,
+    );
+    if (!exactRetry) {
       const risk = await evaluateStage1ActivePublicationRisk(
         supabase,
         user.id,
@@ -117,21 +119,51 @@ export async function POST(request: Request) {
       }
     }
 
-    const { data: txData, error: txErr } = await supabase.rpc(
-      "publish_active_post_idempotent_v98",
+    let originGps: string | null = null;
+    let originCountry: string | null = null;
+    let originTimezone: string | null = null;
+    let nightVersion: number | null = null;
+
+    if (!exactRetry) {
+      const authority = await buildAuthorityForPublishFromOriginHit(
+        ctx.canonicalPayload,
+        ctx.originNominatimHit,
+      );
+      if (!authority.ok) {
+        return NextResponse.json(
+          { success: false, errorKey: authority.errorKey },
+          { status: 400 },
+        );
+      }
+      originGps = authority.fields.origin_gps;
+      originCountry = authority.fields.origin_country_code;
+      originTimezone = authority.fields.origin_timezone;
+      nightVersion = authority.fields.night_policy_version;
+    }
+
+    const admin = createAdminClient();
+    const { data: txData, error: txErr } = await admin.rpc(
+      "publish_active_post_idempotent_v101",
       {
         p_user_id: user.id,
         p_client_request_id: clientRequestId,
-        p_payload_hash: ctx.payloadHash,
-        p_post_payload: toRpcStage1Payload(ctx.canonicalPayload, ctx.serverFeeMinor),
+        p_canonical_payload_hash: ctx.payloadHash,
+        p_post_payload: toRpcStage1Payload(
+          ctx.canonicalPayload,
+          ctx.serverFeeMinor,
+        ),
         p_server_fee_minor: ctx.serverFeeMinor,
+        p_origin_gps: originGps,
+        p_origin_country_code: originCountry,
+        p_origin_timezone: originTimezone,
+        p_night_policy_version: nightVersion,
       },
     );
 
     if (txErr) {
       console.error("[trusted-publish] RPC error:", {
-        message: txErr.message,
         code: txErr.code,
+        category: "v101_rpc_failed",
       });
       return NextResponse.json(
         { success: false, errorKey: "error.submit_failed" },
@@ -139,18 +171,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const tx = txData as PublishResult | null;
-    if (!tx?.ok || !tx.post_id) {
+    const parsed = parseV101PublishRpcResult(txData, "error.submit_failed");
+    if (!parsed.ok) {
       return NextResponse.json(
-        { success: false, errorKey: tx?.error_msg ?? "error.submit_failed" },
+        { success: false, errorKey: parsed.errorKey },
         { status: 400 },
       );
     }
 
     return NextResponse.json({
       success: true,
-      postId: tx.post_id,
-      isDuplicate: Boolean(tx.is_duplicate),
+      postId: parsed.postId,
+      isDuplicate: parsed.isDuplicate,
     });
   } catch (error: unknown) {
     if (error instanceof CanonicalStage1Error) {

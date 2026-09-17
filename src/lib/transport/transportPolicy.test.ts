@@ -580,12 +580,15 @@ function expectCanonicalReject(fn: () => unknown, key: string) {
   assert.ok(passkeySrc.includes("buildCanonicalStage1PublishContext"));
   assert.ok(trustedSrc.includes("buildCanonicalStage1PublishContext"));
   assert.ok(shadowSrc.includes("buildCanonicalStage1PublishContext"));
-  assert.ok(passkeySrc.includes("commit_phase3_business_idempotent_v98"));
-  assert.ok(trustedSrc.includes("publish_active_post_idempotent_v98"));
-  assert.ok(shadowSrc.includes("create_shadow_draft_idempotent_v98"));
+  assert.ok(passkeySrc.includes("commit_phase3_business_idempotent_v101"));
+  assert.ok(trustedSrc.includes("publish_active_post_idempotent_v101"));
+  assert.ok(shadowSrc.includes("create_shadow_draft_idempotent_v101"));
   assert.equal(passkeySrc.includes("commit_phase3_business_idempotent_v86"), false);
   assert.equal(trustedSrc.includes("publish_active_post_idempotent_v86"), false);
   assert.equal(shadowSrc.includes("create_shadow_draft_idempotent_v86"), false);
+  assert.equal(passkeySrc.includes("commit_phase3_business_idempotent_v98"), false);
+  assert.equal(trustedSrc.includes("publish_active_post_idempotent_v98"), false);
+  assert.equal(shadowSrc.includes("create_shadow_draft_idempotent_v98"), false);
 }
 
 // TEST AF / AG / AH / AI — migration signature, write, allowlist, ACL

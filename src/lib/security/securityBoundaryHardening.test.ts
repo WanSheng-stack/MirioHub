@@ -195,10 +195,11 @@ assertNotRewritten("mark_challenge_failed_v86");
 assertNotRewritten("classify_challenge_reserve_failure_v86");
 assert.ok(passkeyVerify.includes("reserve_challenge_with_lease_v86"));
 
-// TEST 9 — trusted publish not rewritten
+// TEST 9 — trusted publish not rewritten to v86; cut over to v101
 assertNotRewritten("publish_active_post_idempotent_v86");
-assert.ok(trustedPublish.includes("publish_active_post_idempotent_v98"));
+assert.ok(trustedPublish.includes("publish_active_post_idempotent_v101"));
 assert.equal(trustedPublish.includes("publish_active_post_idempotent_v86"), false);
+assert.equal(trustedPublish.includes("publish_active_post_idempotent_v98"), false);
 
 // Extra contracts
 assert.ok(migration.includes("REVOKE ALL ON FUNCTION public.insert_stage1_post_v86"));

@@ -512,17 +512,17 @@ async function main() {
     assert.equal(Math.max(1, ...checkOrders), 49);
   }
 
-  // APIs still v98; no v102; frozen zero-diff
+  // APIs cut over to v101; no v102; frozen zero-diff for v90–v101A
   {
     const trusted = read("src/app/api/posts/trusted-publish/route.ts");
     const shadow = read("src/app/api/posts/shadow-draft/route.ts");
     const passkey = read("src/app/api/auth/passkey/verify/route.ts");
-    assert.ok(trusted.includes("publish_active_post_idempotent_v98"));
-    assert.ok(shadow.includes("create_shadow_draft_idempotent_v98"));
-    assert.ok(passkey.includes("commit_phase3_business_idempotent_v98"));
-    assert.equal(trusted.includes("idempotent_v101"), false);
-    assert.equal(shadow.includes("idempotent_v101"), false);
-    assert.equal(passkey.includes("idempotent_v101"), false);
+    assert.ok(trusted.includes("publish_active_post_idempotent_v101"));
+    assert.ok(shadow.includes("create_shadow_draft_idempotent_v101"));
+    assert.ok(passkey.includes("commit_phase3_business_idempotent_v101"));
+    assert.equal(trusted.includes("publish_active_post_idempotent_v98"), false);
+    assert.equal(shadow.includes("create_shadow_draft_idempotent_v98"), false);
+    assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
 
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
     assert.equal(migs.some((n) => /v102/.test(n)), false);

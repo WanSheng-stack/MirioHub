@@ -589,30 +589,22 @@ OWNER against PostGIS.
 
 ## 28. Authority-bound publish writers (2C.3G / v101B)
 
-- **Current state:** PHASE 6.7C.2C.3G / v101B (+ **3G.1 rollback-safe Passkey
-  fix**). Forward-only migration
-  `20260918000002_trusted_publish_authority_writer_v101b.sql` (+ verify) adds:
-  (1) internal `public.trusted_publish_facts_hash_v101(...)` — STABLE SECURITY
-  DEFINER, versioned publish facts SHA-256 (schema=101); all app roles REVOKE
-  EXECUTE; (2–4) outer writers `publish_active_post_idempotent_v101`,
-  `create_shadow_draft_idempotent_v101`, `commit_phase3_business_idempotent_v101`
-  — VOLATILE SECURITY DEFINER, service_role EXECUTE only. **Global**
-  `client_request_id` advisory lock via `hashtextextended('v101_publish_crid:'
-  || crid, 0)` (no userId in key; same contract all three writers) before posts
-  read. Fresh → `insert_stage1_post_v101` with authority-bound hash; exact retry
-  from stored authority; legacy draft atomic upgrade; legacy active / partial
-  fail-closed. **Passkey mutation phase** uses a nested PL/pgSQL subtransaction:
-  after challenge consume, failures `RAISE` stable keys (no soft `RETURN`) so
-  challenge/profile/passkey/posts roll back together; no `WHEN OTHERS`; no
-  `unique_violation` soft-success handler (exact duplicate success only from
-  pre-mutation complete active read). **Not applied.** Production APIs still
-  v98. No v98 ACL revoke, no `posts_update_own` change, creation=false, RS
-  night=false. No v102.
-- **Still unresolved / later phases:** apply v101B; API cutover to v101 writers;
-  revoke v98 EXECUTE; seal posts_update_own; enable creation / RS night.
-- **Earliest safe production use:** after apply + API cutover only.
-- **Preconditions:** v101A applied (35/35); PostGIS/pgcrypto in `extensions`;
+- **Current state:** PHASE 6.7C.2C.3G / v101B (+ 3G.1) — **applied**, verify
+  **49/49 PASS**. Outer writers + hash helper live. **PHASE 6.7C.2C.3H:** three
+  production publish APIs cut over to v101 authority-bound writers via
+  `createAdminClient` (session auth still derives userId):
+  `trusted-publish` → `publish_active_post_idempotent_v101`;
+  `shadow-draft` → `create_shadow_draft_idempotent_v101`;
+  Passkey verify → `commit_phase3_business_idempotent_v101` (`p_canonical_payload_hash`).
+  Live `select_night_service_policy_v100` adapter (region=null); one server
+  evaluation instant; Nominatim origin hit reused for OSRM + authority. **v98
+  ACL revocation still pending. posts_update_own hardening still pending.**
+  creation=false; RS night enabled=false. No v102 / no migration in 3H.
+- **Still unresolved / later phases:** revoke v98 EXECUTE; seal
+  posts_update_own; enable creation / RS night; matching UI / request list /
+  accept-reject / capacity / fulfillment.
+- **Earliest safe production use:** APIs already on v101 after 3H deploy of app.
+- **Preconditions:** v101A+v101B applied; PostGIS/pgcrypto in `extensions`;
   creation=false; RS night enabled=false.
-- **Risk if wired early:** browser roles calling writers; cutting APIs before
-  apply; treating v98 canonical hash as final publish hash; Passkey soft-fail
-  after challenge (addressed in 3G.1).
+- **Risk if wired early:** (historical) browser roles calling writers; cutting
+  APIs before apply — addressed by 3G.1 + 3H service_role-only writers.

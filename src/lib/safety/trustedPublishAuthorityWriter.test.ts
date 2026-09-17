@@ -286,18 +286,20 @@ async function main() {
     }
   }
 
-  // No API cutover: publish routes still v98; writer not wired
+  // API cutover (3H): publish routes call v101; foundation still not client-wired
   {
     const trusted = read("src/app/api/posts/trusted-publish/route.ts");
     const shadow = read("src/app/api/posts/shadow-draft/route.ts");
     const passkey = read("src/app/api/auth/passkey/verify/route.ts");
-    assert.ok(trusted.includes("publish_active_post_idempotent_v98"));
-    assert.ok(shadow.includes("create_shadow_draft_idempotent_v98"));
-    assert.ok(passkey.includes("commit_phase3_business_idempotent_v98"));
+    assert.ok(trusted.includes("publish_active_post_idempotent_v101"));
+    assert.ok(shadow.includes("create_shadow_draft_idempotent_v101"));
+    assert.ok(passkey.includes("commit_phase3_business_idempotent_v101"));
+    assert.equal(trusted.includes("publish_active_post_idempotent_v98"), false);
+    assert.equal(shadow.includes("create_shadow_draft_idempotent_v98"), false);
+    assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
     assert.equal(trusted.includes("writeTrustedPublishAuthority"), false);
     assert.equal(shadow.includes("writeTrustedPublishAuthority"), false);
     assert.equal(passkey.includes("writeTrustedPublishAuthority"), false);
-    assert.equal(trusted.includes("trustedPublishAuthorityWriter"), false);
   }
 
   // posts_update_own / init.sql / v90–v100 frozen; no outer v101 writer/cutover

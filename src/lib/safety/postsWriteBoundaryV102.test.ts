@@ -58,8 +58,12 @@ const bv = read(V102B_V);
   }
 
   assert.ok(av.includes("write policies still present"));
-  assert.ok(av.includes("authenticated DML still present"));
-  assert.ok(av.includes("v98 EXECUTE still present"));
+  assert.ok(av.includes("authenticated DML still present; anon DML absent"));
+  assert.ok(a.includes("anon must not have posts DML"));
+  assert.ok(a.includes("authenticated DML must still exist before v102A"));
+  assert.ok(a.includes("destination_gps type drift"));
+  assert.ok(av.includes("origin_gps + destination_gps extensions.geography"));
+  assert.ok(av.includes("authenticated INSERT+UPDATE+DELETE; anon none"));
   assert.ok(bv.includes("write policies dropped"));
   assert.ok(bv.includes("v98 writers fully revoked"));
   assert.ok(av.includes("CASE WHEN bool_and(result = 'PASS') OVER () THEN 'PASS' ELSE 'FAIL' END"));

@@ -136,6 +136,17 @@ BEGIN
     RAISE EXCEPTION 'v102a_guard: origin_gps type drift: %', COALESCE(v_typ, 'null');
   END IF;
 
+  SELECT pg_catalog.format_type(a.atttypid, a.atttypmod), tn.nspname, t.typname
+  INTO v_typ, v_type_schema, v_typname
+  FROM pg_catalog.pg_attribute a
+  JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+  JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
+  WHERE a.attrelid = 'public.posts'::regclass AND a.attname = 'destination_gps'
+    AND a.attnum > 0 AND NOT a.attisdropped;
+  IF v_type_schema IS DISTINCT FROM 'extensions' OR v_typname IS DISTINCT FROM 'geography' THEN
+    RAISE EXCEPTION 'v102a_guard: destination_gps type drift: %', COALESCE(v_typ, 'null');
+  END IF;
+
   SELECT count(*)::int INTO v_pol_n
   FROM pg_catalog.pg_policy pol
   JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
@@ -162,6 +173,11 @@ BEGIN
      OR NOT has_table_privilege('authenticated', 'public.posts', 'UPDATE')
      OR NOT has_table_privilege('authenticated', 'public.posts', 'DELETE') THEN
     RAISE EXCEPTION 'v102a_guard: authenticated DML must still exist before v102A';
+  END IF;
+  IF has_table_privilege('anon', 'public.posts', 'INSERT')
+     OR has_table_privilege('anon', 'public.posts', 'UPDATE')
+     OR has_table_privilege('anon', 'public.posts', 'DELETE') THEN
+    RAISE EXCEPTION 'v102a_guard: anon must not have posts DML';
   END IF;
 
   SELECT n.nspname INTO v_ext_schema

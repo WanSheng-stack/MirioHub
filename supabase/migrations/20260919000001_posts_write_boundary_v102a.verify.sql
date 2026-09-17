@@ -91,7 +91,35 @@ dml AS (
   SELECT
     has_table_privilege('authenticated', 'public.posts', 'INSERT') AS auth_ins,
     has_table_privilege('authenticated', 'public.posts', 'UPDATE') AS auth_upd,
-    has_table_privilege('authenticated', 'public.posts', 'DELETE') AS auth_del
+    has_table_privilege('authenticated', 'public.posts', 'DELETE') AS auth_del,
+    has_table_privilege('anon', 'public.posts', 'INSERT') AS anon_ins,
+    has_table_privilege('anon', 'public.posts', 'UPDATE') AS anon_upd,
+    has_table_privilege('anon', 'public.posts', 'DELETE') AS anon_del
+),
+gps_types AS (
+  SELECT
+    (SELECT tn.nspname
+     FROM pg_catalog.pg_attribute a
+     JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+     JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
+     WHERE a.attrelid = 'public.posts'::regclass AND a.attname = 'origin_gps'
+       AND a.attnum > 0 AND NOT a.attisdropped) AS origin_schema,
+    (SELECT t.typname
+     FROM pg_catalog.pg_attribute a
+     JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+     WHERE a.attrelid = 'public.posts'::regclass AND a.attname = 'origin_gps'
+       AND a.attnum > 0 AND NOT a.attisdropped) AS origin_typ,
+    (SELECT tn.nspname
+     FROM pg_catalog.pg_attribute a
+     JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+     JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
+     WHERE a.attrelid = 'public.posts'::regclass AND a.attname = 'destination_gps'
+       AND a.attnum > 0 AND NOT a.attisdropped) AS dest_schema,
+    (SELECT t.typname
+     FROM pg_catalog.pg_attribute a
+     JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+     WHERE a.attrelid = 'public.posts'::regclass AND a.attname = 'destination_gps'
+       AND a.attnum > 0 AND NOT a.attisdropped) AS dest_typ
 ),
 flags AS (
   SELECT
@@ -198,9 +226,26 @@ checks AS (
   UNION ALL SELECT 10, 'policy', 'write policies still present',
     CASE WHEN (SELECT n FROM write_pols) = 3 THEN 'PASS' ELSE 'FAIL' END,
     'n=' || (SELECT n FROM write_pols)::text, '3'
-  UNION ALL SELECT 11, 'acl', 'authenticated DML still present',
-    CASE WHEN (SELECT auth_ins AND auth_upd AND auth_del FROM dml) THEN 'PASS' ELSE 'FAIL' END,
-    'DML', 'INSERT+UPDATE+DELETE'
+  UNION ALL SELECT 11, 'acl', 'authenticated DML still present; anon DML absent',
+    CASE
+      WHEN (SELECT auth_ins AND auth_upd AND auth_del
+                 AND NOT anon_ins AND NOT anon_upd AND NOT anon_del FROM dml)
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'auth_dml=' || (SELECT (auth_ins AND auth_upd AND auth_del)::text FROM dml)
+      || ' anon_dml=' || (SELECT (anon_ins OR anon_upd OR anon_del)::text FROM dml),
+    'authenticated INSERT+UPDATE+DELETE; anon none'
+  UNION ALL SELECT 18, 'column', 'origin_gps + destination_gps extensions.geography',
+    CASE
+      WHEN (SELECT origin_schema FROM gps_types) = 'extensions'
+       AND (SELECT origin_typ FROM gps_types) = 'geography'
+       AND (SELECT dest_schema FROM gps_types) = 'extensions'
+       AND (SELECT dest_typ FROM gps_types) = 'geography'
+      THEN 'PASS' ELSE 'FAIL'
+    END,
+    'origin=' || COALESCE((SELECT origin_schema || '.' || origin_typ FROM gps_types), 'null')
+      || ' dest=' || COALESCE((SELECT dest_schema || '.' || dest_typ FROM gps_types), 'null'),
+    'extensions.geography both'
   UNION ALL SELECT 12, 'src', 'authority GPS/country/tz/hash shape',
     CASE
       WHEN (SELECT prosrc FROM auth_src) LIKE '%geometrytype%'

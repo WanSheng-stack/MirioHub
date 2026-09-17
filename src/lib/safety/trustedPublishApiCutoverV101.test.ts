@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3H — API cutover structure + origin-reuse offline tests.
+ * PHASE 6.7C.2C.3H / 3H.1 — API cutover structure + actor/retry/error boundaries.
  * Inspects real production route/helper sources. No Supabase / network.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/safety/trustedPublishApiCutoverV101.test.ts
  */
@@ -9,6 +9,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseV101PublishRpcResult } from "@/lib/safety/parseV101PublishRpcResult";
+import {
+  V101_PUBLISH_RPC_ERROR_KEYS,
+} from "@/lib/safety/v101PublishRpcErrorKeys";
 import {
   resolveStage1RouteWithOriginHit,
   type NominatimCoordinateHit,
@@ -25,6 +28,9 @@ const CANON_BUILDER = "src/lib/auth/buildCanonicalStage1PublishContext.ts";
 const AUTH_FROM_HIT = "src/lib/safety/buildAuthorityForPublishFromOriginHit.ts";
 const SELECTOR_LIVE = "src/lib/safety/selectNightServicePolicyV100Live.ts";
 const ROUTE_KMS = "src/lib/route-kms.ts";
+const IDEMPOTENT = "src/lib/auth/idempotentActiveRetry.ts";
+const STAGE1_RISK = "src/lib/auth/stage1ActiveRisk.ts";
+const PARSE_RPC = "src/lib/safety/parseV101PublishRpcResult.ts";
 
 async function main() {
   const trusted = read(TRUSTED);
@@ -33,6 +39,9 @@ async function main() {
   const builder = read(CANON_BUILDER);
   const authHit = read(AUTH_FROM_HIT);
   const selector = read(SELECTOR_LIVE);
+  const idempotent = read(IDEMPOTENT);
+  const stage1Risk = read(STAGE1_RISK);
+  const parseRpc = read(PARSE_RPC);
 
   // Three production routes call exact v101 writers; zero v98 writer call sites
   {
@@ -46,19 +55,25 @@ async function main() {
     assert.ok(passkey.includes("p_canonical_payload_hash"));
   }
 
-  // v101 via createAdminClient; actor from session auth
+  // Actor: getUser() on all three; Passkey never getSession for actor
   {
     for (const src of [trusted, shadow, passkey]) {
       assert.ok(src.includes('from "@/lib/supabase/admin"') || src.includes("from '@/lib/supabase/admin'"));
       assert.ok(src.includes("createAdminClient"));
       assert.ok(/admin\.rpc\s*\(/.test(src));
+      assert.ok(src.includes("auth.getUser()") || src.includes("getUser()"));
     }
-    assert.ok(trusted.includes("getUser") || trusted.includes("auth.getUser"));
-    assert.ok(shadow.includes("getUser") || shadow.includes("auth.getUser"));
-    assert.ok(passkey.includes("getSession") || passkey.includes("auth.getSession"));
-    assert.ok(trusted.includes("user.id"));
-    assert.ok(shadow.includes("user.id") || shadow.includes("current_uid"));
-    assert.ok(passkey.includes("session.user.id") || passkey.includes("current_uid"));
+    assert.equal(passkey.includes("getSession"), false);
+    assert.equal(passkey.includes("session.user"), false);
+    assert.ok(passkey.includes("user.id"));
+    assert.ok(passkey.includes("p_user_id: current_uid") || /p_user_id:\s*current_uid/.test(passkey));
+    // Request body has no actor id field (verified user only)
+    const bodyMatch = /interface RequestBody\s*\{([^}]*)\}/m.exec(passkey);
+    assert.ok(bodyMatch);
+    assert.equal(/\buserId\b/.test(bodyMatch[1]!), false);
+    assert.equal(/\bp_user_id\b/.test(bodyMatch[1]!), false);
+    assert.equal(/body\.userId/.test(passkey), false);
+    assert.equal(/body\.user_id/.test(passkey), false);
   }
 
   // Request bodies do not accept authority fields
@@ -70,6 +85,74 @@ async function main() {
       assert.equal(/origin_gps|origin_country|origin_timezone|night_policy/i.test(bodyBlock), false);
       assert.equal(/body\.(origin_gps|originCountryCode|nightPolicyVersion)/.test(src), false);
     }
+  }
+
+  // v101 active preflight: owner+active, never payload_hash === ctx.payloadHash
+  {
+    assert.ok(idempotent.includes("isExistingActiveIntentForOwner"));
+    assert.ok(idempotent.includes("canSkipFreshAuthorityForShadow"));
+    assert.ok(idempotent.includes("classifyPublishAuthorityState"));
+    assert.equal(
+      /existing\.payload_hash\s*===\s*.*payloadHash/.test(trusted),
+      false,
+    );
+    assert.equal(
+      /existing\.payload_hash\s*===\s*.*payloadHash/.test(passkey),
+      false,
+    );
+    assert.ok(trusted.includes("isExistingActiveIntentForOwner"));
+    assert.ok(passkey.includes("isExistingActiveIntentForOwner"));
+    assert.ok(trusted.includes("skipRiskAndFreshAuthority"));
+    assert.ok(passkey.includes("skipRiskAndFreshAuthority"));
+    // Still always calls v101 RPC (skip only risk/authority, not the writer)
+    assert.ok(trusted.includes("publish_active_post_idempotent_v101"));
+    assert.ok(passkey.includes("commit_phase3_business_idempotent_v101"));
+    // Intent select includes authority columns
+    assert.ok(stage1Risk.includes("origin_gps"));
+    assert.ok(stage1Risk.includes("origin_country_code"));
+    assert.ok(stage1Risk.includes("origin_timezone"));
+    assert.ok(stage1Risk.includes("night_policy_version"));
+  }
+
+  // Shadow: complete may skip; uses canSkipFreshAuthorityForShadow
+  {
+    assert.ok(shadow.includes("canSkipFreshAuthorityForShadow"));
+    assert.ok(shadow.includes("findPublishIntentByClientRequestId"));
+    assert.ok(shadow.includes("skipFreshAuthority"));
+    assert.ok(shadow.includes("buildAuthorityForPublishFromOriginHit"));
+  }
+
+  // Exception mapping: no arbitrary error.* forwarding from Error.message
+  {
+    for (const src of [trusted, shadow]) {
+      assert.equal(/msg\.startsWith\(\s*["']error\./.test(src), false);
+      assert.equal(/message\.startsWith\(\s*["']error\./.test(src), false);
+    }
+    assert.ok(trusted.includes("error.submit_failed"));
+    assert.ok(shadow.includes("error.shadow_draft_transaction_failed"));
+    // Passkey keeps typed WebAuthn handling
+    assert.ok(passkey.includes("WebAuthnConfigError"));
+    assert.ok(passkey.includes("clientErrorKeyFromUnknownVerifyError"));
+  }
+
+  // parseV101 uses frozen allowlist (not startsWith error.)
+  {
+    assert.ok(parseRpc.includes("isAllowedV101PublishRpcErrorKey"));
+    assert.equal(/startsWith\(\s*["']error\./.test(parseRpc), false);
+    for (const key of V101_PUBLISH_RPC_ERROR_KEYS) {
+      const ok = parseV101PublishRpcResult(
+        { ok: false, error_msg: key },
+        "error.submit_failed",
+      );
+      assert.equal(ok.ok, false);
+      if (!ok.ok) assert.equal(ok.errorKey, key);
+    }
+    const fake = parseV101PublishRpcResult(
+      { ok: false, error_msg: "error.fake_internal" },
+      "error.submit_failed",
+    );
+    assert.equal(fake.ok, false);
+    if (!fake.ok) assert.equal(fake.errorKey, "error.submit_failed");
   }
 
   // v100 selector: region null; evaluationTime server-generated once
@@ -85,18 +168,14 @@ async function main() {
     assert.equal(authHit.includes("resolveTrustedOrigin(address)"), false);
   }
 
-  // Four authority args from validated trusted fields
+  // Four authority args present on routes
   {
     for (const src of [trusted, shadow, passkey]) {
       assert.ok(src.includes("p_origin_gps"));
       assert.ok(src.includes("p_origin_country_code"));
       assert.ok(src.includes("p_origin_timezone"));
       assert.ok(src.includes("p_night_policy_version"));
-      assert.ok(src.includes("buildAuthorityForPublishFromOriginHit") || src.includes("exactRetry"));
     }
-    assert.ok(shadow.includes("buildAuthorityForPublishFromOriginHit"));
-    // Shadow always builds authority (never four-NULL insert)
-    assert.equal(/exactRetry/.test(shadow), false);
   }
 
   // Origin Nominatim reuse in builder + route-kms helper
@@ -157,7 +236,7 @@ async function main() {
     assert.ok(v98.includes("GRANT EXECUTE ON FUNCTION public.publish_active_post_idempotent_v98"));
   }
 
-  // parseV101PublishRpcResult fail-closed
+  // parseV101PublishRpcResult fail-closed shape checks
   {
     assert.equal(
       parseV101PublishRpcResult(null, "error.submit_failed").ok,
@@ -181,14 +260,6 @@ async function main() {
     assert.equal(ok.ok, true);
     if (ok.ok) {
       assert.equal(ok.isDuplicate, true);
-    }
-    const fail = parseV101PublishRpcResult(
-      { ok: false, error_msg: "error.idempotency_payload_conflict" },
-      "error.submit_failed",
-    );
-    assert.equal(fail.ok, false);
-    if (!fail.ok) {
-      assert.equal(fail.errorKey, "error.idempotency_payload_conflict");
     }
     const leak = parseV101PublishRpcResult(
       { ok: false, error_msg: "duplicate key value violates unique constraint" },
@@ -246,7 +317,7 @@ async function main() {
     }
   }
 
-  // onsite: serverKms=0, origin still resolved once
+  // onsite: serverKms=0, origin still resolved once (no second geocode)
   {
     let httpCalls = 0;
     const hit: NominatimCoordinateHit = {

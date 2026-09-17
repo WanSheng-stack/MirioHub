@@ -195,12 +195,16 @@ assert.equal(
   "car",
 );
 
-// ── idempotency ≠ spam ──────────────────────────────────────────────────────
+// ── preflight classification (v101: no payload_hash compare for bypass) ─────
 const row = {
   id: "p1",
   user_id: "u1",
   payload_hash: "H1",
   status: "active",
+  origin_gps: null,
+  origin_country_code: null,
+  origin_timezone: null,
+  night_policy_version: null,
 };
 assert.equal(isIdempotentActiveRetry(row, "u1", "H1"), true);
 assert.equal(isIdempotentActiveRetry(row, "u1", "H2"), false);

@@ -17,7 +17,7 @@ import {
 import {
   evaluateStage1ActivePublicationRisk,
   findPublishIntentByClientRequestId,
-  isIdempotentActiveRetry,
+  isExistingActiveIntentForOwner,
 } from '@/lib/auth/stage1ActiveRisk';
 import {
   classifyChallengeReserveFailure,
@@ -82,15 +82,18 @@ function jsonError(errorKey: string, status = 400) {
 export async function POST(request: Request) {
   const supabase = await createClient();
 
+  // Server-verified JWT actor for service-role v101 writer p_user_id.
+  // Keep challenge reserve / passkey reads on this session client.
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+    error: authErr,
+  } = await supabase.auth.getUser();
 
-  if (!session?.user?.id) {
+  if (authErr || !user?.id) {
     return jsonError('error.unauthorized_anonymous_session', 401);
   }
 
-  const current_uid = session.user.id;
+  const current_uid = user.id;
   let fence: ChallengeFence | null = null;
   let ceremonyType: 'registration' | 'authentication' | undefined;
 
@@ -147,12 +150,12 @@ export async function POST(request: Request) {
       supabase,
       clientRequestId,
     );
-    const exactRetry = isIdempotentActiveRetry(
+    // Owner+active may skip risk/fresh authority only — not payload equality.
+    const skipRiskAndFreshAuthority = isExistingActiveIntentForOwner(
       existing,
       current_uid,
-      ctx.payloadHash,
     );
-    if (!exactRetry) {
+    if (!skipRiskAndFreshAuthority) {
       const risk = await evaluateStage1ActivePublicationRisk(
         supabase,
         current_uid,
@@ -247,14 +250,14 @@ export async function POST(request: Request) {
         ? regInfo!.credential.id
         : dbKey!.credential_id;
 
-    // Authority after successful WebAuthn crypto. Exact active retry may omit
-    // fresh authority (v101 uses stored). Fresh/legacy/draft paths require it.
+    // Authority after successful WebAuthn crypto. Owner+active may omit fresh
+    // authority (NULL args → v101 uses stored). Other paths require it.
     let originGps: string | null = null;
     let originCountry: string | null = null;
     let originTimezone: string | null = null;
     let nightVersion: number | null = null;
 
-    if (!exactRetry) {
+    if (!skipRiskAndFreshAuthority) {
       const authority = await buildAuthorityForPublishFromOriginHit(
         ctx.canonicalPayload,
         ctx.originNominatimHit,

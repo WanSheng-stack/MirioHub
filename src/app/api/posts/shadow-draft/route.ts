@@ -2,8 +2,9 @@
  * POST /api/posts/shadow-draft
  *
  * Shadow draft persistence via create_shadow_draft_idempotent_v101 (service_role).
- * Trusted authority is always built before write — never creates a four-NULL
- * authority row. Session auth derives user id.
+ * Complete stored authority (same owner) may skip fresh selector and pass NULL
+ * authority args; legacy draft still builds fresh authority for upgrade.
+ * Partial authority never bypasses. Session auth derives user id.
  */
 
 import { NextResponse } from "next/server";
@@ -14,6 +15,10 @@ import {
   CanonicalStage1Error,
   toRpcStage1Payload,
 } from "@/lib/auth/buildCanonicalStage1PublishContext";
+import {
+  canSkipFreshAuthorityForShadow,
+  findPublishIntentByClientRequestId,
+} from "@/lib/auth/stage1ActiveRisk";
 import { buildAuthorityForPublishFromOriginHit } from "@/lib/safety/buildAuthorityForPublishFromOriginHit";
 import { parseV101PublishRpcResult } from "@/lib/safety/parseV101PublishRpcResult";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -49,9 +54,10 @@ export async function POST(request: Request) {
 
   const {
     data: { user },
+    error: authErr,
   } = await supabase.auth.getUser();
 
-  if (!user?.id) {
+  if (authErr || !user?.id) {
     return NextResponse.json(
       { success: false, errorKey: "error.authentication_required" },
       { status: 401 },
@@ -72,15 +78,35 @@ export async function POST(request: Request) {
     }
 
     const ctx = await buildCanonicalStage1PublishContext(rawPostInput);
-    const authority = await buildAuthorityForPublishFromOriginHit(
-      ctx.canonicalPayload,
-      ctx.originNominatimHit,
+    const existing = await findPublishIntentByClientRequestId(
+      supabase,
+      clientRequestId,
     );
-    if (!authority.ok) {
-      return NextResponse.json(
-        { success: false, errorKey: authority.errorKey },
-        { status: 400 },
+    const skipFreshAuthority = canSkipFreshAuthorityForShadow(
+      existing,
+      current_uid,
+    );
+
+    let originGps: string | null = null;
+    let originCountry: string | null = null;
+    let originTimezone: string | null = null;
+    let nightVersion: number | null = null;
+
+    if (!skipFreshAuthority) {
+      const authority = await buildAuthorityForPublishFromOriginHit(
+        ctx.canonicalPayload,
+        ctx.originNominatimHit,
       );
+      if (!authority.ok) {
+        return NextResponse.json(
+          { success: false, errorKey: authority.errorKey },
+          { status: 400 },
+        );
+      }
+      originGps = authority.fields.origin_gps;
+      originCountry = authority.fields.origin_country_code;
+      originTimezone = authority.fields.origin_timezone;
+      nightVersion = authority.fields.night_policy_version;
     }
 
     const admin = createAdminClient();
@@ -96,10 +122,10 @@ export async function POST(request: Request) {
           ctx.serverFeeMinor,
         ),
         p_server_fee_minor: ctx.serverFeeMinor,
-        p_origin_gps: authority.fields.origin_gps,
-        p_origin_country_code: authority.fields.origin_country_code,
-        p_origin_timezone: authority.fields.origin_timezone,
-        p_night_policy_version: authority.fields.night_policy_version,
+        p_origin_gps: originGps,
+        p_origin_country_code: originCountry,
+        p_origin_timezone: originTimezone,
+        p_night_policy_version: nightVersion,
       },
     );
 
@@ -137,12 +163,13 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const msg =
-      error instanceof Error ? error.message : "error.server_internal_crash";
     console.error("[shadow-draft] unexpected error:", {
       category: "internal_exception",
+      name: error instanceof Error ? error.name : "unknown",
     });
-    const errorKey = msg.startsWith("error.") ? msg : "error.server_internal_crash";
-    return NextResponse.json({ success: false, errorKey }, { status: 500 });
+    return NextResponse.json(
+      { success: false, errorKey: "error.shadow_draft_transaction_failed" },
+      { status: 500 },
+    );
   }
 }

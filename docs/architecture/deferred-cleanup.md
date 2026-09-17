@@ -608,3 +608,19 @@ OWNER against PostGIS.
   creation=false; RS night enabled=false.
 - **Risk if wired early:** (historical) browser roles calling writers; cutting
   APIs before apply — addressed by 3G.1 + 3H service_role-only writers.
+
+## 29. v101 API actor / retry / error boundaries (2C.3H.1)
+
+- **Current state:** PHASE 6.7C.2C.3H.1 — Passkey verify derives `p_user_id`
+  from server-verified `auth.getUser()` (never `getSession()`, never request
+  `userId`). ACTIVE preflight uses `isExistingActiveIntentForOwner` (owner +
+  active only; no `payload_hash` vs canonical compare). Shadow may skip fresh
+  authority only when same-owner draft|active + authority complete; legacy
+  still builds; partial fails closed. v101 RPC error keys are frozen-allowlist
+  parsed; trusted/shadow catch returns generic keys only. No migration / no
+  v102 / no ACL revoke / posts_update_own unchanged.
+- **Still unresolved / later phases:** revoke v98 EXECUTE; seal
+  posts_update_own; enable creation / RS night; matching UI.
+- **Earliest safe production use:** after 3H.1 app deploy (writers already live).
+- **Preconditions:** v101A+v101B applied; creation=false; RS night enabled=false.
+- **Risk if wired early:** (n/a — app-only hardening on already-cutover routes).

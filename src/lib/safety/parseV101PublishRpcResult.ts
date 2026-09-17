@@ -1,7 +1,11 @@
 /**
- * PHASE 6.7C.2C.3H — runtime validation of v101 publish writer RPC results.
- * Fail-closed; never forwards raw DB messages.
+ * PHASE 6.7C.2C.3H / 3H.1 — runtime validation of v101 publish writer RPC results.
+ * Fail-closed; only frozen allowlisted error keys reach the client.
  */
+
+import {
+  isAllowedV101PublishRpcErrorKey,
+} from "@/lib/safety/v101PublishRpcErrorKeys";
 
 const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -27,7 +31,7 @@ export type V101PublishRpcFailure = {
 
 /**
  * Validate jsonb result from publish_active / shadow / commit v101 writers.
- * Malformed shapes → genericErrorKey (caller’s route-stable key).
+ * Malformed shapes or unlisted error_msg → genericErrorKey.
  */
 export function parseV101PublishRpcResult(
   data: unknown,
@@ -51,13 +55,7 @@ export function parseV101PublishRpcResult(
     };
   }
   const err = data.error_msg;
-  if (
-    typeof err === "string" &&
-    err.startsWith("error.") &&
-    err.length > 6 &&
-    err.length < 120 &&
-    !err.includes("\n")
-  ) {
+  if (isAllowedV101PublishRpcErrorKey(err)) {
     return { ok: false, errorKey: err };
   }
   return { ok: false, errorKey: genericErrorKey };

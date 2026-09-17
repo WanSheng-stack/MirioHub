@@ -1,9 +1,10 @@
 /**
  * Submit-time ACTIVE publication risk (deterministic, existing rules only).
  *
- * IDEMPOTENCY ≠ ANTI-SPAM:
- *   same client_request_id + same payload_hash → retry, skip risk
- *   a new client_request_id is a new intent and must pass the ACTIVE gate
+ * Preflight ACTIVE bypass (v101):
+ *   same owner + status active → skip risk / fresh authority only.
+ *   Does NOT prove payload exact-retry — v101 DB writer recomputes
+ *   trusted_publish_facts_hash_v101(canonical, stored authority).
  *
  * Phone / plate rules cannot run at Stage-1 (contact is post-publish).
  * Those remain on complete-contact / submitPost.
@@ -20,12 +21,20 @@ import {
 } from "@/lib/post-intercept";
 import { demandInterceptRange, buildDepartureTimestamp } from "@/lib/post-time-windows";
 import {
+  canSkipFreshAuthorityForShadow,
+  classifyPublishAuthorityState,
+  isExistingActiveIntentForOwner,
   isIdempotentActiveRetry,
   type PublishIntentRow,
 } from "@/lib/auth/idempotentActiveRetry";
 
 export type { PublishIntentRow };
-export { isIdempotentActiveRetry };
+export {
+  canSkipFreshAuthorityForShadow,
+  classifyPublishAuthorityState,
+  isExistingActiveIntentForOwner,
+  isIdempotentActiveRetry,
+};
 
 export type Stage1ActiveRiskDecision = {
   allowed: boolean;
@@ -39,7 +48,9 @@ export async function findPublishIntentByClientRequestId(
 ): Promise<PublishIntentRow | null> {
   const { data, error } = await supabase
     .from("posts")
-    .select("id, user_id, payload_hash, status")
+    .select(
+      "id, user_id, payload_hash, status, origin_gps, origin_country_code, origin_timezone, night_policy_version",
+    )
     .eq("client_request_id", clientRequestId)
     .maybeSingle();
 

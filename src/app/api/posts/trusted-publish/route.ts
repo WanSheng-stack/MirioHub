@@ -21,7 +21,7 @@ import {
 import {
   evaluateStage1ActivePublicationRisk,
   findPublishIntentByClientRequestId,
-  isIdempotentActiveRetry,
+  isExistingActiveIntentForOwner,
 } from "@/lib/auth/stage1ActiveRisk";
 import { buildAuthorityForPublishFromOriginHit } from "@/lib/safety/buildAuthorityForPublishFromOriginHit";
 import { parseV101PublishRpcResult } from "@/lib/safety/parseV101PublishRpcResult";
@@ -100,12 +100,13 @@ export async function POST(request: Request) {
       supabase,
       clientRequestId,
     );
-    const exactRetry = isIdempotentActiveRetry(
+    // Owner+active may skip risk/fresh authority only. Payload exact-retry is
+    // decided solely by v101 (authority-bound hash). Never compare payload_hash.
+    const skipRiskAndFreshAuthority = isExistingActiveIntentForOwner(
       existing,
       user.id,
-      ctx.payloadHash,
     );
-    if (!exactRetry) {
+    if (!skipRiskAndFreshAuthority) {
       const risk = await evaluateStage1ActivePublicationRisk(
         supabase,
         user.id,
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
     let originTimezone: string | null = null;
     let nightVersion: number | null = null;
 
-    if (!exactRetry) {
+    if (!skipRiskAndFreshAuthority) {
       const authority = await buildAuthorityForPublishFromOriginHit(
         ctx.canonicalPayload,
         ctx.originNominatimHit,
@@ -153,6 +154,7 @@ export async function POST(request: Request) {
           ctx.serverFeeMinor,
         ),
         p_server_fee_minor: ctx.serverFeeMinor,
+        // Stored-authority path: NULL args; v101 validates against stored.
         p_origin_gps: originGps,
         p_origin_country_code: originCountry,
         p_origin_timezone: originTimezone,
@@ -191,8 +193,13 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const msg = error instanceof Error ? error.message : "error.server_internal_crash";
-    const errorKey = msg.startsWith("error.") ? msg : "error.server_internal_crash";
-    return NextResponse.json({ success: false, errorKey }, { status: 400 });
+    console.error("[trusted-publish] unexpected error:", {
+      category: "internal_exception",
+      name: error instanceof Error ? error.name : "unknown",
+    });
+    return NextResponse.json(
+      { success: false, errorKey: "error.submit_failed" },
+      { status: 500 },
+    );
   }
 }

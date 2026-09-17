@@ -519,7 +519,7 @@ const writer = read("src/lib/safety/trustedPublishAuthorityWriter.ts");
 assert.ok(writer.includes('import "server-only"'));
 assert.equal(writer.includes("insert_stage1_post_v101"), false);
 
-// Frozen history zero-diff; no v102 migration file
+// Frozen history zero-diff; only posts_write_boundary_v102 allowed as v102
 for (const path of FROZEN) {
   assert.equal(gitDiff(path), "", `frozen dirty: ${path}`);
 }
@@ -528,7 +528,11 @@ assert.ok(migs.includes("20260918000001_trusted_publish_authority_insert_v101.sq
 assert.ok(
   migs.includes("20260918000001_trusted_publish_authority_insert_v101.verify.sql"),
 );
-assert.equal(migs.some((n) => /v102/.test(n)), false);
+assert.ok(
+  migs
+    .filter((n) => /v102/.test(n))
+    .every((n) => n.includes("posts_write_boundary_v102")),
+);
 
 assert.equal(gitDiff("src/lib/safety/trustedPublishAuthorityWriter.ts"), "");
 assert.equal(gitDiff("src/lib/safety/trustedPublishAuthorityWriterCore.ts"), "");
@@ -536,7 +540,7 @@ assert.equal(gitDiff("src/lib/safety/trustedPublishAuthority.ts"), "");
 
 assert.ok(ledger.includes("2C.3F") || ledger.includes("v101A"));
 assert.ok(ledger.includes("3F.1") || ledger.includes("2C.3F.1"));
-assert.ok(ledger.includes("API cutover still pending") || ledger.includes("cutover"));
+assert.ok(ledger.includes("2C.3I-B") || ledger.includes("v102"));
 
 console.log("trustedPublishAuthorityInsertV101.test.ts: ok");
 console.log(`v101 identity: ${FN_IDENTITY}`);

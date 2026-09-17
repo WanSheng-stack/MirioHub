@@ -224,10 +224,14 @@ async function main() {
     }
   }
 
-  // Migrations / posts_update_own / no v102
+  // Migrations / posts_init still documents posts_update_own; v102 seal may exist
   {
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
-    assert.equal(migs.some((n) => /v102/.test(n)), false);
+    assert.ok(
+      migs
+        .filter((n) => /v102/.test(n))
+        .every((n) => n.includes("posts_write_boundary_v102")),
+    );
     const postsInit = read("supabase/posts_init.sql");
     assert.ok(postsInit.includes("posts_update_own"));
     const v98 = read(

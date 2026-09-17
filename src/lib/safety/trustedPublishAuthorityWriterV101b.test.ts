@@ -512,7 +512,7 @@ async function main() {
     assert.equal(Math.max(1, ...checkOrders), 49);
   }
 
-  // APIs cut over to v101; no v102; frozen zero-diff for v90–v101A
+  // APIs on v101; only posts_write_boundary_v102 allowed as v102
   {
     const trusted = read("src/app/api/posts/trusted-publish/route.ts");
     const shadow = read("src/app/api/posts/shadow-draft/route.ts");
@@ -525,7 +525,11 @@ async function main() {
     assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
 
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
-    assert.equal(migs.some((n) => /v102/.test(n)), false);
+    assert.ok(
+      migs
+        .filter((n) => /v102/.test(n))
+        .every((n) => n.includes("posts_write_boundary_v102")),
+    );
     assert.ok(
       migs.includes(
         "20260918000002_trusted_publish_authority_writer_v101b.sql",

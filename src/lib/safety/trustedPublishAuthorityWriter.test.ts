@@ -302,7 +302,7 @@ async function main() {
     assert.equal(passkey.includes("writeTrustedPublishAuthority"), false);
   }
 
-  // posts_update_own / init.sql / v90–v100 frozen; no outer v101 writer/cutover
+  // posts_init / v90–v100 frozen; only posts_write_boundary_v102 as v102
   {
     assert.equal(gitDiff("supabase/init.sql"), "");
     assert.equal(gitDiff("supabase/posts_init.sql"), "");
@@ -310,11 +310,10 @@ async function main() {
       assert.equal(gitDiff(path), "", `frozen dirty: ${path}`);
     }
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
-    // v101A/v101B migration files may exist; reject v102 and API cutover.
-    assert.equal(migs.some((n) => /v102/.test(n)), false);
-    assert.equal(
-      migs.some((n) => /cutover|revoke_v98|posts_update_own_seal/.test(n)),
-      false,
+    assert.ok(
+      migs
+        .filter((n) => /v102/.test(n))
+        .every((n) => n.includes("posts_write_boundary_v102")),
     );
     const postsInit = read("supabase/posts_init.sql");
     assert.ok(postsInit.includes("posts_update_own"));

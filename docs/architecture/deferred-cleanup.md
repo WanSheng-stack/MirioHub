@@ -624,3 +624,23 @@ OWNER against PostGIS.
 - **Earliest safe production use:** after 3H.1 app deploy (writers already live).
 - **Preconditions:** v101A+v101B applied; creation=false; RS night enabled=false.
 - **Risk if wired early:** (n/a — app-only hardening on already-cutover routes).
+
+## 30. Seal direct posts writes (2C.3I-B / v102)
+
+- **Current state:** PHASE 6.7C.2C.3I-B — forward migration
+  `20260919000001_posts_write_boundary_v102.sql` (+ verify). Narrow
+  `complete_post_contact_v102` / `activate_post_after_identity_v102`
+  (SECURITY DEFINER, fixed search_path, service_role EXECUTE only). Internal
+  `_posts_is_account_eligible_v102` sealed (no role EXECUTE). APIs cut over;
+  no direct `posts` INSERT/UPDATE/DELETE. `posts_update_own` /
+  `posts_insert_own` / `posts_delete_own` dropped; authenticated DML revoked.
+  SELECT policies + `public_posts_safe` retained. v98 outer writers fully
+  REVOKE ALL (functions kept). v101 writers unchanged (service_role only).
+  origin authority / payload_hash / locale immutable from Stage-2. Destination
+  geocode destination-only; scope computed in SQL. creation=false; RS night
+  enabled=false. **MANUAL APPLY + verify required — not auto-applied.**
+- **Still unresolved / later phases:** enable creation / RS night; matching UI.
+- **Earliest safe production use:** after v102 apply + verify PASS + app deploy.
+- **Preconditions:** v101A+v101B applied; APIs on v101; creation=false; RS night=false.
+- **Risk if wired early:** applying before app cutover leaves Stage-2 broken
+  (no posts_update_own).

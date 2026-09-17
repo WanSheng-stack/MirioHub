@@ -941,19 +941,19 @@ async function main() {
     assert.equal(trusted.includes("publish_active_post_idempotent_v98"), false);
     assert.equal(shadow.includes("create_shadow_draft_idempotent_v98"), false);
     assert.equal(passkey.includes("commit_phase3_business_idempotent_v98"), false);
-    assert.equal(contact.includes("origin_country_code"), false);
-    assert.equal(contact.includes("origin_timezone"), false);
-    assert.equal(contact.includes("night_policy_version"), false);
     assert.equal(contact.includes("buildTrustedPublishAuthority"), false);
+    // Stage-2 may read authority columns for classification; must not write them
+    assert.equal(/\.update\([\s\S]*origin_country_code/i.test(contact), false);
+    assert.equal(contact.includes("complete_post_contact_v102"), true);
   }
 
-  // v101B/cutover may exist; reject v102; frozen history zero-diff
+  // v102 write-boundary seal may exist; frozen history zero-diff
   {
     const migs = readdirSync(join(repoRoot, "supabase/migrations"));
-    assert.equal(migs.some((n) => /v102/.test(n)), false);
-    assert.equal(
-      migs.some((n) => /cutover|revoke_v98|posts_update_own_seal/.test(n)),
-      false,
+    assert.ok(
+      migs
+        .filter((n) => /v102/.test(n))
+        .every((n) => n.includes("posts_write_boundary_v102")),
     );
     for (const path of FROZEN) {
       assert.equal(gitDiff(path), "", `frozen dirty: ${path}`);

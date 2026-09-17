@@ -1,73 +1,37 @@
 /**
  * POST /api/posts/complete-contact
  *
- * Saves Stage-2 contact fields (phone, plate, provider info, GPS scope) onto
- * an existing post that was created by:
- *   - Channel A: commit_phase3_business_idempotent_v98  (status='active')
- *   - Channel B: create_shadow_draft_idempotent_v98     (status='draft')
- *
- * ACTIVATION POLICY (draft → active):
- *   A draft post is activated only when the current Account has at least one
- *   confirmed identity:
- *     1. profiles.has_passkey = true   (Passkey verified)
- *     2. auth.identities contains 'google'  (Google OAuth linked to this UUID)
- *     3. user.email_confirmed_at is set    (Email OTP / password sign-up confirmed)
- *
- *   Unverified phone number alone does NOT activate a draft.
- *
- * BLOCKED — Google/Email cross-UUID account continuity:
- *   If the user logs in with Google/Email and Supabase creates a NEW auth UUID
- *   (instead of linking to the existing anonymous UUID), the draft post belongs
- *   to the old UUID and is unreachable by the new UUID. That scenario requires
- *   a safe account-link/merge architecture decision before implementation.
- *   Current code handles it safely: the RLS check (user_id = auth.uid()) returns
- *   404 for cross-UUID access, preventing any silent data corruption.
- *
- * Returns: { ok: true, postId, isActive, normalizedPhone? }
- *   isActive = true  → post is active, caller should route to /posts/:id
- *   isActive = false → draft saved, contact info written, identity not yet verified
- *   normalizedPhone  → Account current phone after a successful phone save
- *
- * Consistency: fraud → phone_history → post update → profiles.phone.
- * Not a single DB transaction. If profile persist fails after post update,
- * this API returns ok:false (not a fake full success). Retry is safe.
+ * Stage-2 contact completion via complete_post_contact_v102 (service_role).
+ * Does NOT mutate origin authority / payload_hash / locale.
+ * Destination geocode is destination-only; scope computed in SQL from stored origin.
  */
 
-import { NextResponse } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
-import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
-import { evaluateStage1ActivePublicationRisk } from '@/lib/auth/stage1ActiveRisk';
-import {
-  normalizeLicensePlate,
-} from '@/lib/post-validation';
-import { parseUserPhone, resolvePhoneCountry } from '@/lib/phone/phoneNumber';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { getAccountActivationEligibility } from "@/lib/auth/accountActivationEligibility";
+import { evaluateStage1ActivePublicationRisk } from "@/lib/auth/stage1ActiveRisk";
+import { normalizeLicensePlate } from "@/lib/post-validation";
+import { parseUserPhone, resolvePhoneCountry } from "@/lib/phone/phoneNumber";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   clientJsonForPhoneWriteFailure,
   formatSafePhoneWriteLog,
   runPhoneWriterSafely,
   type AccountPhoneWriteResult,
-} from '@/lib/profile/accountPhoneWrite';
-import { writeAccountPhone } from '@/lib/profile/writeAccountPhone';
+} from "@/lib/profile/accountPhoneWrite";
+import { writeAccountPhone } from "@/lib/profile/writeAccountPhone";
 import {
   upsertPhoneHistory,
   upsertPlateHistory,
-} from '@/lib/post-form/submitPost';
+} from "@/lib/post-form/submitPost";
 import {
-  completeContactTransportFillFilter,
-  completeContactTransportRereadResponse,
-  decideCompleteContactTransport,
-  interpretCompleteContactTransportReread,
-} from '@/lib/posts/completeContactTransport';
-import { evaluatePublishIntercept } from '@/lib/security/evaluateFraudIntercept';
-import { geocodeAddress, toGeographyPointWkt } from '@/lib/route-kms';
-import { haversineKm } from '@/lib/geo';
-import type { PostScope } from '@/lib/types';
-
-// ---------------------------------------------------------------------------
-// Supabase route-handler client (anon key — RLS enforces ownership)
-// ---------------------------------------------------------------------------
+  classifyAuthorityStateForContact,
+  decideCompleteContactTransportV102,
+} from "@/lib/posts/completeContactTransportV102";
+import { parseV102PostsWriteRpcResult } from "@/lib/posts/parseV102PostsWriteRpcResult";
+import { evaluatePublishIntercept } from "@/lib/security/evaluateFraudIntercept";
+import { geocodeAddress, toGeographyPointWkt } from "@/lib/route-kms";
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -89,10 +53,6 @@ async function createClient() {
   });
 }
 
-/**
- * Persist Account current/default phone via service-role writer.
- * Never accepts a browser-supplied user_id. Does not rewrite other profile fields.
- */
 async function persistAccountCurrentPhone(
   userId: string,
   normalizedPhone: string,
@@ -100,84 +60,30 @@ async function persistAccountCurrentPhone(
   return runPhoneWriterSafely(
     () => writeAccountPhone(createAdminClient(), userId, normalizedPhone),
     () => {
-      console.error('[complete-contact] phone writer threw');
+      console.error("[complete-contact] phone writer threw");
     },
   );
 }
-
-async function applyTransportFill(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  input: {
-    postId: string;
-    userId: string;
-    decision: ReturnType<typeof decideCompleteContactTransport>;
-  },
-): Promise<{ ok: true } | { ok: false; errorKey: string; status: 400 | 500 }> {
-  if (input.decision.kind !== 'fill') return { ok: true };
-  const filter = completeContactTransportFillFilter({
-    postId: input.postId,
-    ownerUserId: input.userId,
-  });
-  const { data, error } = await supabase
-    .from('posts')
-    .update({ transport_mode: input.decision.mode })
-    .eq('id', filter.id)
-    .eq('user_id', filter.user_id)
-    .is('transport_mode', null)
-    .select('id')
-    .maybeSingle();
-  if (error) {
-    console.error('[complete-contact] transport fill failed');
-    return { ok: false, errorKey: 'error.submit_failed', status: 500 };
-  }
-  if (data) return { ok: true };
-  const { data: current, error: rereadError } = await supabase
-    .from('posts')
-    .select('transport_mode')
-    .eq('id', filter.id)
-    .eq('user_id', filter.user_id)
-    .maybeSingle();
-  const interpreted = interpretCompleteContactTransportReread({
-    intendedMode: input.decision.mode,
-    error: rereadError,
-    row: current as { transport_mode?: string | null } | null,
-  });
-  const response = completeContactTransportRereadResponse(interpreted);
-  if (!response.ok) {
-    if (response.log) {
-      console.error(response.log);
-    }
-    return {
-      ok: false,
-      errorKey: response.errorKey,
-      status: response.status,
-    };
-  }
-  return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface ExistingPost {
   id: string;
   user_id: string;
   status: string;
   post_type: string;
+  category: string;
   departure_date: string | null;
   departure_time_window: string | null;
-  origin_address: string;
   destination_address: string;
-  origin_gps: string | null;
+  origin_gps: unknown | null;
+  origin_country_code: string | null;
+  origin_timezone: string | null;
+  night_policy_version: number | null;
   transport_mode: string | null;
 }
 
 interface RequestBody {
   postId: string;
-  /** ISO 3166-1 alpha-2. Canonical validation uses this, not dial_code. */
   phone_country?: string;
-  /** Optional compat — ignored when phone_country is present; only used if unique. */
   dial_code?: string;
   raw_phone_local?: string;
   provider_name?: string;
@@ -185,23 +91,19 @@ interface RequestBody {
   vehicle_brand?: string;
   vehicle_color?: string;
   transport_mode?: string;
-  locale?: string;
 }
-
-// ---------------------------------------------------------------------------
-// POST handler
-// ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
   const supabase = await createClient();
 
   const {
     data: { user },
+    error: authErr,
   } = await supabase.auth.getUser();
 
-  if (!user?.id) {
+  if (authErr || !user?.id) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.authentication_required' },
+      { ok: false, errorKey: "error.authentication_required" },
       { status: 401 },
     );
   }
@@ -211,7 +113,7 @@ export async function POST(request: Request) {
     body = (await request.json()) as RequestBody;
   } catch {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.invalid_request_body' },
+      { ok: false, errorKey: "error.invalid_request_body" },
       { status: 400 },
     );
   }
@@ -226,56 +128,56 @@ export async function POST(request: Request) {
     vehicle_brand,
     vehicle_color,
     transport_mode,
-    locale,
   } = body;
 
   if (!postId) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.invalid_post_id' },
+      { ok: false, errorKey: "error.invalid_post_id" },
       { status: 400 },
     );
   }
 
-  // ── Fetch post & verify ownership (RLS: user_id = auth.uid()) ─────────────
   const { data: rawPost, error: postErr } = await supabase
-    .from('posts')
+    .from("posts")
     .select(
-      'id, user_id, status, post_type, departure_date, departure_time_window, origin_address, destination_address, origin_gps, transport_mode',
+      "id, user_id, status, post_type, category, departure_date, departure_time_window, destination_address, origin_gps, origin_country_code, origin_timezone, night_policy_version, transport_mode",
     )
-    .eq('id', postId)
-    .eq('user_id', user.id)
+    .eq("id", postId)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (postErr || !rawPost) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.not_found' },
+      { ok: false, errorKey: "error.not_found" },
       { status: 404 },
     );
   }
 
   const post = rawPost as ExistingPost;
+  const authorityState = classifyAuthorityStateForContact(post);
 
-  const transportDecision = decideCompleteContactTransport({
+  const transportDecision = decideCompleteContactTransportV102({
     isOwner: post.user_id === user.id,
+    category: post.category,
+    authorityState,
     existingMode: post.transport_mode,
     requested: transport_mode,
   });
-  if (transportDecision.kind === 'reject') {
+  if (transportDecision.kind === "reject") {
     return NextResponse.json(
       { ok: false, errorKey: transportDecision.errorKey },
       { status: 400 },
     );
   }
 
-  if (!['draft', 'active'].includes(post.status)) {
+  if (!["draft", "active"].includes(post.status)) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.invalid_post_status' },
+      { ok: false, errorKey: "error.invalid_post_status" },
       { status: 400 },
     );
   }
 
-  // ── Phone — optional: skip if caller didn't provide a local number ─────────
-  const hasPhone = raw_phone_local?.trim();
+  const hasPhone = Boolean(raw_phone_local?.trim());
   let phoneId: number | null = null;
   let rawPhoneForPost: string | null = null;
   let normalizedPhoneForPost: string | null = null;
@@ -297,19 +199,18 @@ export async function POST(request: Request) {
     normalizedPhoneForPost = phoneResult.normalizedDigits;
     rawPhoneForPost = phoneResult.nationalDisplay;
 
-    // ── Fraud interception (runs before persisting anything) ─────────────────
     const { data: profileRow } = await supabase
-      .from('profiles')
-      .select('is_premium')
-      .eq('id', user.id)
+      .from("profiles")
+      .select("is_premium")
+      .eq("id", user.id)
       .maybeSingle();
     const intercept = await evaluatePublishIntercept({
       userId: user.id,
-      postType: post.post_type === 'demand' ? 'demand' : 'provider',
+      postType: post.post_type === "demand" ? "demand" : "provider",
       normalizedPhone: phoneResult.normalizedDigits,
       normalizedPlate: null,
-      departureDate: post.departure_date ?? '',
-      departureWindow: post.departure_time_window ?? '',
+      departureDate: post.departure_date ?? "",
+      departureWindow: post.departure_time_window ?? "",
       isPremium: Boolean(
         (profileRow as { is_premium?: boolean } | null)?.is_premium,
       ),
@@ -321,23 +222,33 @@ export async function POST(request: Request) {
       );
     }
 
-    // Persist phone history after fraud check passes
-    phoneId = await upsertPhoneHistory(supabase, user.id, phoneResult.normalizedDigits);
+    phoneId = await upsertPhoneHistory(
+      supabase,
+      user.id,
+      phoneResult.normalizedDigits,
+    );
   }
 
-  // ── Plate — optional: only provider posts, only if provided ───────────────
-  const plateRequiringModes = ['car', 'motorbike', 'van'];
   const modeForPlate =
     post.transport_mode ||
-    (transportDecision.kind === 'fill' ? transportDecision.mode : '') ||
-    (typeof transport_mode === 'string' ? transport_mode : '');
+    (transportDecision.kind === "fill" ? transportDecision.mode : "") ||
+    (typeof transport_mode === "string" ? transport_mode : "");
+  const plateRequiringModes = [
+    "car",
+    "motorbike",
+    "cargo_van",
+    "light_truck",
+    "box_truck",
+    "vehicle_with_trailer",
+    "other_cargo_vehicle",
+  ];
   const needsPlate =
-    post.post_type === 'provider' && plateRequiringModes.includes(modeForPlate);
+    post.post_type === "provider" && plateRequiringModes.includes(modeForPlate);
   let normalizedPlate: string | null = null;
   let rawPlate: string | null = null;
   let plateId: number | null = null;
 
-  if (post.post_type === 'provider' && raw_license_plate?.trim()) {
+  if (post.post_type === "provider" && raw_license_plate?.trim()) {
     const plateResult = normalizeLicensePlate(raw_license_plate);
     if (!plateResult.ok) {
       return NextResponse.json(
@@ -352,144 +263,126 @@ export async function POST(request: Request) {
 
   if (needsPlate && !normalizedPlate) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.invalid_plate' },
+      { ok: false, errorKey: "error.invalid_plate" },
       { status: 400 },
     );
   }
 
-  // ── Geocoding (best-effort; don't block contact save on failure) ───────────
-  let origin_gps: string | null = post.origin_gps;
-  let destination_gps: string | null = null;
-  let scope: PostScope = 'city';
-
-  try {
-    const [originGeo, destGeo] = await Promise.all([
-      post.origin_address ? geocodeAddress(post.origin_address) : Promise.resolve(null),
-      post.destination_address
-        ? geocodeAddress(post.destination_address)
-        : Promise.resolve(null),
-    ]);
-    if (originGeo) {
-      origin_gps = toGeographyPointWkt(originGeo.lat, originGeo.lon);
-      const resolved = destGeo ?? originGeo;
-      destination_gps = toGeographyPointWkt(resolved.lat, resolved.lon);
-      const d = haversineKm(originGeo.lat, originGeo.lon, resolved.lat, resolved.lon);
-      if (d <= 5) scope = 'near';
-      else if (d <= 20) scope = 'city';
-      else if (d <= 200) scope = 'intercity';
-      else scope = 'cross_border';
+  // Destination-only geocode. Never geocode/overwrite origin.
+  let destinationUpdateKind: "omit" | "point" | "use_origin" = "omit";
+  let destinationGpsWkt: string | null = null;
+  const destAddress = (post.destination_address ?? "").trim();
+  if (destAddress === "") {
+    destinationUpdateKind = "use_origin";
+  } else {
+    try {
+      const destGeo = await geocodeAddress(destAddress);
+      if (destGeo) {
+        destinationUpdateKind = "point";
+        destinationGpsWkt = toGeographyPointWkt(destGeo.lat, destGeo.lon);
+      }
+    } catch {
+      // keep omit — SQL preserves stored destination_gps/scope
     }
-  } catch {
-    // Geocoding is best-effort
   }
 
-  // ── Build update payload ───────────────────────────────────────────────────
-  const updatePayload: Record<string, unknown> = {
-    origin_gps,
-    destination_gps,
-    scope,
-    locale: locale ?? 'en',
-    updated_at: new Date().toISOString(),
-  };
+  let wantActivate = false;
+  let riskErrorKey: string | null = null;
 
-  // Write contact fields only when provided (don't overwrite with nulls)
-  if (hasPhone) {
-    updatePayload.raw_phone = rawPhoneForPost;
-    updatePayload.normalized_phone = normalizedPhoneForPost;
-    updatePayload.phone_id = phoneId;
-  }
-  if (normalizedPlate !== null) {
-    updatePayload.raw_license_plate = rawPlate;
-    updatePayload.normalized_license_plate = normalizedPlate;
-    updatePayload.plate_id = plateId;
-  }
-  if (provider_name !== undefined) updatePayload.provider_name = provider_name.trim() || null;
-  if (vehicle_brand !== undefined) updatePayload.vehicle_brand = vehicle_brand.trim() || null;
-  if (vehicle_color !== undefined) updatePayload.vehicle_color = vehicle_color.trim() || null;
-
-  // ── Activation policy ─────────────────────────────────────────────────────
-  // Channel A posts are already active — contact save only, status unchanged.
-  // Channel B drafts are activated only when the Account has a verified identity.
-  // Unverified phone alone is NOT sufficient (rule 5 / rule 21 / rule 51).
-  let isActive = post.status === 'active';
-
-  if (post.status === 'draft') {
+  if (post.status === "draft") {
     const { eligible } = await getAccountActivationEligibility(supabase, user);
     if (eligible) {
-      const risk = await evaluateStage1ActivePublicationRisk(supabase, user.id, post);
+      const risk = await evaluateStage1ActivePublicationRisk(
+        supabase,
+        user.id,
+        post,
+      );
       if (!risk.allowed) {
-        const { error: contactOnlyErr } = await supabase
-          .from('posts')
-          .update(updatePayload)
-          .eq('id', postId)
-          .eq('user_id', user.id);
-        if (contactOnlyErr) {
-          return NextResponse.json(
-            { ok: false, errorKey: 'error.submit_failed' },
-            { status: 500 },
-          );
-        }
-        const filled = await applyTransportFill(supabase, {
-          postId,
-          userId: user.id,
-          decision: transportDecision,
-        });
-        if (!filled.ok) {
-          return NextResponse.json(
-            { ok: false, errorKey: filled.errorKey },
-            { status: filled.status },
-          );
-        }
-        if (hasPhone && normalizedPhoneForPost) {
-          const profileWrite = await persistAccountCurrentPhone(
-            user.id,
-            normalizedPhoneForPost,
-          );
-          if (!profileWrite.ok) {
-            console.error(
-              '[complete-contact] set_profile_phone_v87 failed',
-              formatSafePhoneWriteLog(profileWrite),
-            );
-            return NextResponse.json(clientJsonForPhoneWriteFailure(), { status: 500 });
-          }
-        }
-        return NextResponse.json(
-          { ok: false, errorKey: risk.errorKey },
-          { status: 400 },
-        );
+        riskErrorKey = risk.errorKey;
+        wantActivate = false;
+      } else {
+        wantActivate = true;
       }
-      updatePayload.status = 'active';
-      isActive = true;
     }
   }
 
-  // ── Persist ───────────────────────────────────────────────────────────────
-  const { error: updateErr } = await supabase
-    .from('posts')
-    .update(updatePayload)
-    .eq('id', postId)
-    .eq('user_id', user.id);
+  const hasProviderName = provider_name !== undefined;
+  const hasVehicleBrand = vehicle_brand !== undefined;
+  const hasVehicleColor = vehicle_color !== undefined;
 
-  if (updateErr) {
-    console.error('[complete-contact] update error:', {
-      message: updateErr.message,
-      code: updateErr.code,
+  const admin = createAdminClient();
+  const { data: txData, error: txErr } = await admin.rpc(
+    "complete_post_contact_v102",
+    {
+      p_user_id: user.id,
+      p_post_id: postId,
+      p_has_phone: hasPhone,
+      p_raw_phone: hasPhone ? rawPhoneForPost : null,
+      p_normalized_phone: hasPhone ? normalizedPhoneForPost : null,
+      p_phone_id: hasPhone ? phoneId : null,
+      p_has_plate: normalizedPlate !== null,
+      p_raw_license_plate: normalizedPlate !== null ? rawPlate : null,
+      p_normalized_license_plate: normalizedPlate,
+      p_plate_id: normalizedPlate !== null ? plateId : null,
+      p_has_provider_name: hasProviderName,
+      p_provider_name: hasProviderName
+        ? provider_name!.trim() || null
+        : null,
+      p_has_vehicle_brand: hasVehicleBrand,
+      p_vehicle_brand: hasVehicleBrand
+        ? vehicle_brand!.trim() || null
+        : null,
+      p_has_vehicle_color: hasVehicleColor,
+      p_vehicle_color: hasVehicleColor
+        ? vehicle_color!.trim() || null
+        : null,
+      p_has_transport_mode: transportDecision.kind === "fill",
+      p_transport_mode:
+        transportDecision.kind === "fill" ? transportDecision.mode : null,
+      p_destination_update_kind: destinationUpdateKind,
+      p_destination_gps: destinationGpsWkt,
+      p_activate: wantActivate,
+    },
+  );
+
+  if (txErr) {
+    console.error("[complete-contact] v102 RPC error:", {
+      code: txErr.code,
+      category: "v102_rpc_failed",
     });
     return NextResponse.json(
-      { ok: false, errorKey: 'error.submit_failed' },
+      { ok: false, errorKey: "error.submit_failed" },
       { status: 500 },
     );
   }
 
-  const filled = await applyTransportFill(supabase, {
-    postId,
-    userId: user.id,
-    decision: transportDecision,
-  });
-  if (!filled.ok) {
+  const parsed = parseV102PostsWriteRpcResult(txData, "error.submit_failed");
+  if (!parsed.ok) {
     return NextResponse.json(
-      { ok: false, errorKey: filled.errorKey },
-      { status: filled.status },
+      { ok: false, errorKey: parsed.errorKey },
+      { status: 400 },
+    );
+  }
+
+  if (riskErrorKey) {
+    if (hasPhone && normalizedPhoneForPost) {
+      const profileWrite = await persistAccountCurrentPhone(
+        user.id,
+        normalizedPhoneForPost,
+      );
+      if (!profileWrite.ok) {
+        console.error(
+          "[complete-contact] set_profile_phone_v87 failed",
+          formatSafePhoneWriteLog(profileWrite),
+        );
+        return NextResponse.json(clientJsonForPhoneWriteFailure(), {
+          status: 500,
+        });
+      }
+    }
+    return NextResponse.json(
+      { ok: false, errorKey: riskErrorKey },
+      { status: 400 },
     );
   }
 
@@ -500,18 +393,24 @@ export async function POST(request: Request) {
     );
     if (!profileWrite.ok) {
       console.error(
-        '[complete-contact] set_profile_phone_v87 failed',
+        "[complete-contact] set_profile_phone_v87 failed",
         formatSafePhoneWriteLog(profileWrite),
       );
-      return NextResponse.json(clientJsonForPhoneWriteFailure(), { status: 500 });
+      return NextResponse.json(clientJsonForPhoneWriteFailure(), {
+        status: 500,
+      });
     }
     return NextResponse.json({
       ok: true,
-      postId,
-      isActive,
+      postId: parsed.postId,
+      isActive: parsed.isActive,
       normalizedPhone: normalizedPhoneForPost,
     });
   }
 
-  return NextResponse.json({ ok: true, postId, isActive });
+  return NextResponse.json({
+    ok: true,
+    postId: parsed.postId,
+    isActive: parsed.isActive,
+  });
 }

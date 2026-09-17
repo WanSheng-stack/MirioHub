@@ -1,42 +1,17 @@
 /**
  * POST /api/posts/activate-after-identity
  *
- * Activates ONE specific draft post owned by the current Account, after the
- * Account has acquired a verified identity (Passkey / Google linking /
- * email confirmation).
- *
- * Body (required):
- *   { postId: string }
- *   - postId absent or blank → 400 error.target_post_required
- *
- * TARGETED activation only — NEVER batch-activates all user drafts.
- * The caller must supply an explicit postId because identity verification
- * grants "publish eligibility", not "publish everything ever drafted".
- *
- * Idempotency:
- *   CASE A: post is draft + account verified  → UPDATE active → { isActive: true }
- *   CASE B: post is already active            → no mutation   → { isActive: true, alreadyActive: true }
- *   CASE C: post not owned by current user    → 404
- *   CASE D: post is draft but account lacks verified identity
- *           → 403 error.identity_verification_required
- *   CASE E: postId absent/blank              → 400 error.target_post_required
- *
- * Security:
- *   - auth.getUser() (not getSession()) — server-validates JWT
- *   - .eq('user_id', user.id) enforces ownership
- *   - RLS provides a third layer of enforcement
- *   - No client-supplied identity flags accepted
+ * Activates ONE owned draft via activate_post_after_identity_v102 (service_role).
+ * Authority-complete + eligibility enforced in SQL. No direct posts.update.
  */
 
-import { NextResponse } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
-import { getAccountActivationEligibility } from '@/lib/auth/accountActivationEligibility';
-import { evaluateStage1ActivePublicationRisk } from '@/lib/auth/stage1ActiveRisk';
-
-// ---------------------------------------------------------------------------
-// Supabase client (anon key — RLS enforces ownership)
-// ---------------------------------------------------------------------------
+import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { getAccountActivationEligibility } from "@/lib/auth/accountActivationEligibility";
+import { evaluateStage1ActivePublicationRisk } from "@/lib/auth/stage1ActiveRisk";
+import { parseV102PostsWriteRpcResult } from "@/lib/posts/parseV102PostsWriteRpcResult";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -58,14 +33,9 @@ async function createClient() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// POST handler
-// ---------------------------------------------------------------------------
-
 export async function POST(request: Request) {
   const supabase = await createClient();
 
-  // auth.getUser() validates the JWT server-side — cannot be forged by client
   const {
     data: { user },
     error: authErr,
@@ -73,54 +43,49 @@ export async function POST(request: Request) {
 
   if (authErr || !user?.id) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.authentication_required' },
+      { ok: false, errorKey: "error.authentication_required" },
       { status: 401 },
     );
   }
 
-  // ── Require explicit postId — NO batch-activation fallback ────────────────
   let postId: string | null = null;
   try {
     const body = (await request.json()) as { postId?: unknown };
-    if (typeof body.postId === 'string' && body.postId.trim()) {
+    if (typeof body.postId === "string" && body.postId.trim()) {
       postId = body.postId.trim();
     }
   } catch {
-    // Malformed JSON body — postId stays null → 400 below
+    // malformed → 400 below
   }
 
   if (!postId) {
-    // Missing target = cannot know which post the user intends to publish.
-    // Returning 400 prevents any unintended batch activation.
     return NextResponse.json(
-      { ok: false, errorKey: 'error.target_post_required' },
+      { ok: false, errorKey: "error.target_post_required" },
       { status: 400 },
     );
   }
 
-  // ── Fetch targeted post with ownership check ──────────────────────────────
   const { data: post, error: fetchErr } = await supabase
-    .from('posts')
-    .select('id, user_id, status, post_type, departure_date, departure_time_window')
-    .eq('id', postId)
-    .eq('user_id', user.id) // server-enforces ownership — RLS is third layer
+    .from("posts")
+    .select("id, user_id, status, post_type, departure_date, departure_time_window")
+    .eq("id", postId)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (fetchErr) {
-    console.error('[activate-after-identity] fetch error:', {
-      message: fetchErr.message,
+    console.error("[activate-after-identity] fetch error:", {
       code: fetchErr.code,
+      category: "fetch_failed",
     });
     return NextResponse.json(
-      { ok: false, errorKey: 'error.submit_failed' },
+      { ok: false, errorKey: "error.submit_failed" },
       { status: 500 },
     );
   }
 
-  // CASE C / E: post not found or not owned by this user
   if (!post) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.not_found' },
+      { ok: false, errorKey: "error.not_found" },
       { status: 404 },
     );
   }
@@ -134,8 +99,7 @@ export async function POST(request: Request) {
     departure_time_window: string | null;
   };
 
-  // CASE B: already active → idempotent success (no mutation)
-  if (typedPost.status === 'active') {
+  if (typedPost.status === "active") {
     return NextResponse.json({
       ok: true,
       postId,
@@ -144,26 +108,26 @@ export async function POST(request: Request) {
     });
   }
 
-  // Non-draft, non-active status (e.g. matched, completed) — not eligible
-  if (typedPost.status !== 'draft') {
+  if (typedPost.status !== "draft") {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.invalid_post_status' },
+      { ok: false, errorKey: "error.invalid_post_status" },
       { status: 400 },
     );
   }
 
-  // ── Activation policy — all claims come from server-trusted sources ───────
   const { eligible } = await getAccountActivationEligibility(supabase, user);
-
-  // CASE D: post is draft but account lacks verified identity
   if (!eligible) {
     return NextResponse.json(
-      { ok: false, errorKey: 'error.identity_verification_required' },
+      { ok: false, errorKey: "error.identity_verification_required" },
       { status: 403 },
     );
   }
 
-  const risk = await evaluateStage1ActivePublicationRisk(supabase, user.id, typedPost);
+  const risk = await evaluateStage1ActivePublicationRisk(
+    supabase,
+    user.id,
+    typedPost,
+  );
   if (!risk.allowed) {
     return NextResponse.json(
       { ok: false, errorKey: risk.errorKey },
@@ -171,24 +135,44 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── CASE A: Activate the targeted draft in-place (status only) ────────────
-  const { error: updateErr } = await supabase
-    .from('posts')
-    .update({ status: 'active', updated_at: new Date().toISOString() })
-    .eq('id', postId)
-    .eq('user_id', user.id) // ownership double-check
-    .eq('status', 'draft');  // guard: only flip actual drafts
+  const admin = createAdminClient();
+  const { data: txData, error: txErr } = await admin.rpc(
+    "activate_post_after_identity_v102",
+    {
+      p_user_id: user.id,
+      p_post_id: postId,
+    },
+  );
 
-  if (updateErr) {
-    console.error('[activate-after-identity] update error:', {
-      message: updateErr.message,
-      code: updateErr.code,
+  if (txErr) {
+    console.error("[activate-after-identity] v102 RPC error:", {
+      code: txErr.code,
+      category: "v102_rpc_failed",
     });
     return NextResponse.json(
-      { ok: false, errorKey: 'error.submit_failed' },
+      { ok: false, errorKey: "error.submit_failed" },
       { status: 500 },
     );
   }
 
-  return NextResponse.json({ ok: true, postId, isActive: true });
+  const parsed = parseV102PostsWriteRpcResult(txData, "error.submit_failed");
+  if (!parsed.ok) {
+    const status =
+      parsed.errorKey === "error.not_found"
+        ? 404
+        : parsed.errorKey === "error.identity_verification_required"
+          ? 403
+          : 400;
+    return NextResponse.json(
+      { ok: false, errorKey: parsed.errorKey },
+      { status },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    postId: parsed.postId,
+    isActive: true,
+    alreadyActive: parsed.alreadyActive,
+  });
 }

@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3I-B.1 — v102A/B posts write boundary structure + pure logic.
+ * PHASE 6.7C.2C.3I-B.1B — v102A/B posts write boundary structure + pure logic.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/safety/postsWriteBoundaryV102.test.ts
  */
 
@@ -12,6 +12,10 @@ import {
   decideCompleteContactTransportV102,
   transportComboErrorKey,
 } from "@/lib/posts/completeContactTransportV102";
+import {
+  cleanGhostPresenceInput,
+  ghostPresenceRejects,
+} from "@/lib/posts/completeContactGhostPresenceV102";
 import { parseV102PostsWriteRpcResult } from "@/lib/posts/parseV102PostsWriteRpcResult";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,12 +36,26 @@ const b = read(V102B);
 const av = read(V102A_V);
 const bv = read(V102B_V);
 
+function verifyCheckCount(src: string): number {
+  const orders = [
+    ...src.matchAll(/SELECT\s+(\d+)\s+AS\s+check_order/gi),
+    ...src.matchAll(/UNION\s+ALL\s+SELECT\s+(\d+)\s*,/gi),
+  ].map((m) => Number(m[1]));
+  const uniq = [...new Set(orders)].sort((x, y) => x - y);
+  assert.ok(uniq.length > 0);
+  for (let i = 0; i < uniq.length; i++) {
+    assert.equal(uniq[i], i + 1, `check_order must be consecutive; gap at ${i + 1}`);
+  }
+  return uniq.length;
+}
+
 // ── A creates RPCs; B seals; no CREATE TABLE/TRIGGER/SEQUENCE in either ─────
 {
   assert.ok(a.includes("complete_post_contact_v102"));
   assert.ok(a.includes("activate_post_after_identity_v102"));
   assert.ok(a.includes("_posts_is_account_eligible_v102"));
   assert.ok(a.includes("_posts_validate_authority_complete_v102"));
+  assert.ok(a.includes("Ghost presence fail-closed"));
   assert.equal(a.includes("DROP POLICY"), false);
   assert.equal(/REVOKE\s+INSERT,\s*UPDATE,\s*DELETE/i.test(a), false);
   assert.equal(a.includes("publish_active_post_idempotent_v98"), true); // guard only
@@ -48,6 +66,9 @@ const bv = read(V102B_V);
   assert.ok(b.includes("DROP POLICY IF EXISTS posts_delete_own"));
   assert.ok(b.includes("REVOKE INSERT, UPDATE, DELETE ON TABLE public.posts FROM authenticated"));
   assert.ok(/REVOKE ALL ON FUNCTION public\.publish_active_post_idempotent_v98/i.test(b));
+  assert.ok(b.includes("unexpected column-level INSERT/UPDATE grant"));
+  assert.ok(b.includes("complete identity drift") || b.includes("complete_post_contact_v102"));
+  assert.ok(b.indexOf("$guard$") < b.indexOf("DROP POLICY IF EXISTS posts_update_own"));
   assert.equal(b.includes("CREATE FUNCTION"), false);
 
   for (const src of [a, b]) {
@@ -57,15 +78,31 @@ const bv = read(V102B_V);
     assert.equal(/CREATE\s+FUNCTION\s+public\.\w*v103/i.test(src), false);
   }
 
-  assert.ok(av.includes("write policies still present"));
+  assert.ok(av.includes("complete_post_contact_v102 exact identity"));
+  assert.ok(av.includes("proargnames[1:p.pronargs]") || av.includes("input_arg_names"));
+  assert.ok(av.includes("oidvectortypes"));
+  assert.ok(!av.includes("@>"));
+  assert.ok(av.includes("v98 active OID + frozen pre-seal ACL"));
+  assert.ok(av.includes("v98 shadow OID + frozen pre-seal ACL"));
+  assert.ok(av.includes("v98 commit OID + frozen pre-seal ACL"));
+  assert.ok(av.includes("v102A did not early-seal"));
   assert.ok(av.includes("authenticated DML still present; anon DML absent"));
-  assert.ok(a.includes("anon must not have posts DML"));
-  assert.ok(a.includes("authenticated DML must still exist before v102A"));
-  assert.ok(a.includes("destination_gps type drift"));
   assert.ok(av.includes("origin_gps + destination_gps extensions.geography"));
-  assert.ok(av.includes("authenticated INSERT+UPDATE+DELETE; anon none"));
+  assert.ok(av.includes("Ghost presence fail-closed") || av.includes("presence groups + ghost"));
+  assert.ok(a.includes("anon must not have posts DML"));
+  assert.ok(a.includes("destination_gps type drift"));
+
   assert.ok(bv.includes("write policies dropped"));
-  assert.ok(bv.includes("v98 writers fully revoked"));
+  assert.ok(bv.includes("helpers sealed four-way ACL"));
+  assert.ok(bv.includes("v98 writers fully revoked four-way"));
+  assert.ok(bv.includes("column-level INSERT/UPDATE absent"));
+  assert.ok(bv.includes("table-level INSERT/UPDATE/DELETE revoked"));
+  assert.ok(bv.includes("v102 writers four-way ACL"));
+  assert.ok(bv.includes("v101 writers four-way ACL unchanged"));
+
+  assert.equal(verifyCheckCount(av), 20);
+  assert.equal(verifyCheckCount(bv), 12);
+
   assert.ok(av.includes("CASE WHEN bool_and(result = 'PASS') OVER () THEN 'PASS' ELSE 'FAIL' END"));
   assert.ok(bv.includes("CASE WHEN bool_and(result = 'PASS') OVER () THEN 'PASS' ELSE 'FAIL' END"));
   assert.ok(a.includes("Shape only"));
@@ -73,6 +110,129 @@ const bv = read(V102B_V);
   assert.ok(a.includes("pg_timezone_names"));
   assert.ok(a.includes("phone_history"));
   assert.ok(a.includes("passenger_with_small_item"));
+}
+
+// ── ghost presence reject matrix ────────────────────────────────────────────
+{
+  assert.equal(ghostPresenceRejects(cleanGhostPresenceInput()), false);
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({
+        has_phone: true,
+        raw_phone: "a",
+        normalized_phone: "1",
+        phone_id: 1,
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_phone: false, raw_phone: "x" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_phone: false, normalized_phone: "1" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_phone: false, phone_id: 9 }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_plate: false, raw_license_plate: "AB" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({
+        has_plate: false,
+        normalized_license_plate: "AB",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_plate: false, plate_id: 3 }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_provider_name: false, provider_name: "n" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_vehicle_brand: false, vehicle_brand: "b" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_vehicle_color: false, vehicle_color: "c" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({ has_transport_mode: false, transport_mode: "car" }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({
+        destination_update_kind: "omit",
+        destination_gps: "POINT(0 0)",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({
+        destination_update_kind: "use_origin",
+        destination_gps: "POINT(0 0)",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({
+        destination_update_kind: "point",
+        destination_gps: null,
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    ghostPresenceRejects(
+      cleanGhostPresenceInput({
+        destination_update_kind: "point",
+        destination_gps: "POINT(20 44)",
+      }),
+    ),
+    false,
+  );
+  assert.ok(a.includes("NOT COALESCE(p_has_phone, false)"));
+  assert.ok(a.includes("NOT COALESCE(p_has_plate, false)"));
+  assert.ok(a.includes("NOT COALESCE(p_has_provider_name, false)"));
+  assert.ok(a.includes("NOT COALESCE(p_has_vehicle_brand, false)"));
+  assert.ok(a.includes("NOT COALESCE(p_has_vehicle_color, false)"));
+  assert.ok(a.includes("NOT COALESCE(p_has_transport_mode, false)"));
+  assert.ok(a.includes("p_destination_update_kind IN ('omit', 'use_origin')"));
+  assert.ok(a.includes("p_destination_update_kind = 'point' AND p_destination_gps IS NULL"));
 }
 
 // ── authority / transport pure logic ────────────────────────────────────────
@@ -105,7 +265,6 @@ const bv = read(V102B_V);
     "partial",
   );
 
-  // passenger → car only
   assert.equal(
     transportComboErrorKey({
       category: "travel",
@@ -122,7 +281,6 @@ const bv = read(V102B_V);
     }),
     null,
   );
-  // small_item_only full travel
   assert.equal(
     transportComboErrorKey({
       category: "travel",
@@ -131,7 +289,6 @@ const bv = read(V102B_V);
     }),
     null,
   );
-  // cargo_with_escort no boats
   assert.equal(
     transportComboErrorKey({
       category: "deliver",
@@ -148,7 +305,6 @@ const bv = read(V102B_V);
     }),
     null,
   );
-  // legacy null subtype full deliver
   assert.equal(
     transportComboErrorKey({
       category: "deliver",
@@ -157,7 +313,6 @@ const bv = read(V102B_V);
     }),
     null,
   );
-  // buy reject
   assert.equal(
     transportComboErrorKey({
       category: "buy",
@@ -256,6 +411,8 @@ const bv = read(V102B_V);
   assert.equal(contact.includes("geocodeAddress(post.origin_address)"), false);
   assert.equal(contact.includes("p_origin_gps"), false);
   assert.equal(contact.includes("p_locale"), false);
+  assert.ok(contact.includes("hasPhone ? rawPhoneForPost : null"));
+  assert.ok(contact.includes("p_destination_gps: destinationGpsWkt"));
 }
 
 // ── production DML / writers ────────────────────────────────────────────────

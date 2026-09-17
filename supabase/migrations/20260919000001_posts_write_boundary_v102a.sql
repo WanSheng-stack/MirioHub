@@ -498,6 +498,36 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
   END IF;
 
+  -- Ghost presence fail-closed: has=false ⇒ payload args must be NULL.
+  IF NOT COALESCE(p_has_phone, false)
+     AND (p_raw_phone IS NOT NULL OR p_normalized_phone IS NOT NULL OR p_phone_id IS NOT NULL) THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF NOT COALESCE(p_has_plate, false)
+     AND (p_raw_license_plate IS NOT NULL
+          OR p_normalized_license_plate IS NOT NULL
+          OR p_plate_id IS NOT NULL) THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF NOT COALESCE(p_has_provider_name, false) AND p_provider_name IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF NOT COALESCE(p_has_vehicle_brand, false) AND p_vehicle_brand IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF NOT COALESCE(p_has_vehicle_color, false) AND p_vehicle_color IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF NOT COALESCE(p_has_transport_mode, false) AND p_transport_mode IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF p_destination_update_kind IN ('omit', 'use_origin') AND p_destination_gps IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+  IF p_destination_update_kind = 'point' AND p_destination_gps IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error_msg', 'error.submit_failed');
+  END IF;
+
   SELECT
     user_id, status, category, service_subtype, transport_mode,
     origin_gps, origin_country_code, origin_timezone, night_policy_version,

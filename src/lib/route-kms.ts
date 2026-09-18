@@ -489,11 +489,17 @@ export async function fetchRouteDistanceClient(
   locations: string[],
   sliceOrigin?: string,
   sliceDestination?: string,
+  points?: LatLon[],
 ): Promise<RouteDistanceResult> {
   const res = await fetch("/api/route-distance", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ locations, sliceOrigin, sliceDestination }),
+    body: JSON.stringify({
+      locations,
+      sliceOrigin,
+      sliceDestination,
+      points,
+    }),
   });
   const json = (await res.json()) as {
     ok: boolean;

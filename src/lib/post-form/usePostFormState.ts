@@ -35,6 +35,7 @@ import {
   travelShowsPassengerControls,
 } from "@/lib/safety/serviceSubtypePublish";
 import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
+import type { ConfirmedAddressGeo } from "@/lib/geo/addressSearch";
 
 export type PostFormState = {
   post_type: PostType;
@@ -62,6 +63,10 @@ export type PostFormState = {
   origin_address: string;
   destination_address: string;
   service_address: string;
+  /** Confirmed candidate geos; null means address not confirmed (search-scope only). */
+  origin_geo: ConfirmedAddressGeo | null;
+  destination_geo: ConfirmedAddressGeo | null;
+  service_geo: ConfirmedAddressGeo | null;
   service_time_window: string;
   item_quantity: number;
   item_unit: ItemUnit;
@@ -171,6 +176,9 @@ export const initialFormState: PostFormState = {
   origin_address: "",
   destination_address: "",
   service_address: "",
+  origin_geo: null,
+  destination_geo: null,
+  service_geo: null,
   service_time_window: "14:00-14:30",
   item_quantity: 1,
   item_unit: "pcs",
@@ -482,6 +490,14 @@ export function usePostFormState() {
 
   const feeReady = state.estimated_kms > 0 && !state.kms_loading && !state.kms_error_key;
 
+  const feeIsCityLevelEstimate = useMemo(() => {
+    if (!visibility.route) return false;
+    return (
+      state.origin_geo?.precision === "city" ||
+      state.destination_geo?.precision === "city"
+    );
+  }, [state.destination_geo?.precision, state.origin_geo?.precision, visibility.route]);
+
   const luggageUnits = useMemo(() => totalLuggageUnits(state), [state]);
 
   const showPassengerScene = useMemo(
@@ -508,6 +524,7 @@ export function usePostFormState() {
     draftPayload,
     computedFee,
     feeReady,
+    feeIsCityLevelEstimate,
     luggageUnits,
     showPassengerScene,
   };

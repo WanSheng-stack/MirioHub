@@ -94,12 +94,29 @@ export function HomeConsole({ hallPosts, lbsPosts, compliancePosts }: Props) {
         />
         <AddressFunnel
           category={form.state.category}
-          origin={form.state.origin_address}
-          destination={form.state.destination_address}
-          serviceAddress={form.state.service_address}
-          onOrigin={(v) => form.setField("origin_address", v)}
-          onDestination={(v) => form.setField("destination_address", v)}
-          onServiceAddress={(v) => form.setField("service_address", v)}
+          originGeo={form.state.origin_geo}
+          destinationGeo={form.state.destination_geo}
+          serviceGeo={form.state.service_geo}
+          onOriginGeo={(v) => {
+            form.setField("origin_geo", v);
+            form.setField("origin_address", v?.label ?? "");
+            if (v == null) {
+              form.setField("estimated_kms", 0);
+              form.setField("kms_error_key", null);
+            }
+          }}
+          onDestinationGeo={(v) => {
+            form.setField("destination_geo", v);
+            form.setField("destination_address", v?.label ?? "");
+            if (v == null) {
+              form.setField("estimated_kms", 0);
+              form.setField("kms_error_key", null);
+            }
+          }}
+          onServiceGeo={(v) => {
+            form.setField("service_geo", v);
+            form.setField("service_address", v?.label ?? "");
+          }}
           onConfirm={() => setSheetOpen(true)}
         />
       </section>

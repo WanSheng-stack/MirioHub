@@ -4,9 +4,9 @@ import { useEffect, useRef } from "react";
 import type { PostFormState } from "@/lib/post-form/usePostFormState";
 import { isDeliverOrTravel } from "@/lib/post-payload";
 import {
-  buildDemandRouteLocations,
   fetchRouteDistanceClient,
   locationsFingerprint,
+  type LatLon,
 } from "@/lib/route-kms";
 
 type KmsController = {
@@ -16,6 +16,10 @@ type KmsController = {
   setKmsError: (errorKey: string | null) => void;
 };
 
+/**
+ * Fee/distance only after both origin and destination candidates are confirmed.
+ * Uses confirmed coordinates — never geocodes free-text alone for preview.
+ */
 export function useRouteKmsEstimation({
   state,
   setField,
@@ -28,20 +32,23 @@ export function useRouteKmsEstimation({
   useEffect(() => {
     if (!isDeliverOrTravel(state.category)) return;
 
-    const origin = state.origin_address.trim();
-    const dest = state.destination_address.trim();
-    if (!origin || !dest) {
+    const originGeo = state.origin_geo;
+    const destGeo = state.destination_geo;
+    if (originGeo == null || destGeo == null) {
       setField("estimated_kms", 0);
       setKmsError(null);
+      lastFingerprint.current = "";
       return;
     }
 
-    const locations =
-      state.post_type === "provider"
-        ? buildDemandRouteLocations(origin, dest, state.waypoints)
-        : [origin, dest];
-
-    const fp = locationsFingerprint(locations);
+    const labels = [originGeo.label, destGeo.label];
+    const points: LatLon[] = [
+      { lat: originGeo.lat, lon: originGeo.lon },
+      { lat: destGeo.lat, lon: destGeo.lon },
+    ];
+    const fp = `${locationsFingerprint(labels)}|${points
+      .map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`)
+      .join(";")}`;
     if (fp === lastFingerprint.current) return;
 
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -52,9 +59,10 @@ export function useRouteKmsEstimation({
       setKmsError(null);
 
       void fetchRouteDistanceClient(
-        locations,
-        state.post_type === "demand" ? origin : undefined,
-        state.post_type === "demand" ? dest : undefined,
+        labels,
+        state.post_type === "demand" ? originGeo.label : undefined,
+        state.post_type === "demand" ? destGeo.label : undefined,
+        points,
       ).then((result) => {
         setKmsLoading(false);
         if (!result.ok) {
@@ -76,9 +84,8 @@ export function useRouteKmsEstimation({
   }, [
     state.category,
     state.post_type,
-    state.origin_address,
-    state.destination_address,
-    state.waypoints,
+    state.origin_geo,
+    state.destination_geo,
     setField,
     setKmsLoading,
     setKmsError,

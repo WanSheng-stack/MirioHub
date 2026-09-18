@@ -67,6 +67,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     visibility,
     computedFee,
     feeReady,
+    feeIsCityLevelEstimate,
     resetCurrentPublishForm,
   } = form;
   const [stage, setStage] = useState<1 | 2>(1);
@@ -1292,6 +1293,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     feeReady && computedFee != null ? computedFee.toFixed(2) : "0.00",
                 })}
               </p>
+              {feeReady && feeIsCityLevelEstimate ? (
+                <p className="text-xs font-medium text-amber-800">
+                  {t("home.address.fee_city_estimate")}
+                </p>
+              ) : null}
             </div>
           ) : null}
           <div className="flex gap-2">

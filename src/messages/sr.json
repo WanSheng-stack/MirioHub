@@ -564,7 +564,8 @@
       "confirm_required": "Izaberite rezultat pretrage da potvrdite adresu",
       "refine_hint": "Grad je potvrđen. Možete nastaviti, ili pretražiti ulicu/naselje/orijentir unutar grada za precizniju tačku.",
       "refine_action": "Pretraži preciznije mesto u ovom gradu",
-      "fee_city_estimate": "Cena je procena — jedna ili obe tačke su na nivou grada, ne tačna ulica."
+      "fee_city_estimate": "Cena je procena — jedna ili obe tačke su na nivou grada, ne tačna ulica.",
+      "small_item_handoff_hint": "Predaja sitnog paketa usput: cena je procena rute za pogodan susret, ne tačna tačka od vrata do vrata."
     },
     "gps_prompt": "Ukljuci lokaciju za sortiranje objava po udaljenosti",
     "gps_denied": "Lokacija nedostupna — prikaz po vremenu",

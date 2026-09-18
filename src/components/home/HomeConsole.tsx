@@ -99,7 +99,7 @@ export function HomeConsole({ hallPosts, lbsPosts, compliancePosts }: Props) {
           serviceGeo={form.state.service_geo}
           onOriginGeo={(v) => {
             form.setField("origin_geo", v);
-            form.setField("origin_address", v?.label ?? "");
+            form.setField("origin_address", v?.displayName ?? "");
             if (v == null) {
               form.setField("estimated_kms", 0);
               form.setField("kms_error_key", null);
@@ -107,7 +107,7 @@ export function HomeConsole({ hallPosts, lbsPosts, compliancePosts }: Props) {
           }}
           onDestinationGeo={(v) => {
             form.setField("destination_geo", v);
-            form.setField("destination_address", v?.label ?? "");
+            form.setField("destination_address", v?.displayName ?? "");
             if (v == null) {
               form.setField("estimated_kms", 0);
               form.setField("kms_error_key", null);
@@ -115,7 +115,10 @@ export function HomeConsole({ hallPosts, lbsPosts, compliancePosts }: Props) {
           }}
           onServiceGeo={(v) => {
             form.setField("service_geo", v);
-            form.setField("service_address", v?.label ?? "");
+            form.setField("service_address", v?.displayName ?? "");
+            // Local categories hash/publish origin from service address.
+            form.setField("origin_address", v?.displayName ?? "");
+            form.setField("origin_geo", v);
           }}
           onConfirm={() => setSheetOpen(true)}
         />

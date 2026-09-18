@@ -68,6 +68,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     computedFee,
     feeReady,
     feeIsCityLevelEstimate,
+    showSmallItemHandoffHint,
     resetCurrentPublishForm,
   } = form;
   const [stage, setStage] = useState<1 | 2>(1);
@@ -1296,6 +1297,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
               {feeReady && feeIsCityLevelEstimate ? (
                 <p className="text-xs font-medium text-amber-800">
                   {t("home.address.fee_city_estimate")}
+                </p>
+              ) : null}
+              {showSmallItemHandoffHint ? (
+                <p className="text-xs font-medium text-amber-800">
+                  {t("home.address.small_item_handoff_hint")}
                 </p>
               ) : null}
             </div>

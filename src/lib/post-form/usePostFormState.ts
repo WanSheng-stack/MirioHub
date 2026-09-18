@@ -493,10 +493,20 @@ export function usePostFormState() {
   const feeIsCityLevelEstimate = useMemo(() => {
     if (!visibility.route) return false;
     return (
-      state.origin_geo?.precision === "city" ||
-      state.destination_geo?.precision === "city"
+      state.origin_geo?.resultLevel === "city" ||
+      state.destination_geo?.resultLevel === "city"
     );
-  }, [state.destination_geo?.precision, state.origin_geo?.precision, visibility.route]);
+  }, [
+    state.destination_geo?.resultLevel,
+    state.origin_geo?.resultLevel,
+    visibility.route,
+  ]);
+
+  const showSmallItemHandoffHint = useMemo(() => {
+    return (
+      state.category === "travel" && state.service_subtype === "small_item_only"
+    );
+  }, [state.category, state.service_subtype]);
 
   const luggageUnits = useMemo(() => totalLuggageUnits(state), [state]);
 
@@ -525,6 +535,7 @@ export function usePostFormState() {
     computedFee,
     feeReady,
     feeIsCityLevelEstimate,
+    showSmallItemHandoffHint,
     luggageUnits,
     showPassengerScene,
   };

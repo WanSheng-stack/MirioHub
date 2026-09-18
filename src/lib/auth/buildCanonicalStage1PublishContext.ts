@@ -2,8 +2,9 @@
  * Shared Stage-1 publish builder. Server-only.
  * Passkey verify, trusted-publish, and shadow-draft must all call this.
  *
- * Route distance uses Nominatim+OSRM. The origin Nominatim hit from the same
- * batch is returned so trusted authority can reuse it (no second geocode).
+ * When confirmed OSM place refs are present on rawPostInput (origin_geo /
+ * destination_geo / service_geo), route + authority reuse Nominatim lookup of
+ * those refs — not a free-text limit=1 re-search of display labels.
  */
 
 import "server-only";
@@ -16,6 +17,10 @@ import {
   type CanonicalStage1Payload,
   type CanonicalStage1PublishContext,
 } from "@/lib/auth/canonicalStage1";
+import {
+  readPlaceRefFromRaw,
+  resolveStage1RouteFromPlaceRefs,
+} from "@/lib/geo/resolveStage1FromPlaces";
 import {
   resolveStage1RouteWithOriginHit,
   type NominatimCoordinateHit,
@@ -40,15 +45,33 @@ export async function buildCanonicalStage1PublishContext(
 ): Promise<CanonicalStage1PublishContextWithOrigin> {
   const canonicalPayload = normalizeCanonicalStage1(rawPostInput);
 
-  const route = await resolveStage1RouteWithOriginHit(
-    {
-      category: canonicalPayload.category,
-      originAddress: canonicalPayload.origin_address,
-      destinationAddress: canonicalPayload.destination_address,
-      waypoints: canonicalPayload.waypoints,
-    },
-    deps,
-  );
+  const originPlace =
+    readPlaceRefFromRaw(rawPostInput, "origin_geo") ??
+    readPlaceRefFromRaw(rawPostInput, "service_geo");
+  const destinationPlace = readPlaceRefFromRaw(rawPostInput, "destination_geo");
+
+  const route =
+    originPlace != null
+      ? await resolveStage1RouteFromPlaceRefs(
+          {
+            category: canonicalPayload.category,
+            originAddress: canonicalPayload.origin_address,
+            destinationAddress: canonicalPayload.destination_address,
+            originPlace,
+            destinationPlace,
+          },
+          deps,
+        )
+      : await resolveStage1RouteWithOriginHit(
+          {
+            category: canonicalPayload.category,
+            originAddress: canonicalPayload.origin_address,
+            destinationAddress: canonicalPayload.destination_address,
+            waypoints: canonicalPayload.waypoints,
+          },
+          deps,
+        );
+
   if (!route.ok) {
     throw new CanonicalStage1Error(route.errorKey);
   }

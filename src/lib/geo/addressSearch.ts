@@ -1,6 +1,6 @@
 /**
- * Country-scoped address candidate search (Nominatim multi-hit).
- * Pure parsers + URL builders. Network lives in API / injectable fetch.
+ * Country-scoped address candidate search + stable Nominatim OSM refs.
+ * Pure parsers / URL builders. Network + cache live in nominatimClient.
  */
 
 import {
@@ -11,52 +11,125 @@ import {
 } from "@/lib/route-kms";
 
 export const ADDRESS_SEARCH_LIMIT = 5;
+export const ADDRESS_QUERY_MIN_LEN = 1;
+export const ADDRESS_QUERY_MAX_LEN = 200;
+export const ADDRESS_LOCALITY_MAX_LEN = 200;
 
-export type AddressPrecision = "city" | "locality" | "street" | "poi" | "other";
+export type NominatimOsmType = "node" | "way" | "relation";
 
-export type AddressSearchCandidate = {
-  /** Stable id for list keys (Nominatim place_id or lat/lon fallback). */
-  id: string;
-  primaryName: string;
-  locality: string | null;
+export type AddressResultLevel = "city" | "district" | "street" | "place";
+
+export type AddressPlaceRef = {
+  provider: "nominatim";
+  osmType: NominatimOsmType;
+  osmId: string;
+};
+
+export type AddressSearchCandidate = AddressPlaceRef & {
+  displayName: string;
+  primaryLabel: string;
+  localityLabel: string | null;
   countryCode: string;
   countryName: string | null;
   typeLabel: string | null;
-  /** Label written into the confirmed address field. */
-  displayLabel: string;
-  precision: AddressPrecision;
-  lat: number;
-  lon: number;
+  resultLevel: AddressResultLevel;
+  latitude: number;
+  longitude: number;
 };
 
-export type AddressSearchRequest = {
+/**
+ * Client-confirmed place. Server must re-resolve via osmType+osmId —
+ * preview lat/lon are display-only and never authoritative.
+ */
+export type ConfirmedAddressGeo = AddressPlaceRef & {
+  displayName: string;
+  primaryLabel: string;
+  localityLabel: string | null;
   countryCode: string;
-  query: string;
-  localityContext?: string | null;
-};
-
-export type ConfirmedAddressGeo = {
-  label: string;
-  lat: number;
-  lon: number;
-  precision: AddressPrecision;
+  resultLevel: AddressResultLevel;
   searchCountryCode: string;
   localityContext: string | null;
+  previewLatitude: number;
+  previewLongitude: number;
 };
 
-/** ISO 3166-1 alpha-2 uppercase, or null. */
-export function normalizeSearchCountryCode(raw: unknown): string | null {
+/**
+ * Strict ISO 3166-1 alpha-2: exact uppercase, no trim/pad/lowercase accept.
+ */
+export function requireExactCountryCode(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
-  const cc = raw.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(cc)) return null;
-  return cc;
+  if (!/^[A-Z]{2}$/.test(raw)) return null;
+  return raw;
 }
 
-export function classifyAddressPrecision(row: {
+/** Lenient helper for internal URL building after exact validation. */
+export function countryCodeForNominatimParam(exactUpper: string): string {
+  return exactUpper.toLowerCase();
+}
+
+export function parseNominatimOsmType(raw: unknown): NominatimOsmType | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if (v === "node" || v === "n") return "node";
+  if (v === "way" || v === "w") return "way";
+  if (v === "relation" || v === "r") return "relation";
+  return null;
+}
+
+export function parseNominatimOsmId(raw: unknown): string | null {
+  if (typeof raw === "number" && Number.isInteger(raw) && raw > 0) {
+    return String(raw);
+  }
+  if (typeof raw === "string" && /^[1-9][0-9]*$/.test(raw.trim())) {
+    return raw.trim();
+  }
+  return null;
+}
+
+export function osmLookupId(osmType: NominatimOsmType, osmId: string): string {
+  const prefix =
+    osmType === "node" ? "N" : osmType === "way" ? "W" : "R";
+  return `${prefix}${osmId}`;
+}
+
+export function parseAddressPlaceRef(raw: unknown): AddressPlaceRef | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
+  if (row.provider !== "nominatim") return null;
+  const osmType = parseNominatimOsmType(row.osmType);
+  const osmId = parseNominatimOsmId(row.osmId);
+  if (osmType == null || osmId == null) return null;
+  return { provider: "nominatim", osmType, osmId };
+}
+
+export function boundAddressQuery(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const normalized = normalizeGeocodeAddress(raw);
+  if (normalized == null) return null;
+  if (
+    normalized.length < ADDRESS_QUERY_MIN_LEN ||
+    normalized.length > ADDRESS_QUERY_MAX_LEN
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+export function boundLocalityContext(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw !== "string") return null;
+  if (raw.trim() === "") return null;
+  const normalized = normalizeGeocodeAddress(raw);
+  if (normalized == null) return null;
+  if (normalized.length > ADDRESS_LOCALITY_MAX_LEN) return null;
+  return normalized;
+}
+
+export function classifyAddressResultLevel(row: {
   type?: unknown;
   class?: unknown;
   addresstype?: unknown;
-}): AddressPrecision {
+}): AddressResultLevel {
   const tokens = [row.addresstype, row.type, row.class]
     .filter((v): v is string => typeof v === "string")
     .map((v) => v.trim().toLowerCase());
@@ -84,7 +157,7 @@ export function classifyAddressPrecision(row: {
     set.has("borough") ||
     set.has("district")
   ) {
-    return "locality";
+    return "district";
   }
   if (
     set.has("road") ||
@@ -99,18 +172,7 @@ export function classifyAddressPrecision(row: {
   ) {
     return "street";
   }
-  if (
-    set.has("amenity") ||
-    set.has("shop") ||
-    set.has("tourism") ||
-    set.has("leisure") ||
-    set.has("office") ||
-    set.has("historic") ||
-    set.has("aeroway")
-  ) {
-    return "poi";
-  }
-  return "other";
+  return "place";
 }
 
 function readAddressPart(
@@ -127,7 +189,7 @@ function readAddressPart(
 
 /**
  * Build Nominatim search URL: country-scoped, max 5 candidates.
- * First-level (no localityContext) biases settlements via featureType=settlement.
+ * countryCode must already be exact uppercase ISO2.
  */
 export function buildNominatimCandidateSearchUrl(input: {
   query: string;
@@ -135,14 +197,18 @@ export function buildNominatimCandidateSearchUrl(input: {
   localityContext?: string | null;
   limit?: number;
 }): string | null {
-  const cc = normalizeSearchCountryCode(input.countryCode);
-  const qBase = normalizeGeocodeAddress(input.query);
+  const cc = requireExactCountryCode(input.countryCode);
+  const qBase = boundAddressQuery(input.query);
   if (cc == null || qBase == null) return null;
 
   const locality =
-    typeof input.localityContext === "string"
-      ? normalizeGeocodeAddress(input.localityContext)
+    input.localityContext != null
+      ? boundLocalityContext(input.localityContext)
       : null;
+  if (input.localityContext != null && input.localityContext.trim() !== "" && locality == null) {
+    return null;
+  }
+
   const q =
     locality != null && !qBase.toLowerCase().includes(locality.toLowerCase())
       ? `${qBase}, ${locality}`
@@ -157,7 +223,7 @@ export function buildNominatimCandidateSearchUrl(input: {
     format: "jsonv2",
     limit: String(limit),
     addressdetails: "1",
-    countrycodes: cc.toLowerCase(),
+    countrycodes: countryCodeForNominatimParam(cc),
   });
   if (locality == null) {
     params.set("featureType", "settlement");
@@ -165,94 +231,161 @@ export function buildNominatimCandidateSearchUrl(input: {
   return `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 }
 
+export function buildNominatimLookupUrl(
+  refs: AddressPlaceRef[],
+): string | null {
+  if (refs.length < 1) return null;
+  const ids: string[] = [];
+  for (const ref of refs) {
+    if (ref.provider !== "nominatim") return null;
+    if (parseNominatimOsmType(ref.osmType) == null) return null;
+    if (parseNominatimOsmId(ref.osmId) == null) return null;
+    ids.push(osmLookupId(ref.osmType, ref.osmId));
+  }
+  const params = new URLSearchParams({
+    osm_ids: ids.join(","),
+    format: "jsonv2",
+    addressdetails: "1",
+  });
+  return `https://nominatim.openstreetmap.org/lookup?${params.toString()}`;
+}
+
+function parseOneNominatimRow(
+  row: Record<string, unknown>,
+  expectedCountryCode: string | null,
+): AddressSearchCandidate | null {
+  const osmType = parseNominatimOsmType(row.osm_type);
+  const osmId = parseNominatimOsmId(row.osm_id);
+  if (osmType == null || osmId == null) return null;
+
+  const lat = parseFiniteCoordinate(row.lat);
+  const lon = parseFiniteCoordinate(row.lon);
+  if (lat == null || lon == null || !isValidLatLon(lat, lon)) return null;
+
+  const address =
+    row.address != null &&
+    typeof row.address === "object" &&
+    !Array.isArray(row.address)
+      ? (row.address as Record<string, unknown>)
+      : null;
+  const hitCc = parseOptionalCountryCode(address);
+  // Fail closed: missing country_code is not filled from expected.
+  if (hitCc == null) return null;
+  if (expectedCountryCode != null && hitCc !== expectedCountryCode) return null;
+
+  const primaryLabel =
+    (typeof row.name === "string" && row.name.trim()) ||
+    readAddressPart(address, [
+      "road",
+      "pedestrian",
+      "suburb",
+      "neighbourhood",
+      "city",
+      "town",
+      "village",
+      "municipality",
+    ]) ||
+    (typeof row.display_name === "string"
+      ? row.display_name.split(",")[0]?.trim()
+      : "") ||
+    "";
+  if (!primaryLabel) return null;
+
+  const localityLabel = readAddressPart(address, [
+    "city",
+    "town",
+    "village",
+    "municipality",
+    "county",
+    "state",
+  ]);
+  const countryName = readAddressPart(address, ["country"]);
+  const typeRaw =
+    (typeof row.addresstype === "string" && row.addresstype) ||
+    (typeof row.type === "string" && row.type) ||
+    (typeof row.class === "string" && row.class) ||
+    null;
+  const resultLevel = classifyAddressResultLevel(row);
+  const displayName =
+    typeof row.display_name === "string" && row.display_name.trim()
+      ? row.display_name.trim()
+      : [primaryLabel, localityLabel, countryName].filter(Boolean).join(", ");
+
+  return {
+    provider: "nominatim",
+    osmType,
+    osmId,
+    displayName,
+    primaryLabel,
+    localityLabel,
+    countryCode: hitCc,
+    countryName,
+    typeLabel: typeRaw,
+    resultLevel,
+    latitude: lat,
+    longitude: lon,
+  };
+}
+
 /**
- * Parse Nominatim multi-hit JSON into display candidates.
- * Filters to requested country when address.country_code is present.
- * Does not return raw Nominatim payloads.
+ * Parse Nominatim multi-hit search JSON.
+ * Requires address.country_code; does not invent expected country.
  */
 export function parseNominatimCandidateResponse(
   data: unknown,
   expectedCountryCode: string,
 ): AddressSearchCandidate[] {
-  const expected = normalizeSearchCountryCode(expectedCountryCode);
+  const expected = requireExactCountryCode(expectedCountryCode);
   if (expected == null || !Array.isArray(data)) return [];
 
   const out: AddressSearchCandidate[] = [];
+  const seen = new Set<string>();
   for (const item of data) {
     if (out.length >= ADDRESS_SEARCH_LIMIT) break;
     if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
-    const row = item as Record<string, unknown>;
-    const lat = parseFiniteCoordinate(row.lat);
-    const lon = parseFiniteCoordinate(row.lon);
-    if (lat == null || lon == null || !isValidLatLon(lat, lon)) continue;
-
-    const address =
-      row.address != null &&
-      typeof row.address === "object" &&
-      !Array.isArray(row.address)
-        ? (row.address as Record<string, unknown>)
-        : null;
-    const hitCc = parseOptionalCountryCode(address);
-    if (hitCc != null && hitCc !== expected) continue;
-
-    const countryCode = hitCc ?? expected;
-    const primaryName =
-      (typeof row.name === "string" && row.name.trim()) ||
-      readAddressPart(address, [
-        "road",
-        "pedestrian",
-        "suburb",
-        "neighbourhood",
-        "city",
-        "town",
-        "village",
-        "municipality",
-      ]) ||
-      (typeof row.display_name === "string"
-        ? row.display_name.split(",")[0]?.trim()
-        : "") ||
-      "";
-    if (!primaryName) continue;
-
-    const locality = readAddressPart(address, [
-      "city",
-      "town",
-      "village",
-      "municipality",
-      "county",
-      "state",
-    ]);
-    const countryName = readAddressPart(address, ["country"]);
-    const typeRaw =
-      (typeof row.addresstype === "string" && row.addresstype) ||
-      (typeof row.type === "string" && row.type) ||
-      (typeof row.class === "string" && row.class) ||
-      null;
-    const precision = classifyAddressPrecision(row);
-    const displayLabel =
-      typeof row.display_name === "string" && row.display_name.trim()
-        ? row.display_name.trim()
-        : [primaryName, locality, countryName].filter(Boolean).join(", ");
-
-    const placeId =
-      typeof row.place_id === "number" || typeof row.place_id === "string"
-        ? String(row.place_id)
-        : `${lat.toFixed(5)}_${lon.toFixed(5)}`;
-
-    out.push({
-      id: placeId,
-      primaryName,
-      locality,
-      countryCode,
-      countryName,
-      typeLabel: typeRaw,
-      displayLabel,
-      precision,
-      lat,
-      lon,
-    });
+    const parsed = parseOneNominatimRow(
+      item as Record<string, unknown>,
+      expected,
+    );
+    if (parsed == null) continue;
+    const key = `${parsed.osmType}:${parsed.osmId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(parsed);
   }
   return out;
+}
+
+/**
+ * Parse Nominatim lookup JSON into one candidate (country optional filter).
+ */
+export function parseNominatimLookupResponse(
+  data: unknown,
+  expectedRef: AddressPlaceRef,
+  expectedCountryCode?: string | null,
+): AddressSearchCandidate | null {
+  if (!Array.isArray(data) || data.length < 1) return null;
+  const expectedCc =
+    expectedCountryCode != null
+      ? requireExactCountryCode(expectedCountryCode)
+      : null;
+  if (expectedCountryCode != null && expectedCc == null) return null;
+
+  for (const item of data) {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
+    const parsed = parseOneNominatimRow(
+      item as Record<string, unknown>,
+      expectedCc,
+    );
+    if (parsed == null) continue;
+    if (
+      parsed.osmType === expectedRef.osmType &&
+      parsed.osmId === expectedRef.osmId
+    ) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 export function candidateToConfirmed(
@@ -260,19 +393,30 @@ export function candidateToConfirmed(
   searchCountryCode: string,
 ): ConfirmedAddressGeo {
   const localityContext =
-    candidate.precision === "city"
-      ? candidate.primaryName
-      : candidate.locality ?? candidate.primaryName;
+    candidate.resultLevel === "city"
+      ? candidate.primaryLabel
+      : candidate.localityLabel ?? candidate.primaryLabel;
   return {
-    label: candidate.displayLabel,
-    lat: candidate.lat,
-    lon: candidate.lon,
-    precision: candidate.precision,
+    provider: "nominatim",
+    osmType: candidate.osmType,
+    osmId: candidate.osmId,
+    displayName: candidate.displayName,
+    primaryLabel: candidate.primaryLabel,
+    localityLabel: candidate.localityLabel,
+    countryCode: candidate.countryCode,
+    resultLevel: candidate.resultLevel,
     searchCountryCode,
     localityContext,
+    previewLatitude: candidate.latitude,
+    previewLongitude: candidate.longitude,
   };
 }
 
-export function isCityLevelPrecision(precision: AddressPrecision | null | undefined): boolean {
-  return precision === "city";
+export function isCityLevelResult(
+  level: AddressResultLevel | null | undefined,
+): boolean {
+  return level === "city";
 }
+
+/** @deprecated alias kept for call-site migration during 3J-A.1 */
+export const isCityLevelPrecision = isCityLevelResult;

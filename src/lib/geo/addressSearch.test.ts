@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3J-A — country-scoped address candidate search (offline).
+ * PHASE 6.7C.2C.3J-A.1 — trusted OSM place refs + strict search contract.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/geo/addressSearch.test.ts
  */
 
@@ -9,12 +9,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ADDRESS_SEARCH_LIMIT,
+  boundAddressQuery,
+  boundLocalityContext,
   buildNominatimCandidateSearchUrl,
+  buildNominatimLookupUrl,
   candidateToConfirmed,
-  classifyAddressPrecision,
-  isCityLevelPrecision,
-  normalizeSearchCountryCode,
+  classifyAddressResultLevel,
+  isCityLevelResult,
+  osmLookupId,
+  parseAddressPlaceRef,
   parseNominatimCandidateResponse,
+  parseNominatimLookupResponse,
+  parseNominatimOsmId,
+  parseNominatimOsmType,
+  requireExactCountryCode,
 } from "@/lib/geo/addressSearch";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,20 +30,41 @@ const repoRoot = join(here, "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
 {
-  assert.equal(normalizeSearchCountryCode("rs"), "RS");
-  assert.equal(normalizeSearchCountryCode(" RS "), "RS");
-  assert.equal(normalizeSearchCountryCode("serbia"), null);
-  assert.equal(normalizeSearchCountryCode(""), null);
-  assert.equal(normalizeSearchCountryCode(null), null);
+  assert.equal(requireExactCountryCode("RS"), "RS");
+  assert.equal(requireExactCountryCode("rs"), null);
+  assert.equal(requireExactCountryCode(" RS"), null);
+  assert.equal(requireExactCountryCode("RS "), null);
+  assert.equal(requireExactCountryCode("serbia"), null);
+  assert.equal(requireExactCountryCode(null), null);
 }
 
 {
-  assert.equal(classifyAddressPrecision({ type: "city" }), "city");
-  assert.equal(classifyAddressPrecision({ addresstype: "suburb" }), "locality");
-  assert.equal(classifyAddressPrecision({ type: "residential" }), "street");
-  assert.equal(classifyAddressPrecision({ class: "amenity", type: "cafe" }), "poi");
-  assert.equal(isCityLevelPrecision("city"), true);
-  assert.equal(isCityLevelPrecision("street"), false);
+  assert.equal(boundAddressQuery("nis"), "nis");
+  assert.equal(boundAddressQuery(""), null);
+  assert.equal(boundAddressQuery("a".repeat(201)), null);
+  assert.equal(boundLocalityContext("Niš"), "Niš");
+  assert.equal(boundLocalityContext("x".repeat(201)), null);
+}
+
+{
+  assert.equal(parseNominatimOsmType("node"), "node");
+  assert.equal(parseNominatimOsmType("N"), "node");
+  assert.equal(parseNominatimOsmType("way"), "way");
+  assert.equal(parseNominatimOsmType("relation"), "relation");
+  assert.equal(parseNominatimOsmType("foo"), null);
+  assert.equal(parseNominatimOsmId(12345), "12345");
+  assert.equal(parseNominatimOsmId("0"), null);
+  assert.equal(osmLookupId("node", "99"), "N99");
+  assert.equal(osmLookupId("way", "1"), "W1");
+  assert.equal(osmLookupId("relation", "2"), "R2");
+}
+
+{
+  assert.equal(classifyAddressResultLevel({ type: "city" }), "city");
+  assert.equal(classifyAddressResultLevel({ addresstype: "suburb" }), "district");
+  assert.equal(classifyAddressResultLevel({ type: "residential" }), "street");
+  assert.equal(classifyAddressResultLevel({ class: "amenity" }), "place");
+  assert.equal(isCityLevelResult("city"), true);
 }
 
 {
@@ -47,39 +76,26 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.ok(url!.includes("countrycodes=rs"));
   assert.ok(url!.includes("limit=5"));
   assert.ok(url!.includes("featureType=settlement"));
-  assert.ok(url!.includes(encodeURIComponent("nis")) || url!.includes("q=nis"));
-  assert.equal(url!.includes("limit=1"), false);
-}
-
-{
-  const refined = buildNominatimCandidateSearchUrl({
-    query: "Medijana",
-    countryCode: "RS",
-    localityContext: "Niš",
-  });
-  assert.ok(refined);
-  assert.ok(refined!.includes("countrycodes=rs"));
-  assert.equal(refined!.includes("featureType=settlement"), false);
-  assert.ok(decodeURIComponent(refined!).includes("Medijana"));
-  assert.ok(decodeURIComponent(refined!).includes("Niš"));
-}
-
-{
   assert.equal(
-    buildNominatimCandidateSearchUrl({ query: "nis", countryCode: "" }),
-    null,
-  );
-  assert.equal(
-    buildNominatimCandidateSearchUrl({ query: "  ", countryCode: "RS" }),
+    buildNominatimCandidateSearchUrl({ query: "nis", countryCode: "rs" }),
     null,
   );
 }
 
 {
-  // Nice (FR) must not appear when expecting RS
+  const lookup = buildNominatimLookupUrl([
+    { provider: "nominatim", osmType: "node", osmId: "42" },
+  ]);
+  assert.ok(lookup);
+  assert.ok(lookup!.includes("osm_ids=N42"));
+  assert.ok(lookup!.includes("/lookup?"));
+}
+
+{
   const frNice = [
     {
-      place_id: 1,
+      osm_type: "node",
+      osm_id: 1,
       lat: "43.7102",
       lon: "7.2620",
       name: "Nice",
@@ -90,9 +106,25 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   ];
   assert.deepEqual(parseNominatimCandidateResponse(frNice, "RS"), []);
 
+  const missingCc = [
+    {
+      osm_type: "relation",
+      osm_id: 2,
+      lat: "43.32",
+      lon: "21.89",
+      name: "Niš",
+      display_name: "Niš",
+      type: "city",
+      address: { city: "Niš", country: "Serbia" },
+    },
+  ];
+  // Missing country_code must fail closed (no expected-country fill).
+  assert.deepEqual(parseNominatimCandidateResponse(missingCc, "RS"), []);
+
   const rsNis = [
     {
-      place_id: 2,
+      osm_type: "relation",
+      osm_id: 1741449,
       lat: "43.3209",
       lon: "21.8958",
       name: "Niš",
@@ -105,38 +137,35 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
         country_code: "rs",
       },
     },
-    {
-      place_id: 3,
-      lat: "43.33",
-      lon: "21.9",
-      name: "Medijana",
-      display_name: "Medijana, Niš, Serbia",
-      type: "suburb",
-      address: {
-        suburb: "Medijana",
-        city: "Niš",
-        country: "Serbia",
-        country_code: "rs",
-      },
-    },
   ];
   const parsed = parseNominatimCandidateResponse(rsNis, "RS");
-  assert.equal(parsed.length, 2);
-  assert.equal(parsed[0].primaryName, "Niš");
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].provider, "nominatim");
+  assert.equal(parsed[0].osmType, "relation");
+  assert.equal(parsed[0].osmId, "1741449");
+  assert.equal(parsed[0].primaryLabel, "Niš");
+  assert.equal(parsed[0].resultLevel, "city");
   assert.equal(parsed[0].countryCode, "RS");
-  assert.equal(parsed[0].precision, "city");
-  assert.equal(parsed[1].precision, "locality");
-  assert.ok(!JSON.stringify(parsed).includes("43.7102")); // not asserting lat display; just structure
 
   const confirmed = candidateToConfirmed(parsed[0], "RS");
-  assert.equal(confirmed.precision, "city");
-  assert.equal(confirmed.searchCountryCode, "RS");
-  assert.ok(confirmed.localityContext);
+  assert.equal(confirmed.osmType, "relation");
+  assert.equal(confirmed.osmId, "1741449");
+  assert.equal(confirmed.displayName, "Niš, Serbia");
+  assert.ok(confirmed.previewLatitude);
+
+  const looked = parseNominatimLookupResponse(rsNis, {
+    provider: "nominatim",
+    osmType: "relation",
+    osmId: "1741449",
+  });
+  assert.ok(looked);
+  assert.equal(looked!.osmId, "1741449");
 }
 
 {
   const many = Array.from({ length: 8 }, (_, i) => ({
-    place_id: i + 10,
+    osm_type: "node",
+    osm_id: i + 10,
     lat: String(44 + i * 0.01),
     lon: "20.4",
     name: `Place ${i}`,
@@ -144,30 +173,51 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
     type: "suburb",
     address: { country_code: "rs", country: "Serbia", city: "Belgrade" },
   }));
-  assert.equal(parseNominatimCandidateResponse(many, "RS").length, ADDRESS_SEARCH_LIMIT);
+  assert.equal(
+    parseNominatimCandidateResponse(many, "RS").length,
+    ADDRESS_SEARCH_LIMIT,
+  );
+}
+
+{
+  assert.deepEqual(
+    parseAddressPlaceRef({
+      provider: "nominatim",
+      osmType: "way",
+      osmId: "99",
+    }),
+    { provider: "nominatim", osmType: "way", osmId: "99" },
+  );
+  assert.equal(parseAddressPlaceRef({ provider: "google" }), null);
 }
 
 {
   const api = read("src/app/api/geocode/search/route.ts");
-  assert.ok(api.includes("countryCode"));
-  assert.ok(api.includes("localityContext"));
-  assert.ok(api.includes("buildNominatimCandidateSearchUrl"));
-  assert.ok(api.includes("parseNominatimCandidateResponse"));
+  assert.ok(api.includes("requireExactCountryCode"));
+  assert.ok(api.includes("throttledNominatimGetJson"));
+  assert.ok(api.includes("boundAddressQuery"));
 
-  const funnel = read("src/components/home/AddressFunnel.tsx");
-  assert.ok(funnel.includes("AddressSearchField"));
-  assert.equal(funnel.includes("origin.trim()"), false);
+  const dist = read("src/app/api/route-distance/route.ts");
+  assert.ok(dist.includes("places"));
+  assert.ok(dist.includes("lookupNominatimPlaceRefsSequential"));
+  assert.ok(dist.includes("body.points"));
+  assert.equal(dist.includes("parsePoints"), false);
 
-  const field = read("src/components/home/AddressSearchField.tsx");
-  assert.ok(field.includes("/api/geocode/search"));
-  assert.ok(field.includes("confirmed"));
-  assert.equal(field.includes("debounce"), false);
-  assert.ok(field.includes("onClick={() => void runSearch()}"));
+  const builder = read("src/lib/auth/buildCanonicalStage1PublishContext.ts");
+  assert.ok(builder.includes("resolveStage1RouteFromPlaceRefs"));
+  assert.ok(builder.includes("origin_geo"));
 
   const kms = read("src/lib/post-form/useRouteKmsEstimation.ts");
-  assert.ok(kms.includes("origin_geo"));
-  assert.ok(kms.includes("destination_geo"));
-  assert.ok(kms.includes("points"));
+  assert.ok(kms.includes("places"));
+  assert.equal(kms.includes("previewLatitude"), false);
+  assert.equal(kms.includes("points:"), false);
+
+  const sheet = read("src/components/home/PublishBottomSheet.tsx");
+  assert.ok(sheet.includes("small_item_handoff_hint"));
+
+  const client = read("src/lib/geo/nominatimClient.ts");
+  assert.ok(client.includes("CACHE_TTL_MS"));
+  assert.ok(client.includes("throttledNominatimGetJson"));
 }
 
 console.log("addressSearch.test.ts: PASS");

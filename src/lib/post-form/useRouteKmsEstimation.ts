@@ -6,7 +6,6 @@ import { isDeliverOrTravel } from "@/lib/post-payload";
 import {
   fetchRouteDistanceClient,
   locationsFingerprint,
-  type LatLon,
 } from "@/lib/route-kms";
 
 type KmsController = {
@@ -18,7 +17,7 @@ type KmsController = {
 
 /**
  * Fee/distance only after both origin and destination candidates are confirmed.
- * Uses confirmed coordinates — never geocodes free-text alone for preview.
+ * Sends OSM place refs; server re-looks up — never trusts client lat/lon.
  */
 export function useRouteKmsEstimation({
   state,
@@ -41,13 +40,21 @@ export function useRouteKmsEstimation({
       return;
     }
 
-    const labels = [originGeo.label, destGeo.label];
-    const points: LatLon[] = [
-      { lat: originGeo.lat, lon: originGeo.lon },
-      { lat: destGeo.lat, lon: destGeo.lon },
+    const labels = [originGeo.displayName, destGeo.displayName];
+    const places = [
+      {
+        provider: "nominatim" as const,
+        osmType: originGeo.osmType,
+        osmId: originGeo.osmId,
+      },
+      {
+        provider: "nominatim" as const,
+        osmType: destGeo.osmType,
+        osmId: destGeo.osmId,
+      },
     ];
-    const fp = `${locationsFingerprint(labels)}|${points
-      .map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`)
+    const fp = `${locationsFingerprint(labels)}|${places
+      .map((p) => `${p.osmType}:${p.osmId}`)
       .join(";")}`;
     if (fp === lastFingerprint.current) return;
 
@@ -60,9 +67,9 @@ export function useRouteKmsEstimation({
 
       void fetchRouteDistanceClient(
         labels,
-        state.post_type === "demand" ? originGeo.label : undefined,
-        state.post_type === "demand" ? destGeo.label : undefined,
-        points,
+        state.post_type === "demand" ? originGeo.displayName : undefined,
+        state.post_type === "demand" ? destGeo.displayName : undefined,
+        places,
       ).then((result) => {
         setKmsLoading(false);
         if (!result.ok) {

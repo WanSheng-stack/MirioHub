@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
 import {
   ADDRESS_SEARCH_LIMIT,
+  boundAddressQuery,
+  boundLocalityContext,
   buildNominatimCandidateSearchUrl,
-  normalizeSearchCountryCode,
   parseNominatimCandidateResponse,
+  requireExactCountryCode,
 } from "@/lib/geo/addressSearch";
-import {
-  NOMINATIM_GEOCODE_TIMEOUT_MS,
-  NOMINATIM_USER_AGENT,
-  normalizeGeocodeAddress,
-} from "@/lib/route-kms";
+import { throttledNominatimGetJson } from "@/lib/geo/nominatimClient";
 
 export async function POST(request: Request) {
   let body: {
@@ -26,16 +24,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const countryCode = normalizeSearchCountryCode(body.countryCode);
-  const query = normalizeGeocodeAddress(
-    typeof body.query === "string" ? body.query : "",
-  );
+  const countryCode = requireExactCountryCode(body.countryCode);
   if (countryCode == null) {
     return NextResponse.json(
       { ok: false, errorKey: "error.address_country_required" },
       { status: 400 },
     );
   }
+
+  const query = boundAddressQuery(body.query);
   if (query == null) {
     return NextResponse.json(
       { ok: false, errorKey: "error.address_query_required" },
@@ -43,10 +40,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const localityContext =
-    typeof body.localityContext === "string"
-      ? normalizeGeocodeAddress(body.localityContext)
-      : null;
+  let localityContext: string | null = null;
+  if (body.localityContext != null && body.localityContext !== "") {
+    localityContext = boundLocalityContext(body.localityContext);
+    if (localityContext == null) {
+      return NextResponse.json(
+        { ok: false, errorKey: "error.address_query_required" },
+        { status: 400 },
+      );
+    }
+  }
 
   const url = buildNominatimCandidateSearchUrl({
     query,
@@ -61,40 +64,11 @@ export async function POST(request: Request) {
     );
   }
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: {
-        "User-Agent": NOMINATIM_USER_AGENT,
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(NOMINATIM_GEOCODE_TIMEOUT_MS),
-    });
-  } catch (err) {
-    const name =
-      err != null && typeof err === "object"
-        ? (err as { name?: string }).name
-        : undefined;
-    if (name === "AbortError" || name === "TimeoutError") {
-      return NextResponse.json({ ok: false, errorKey: "error.geocode_timeout" });
-    }
-    return NextResponse.json({ ok: false, errorKey: "error.geocode_failed" });
+  const fetched = await throttledNominatimGetJson(url);
+  if (!fetched.ok) {
+    return NextResponse.json({ ok: false, errorKey: fetched.errorKey });
   }
 
-  if (!res.ok) {
-    return NextResponse.json({ ok: false, errorKey: "error.geocode_failed" });
-  }
-
-  let data: unknown;
-  try {
-    data = await res.json();
-  } catch {
-    return NextResponse.json({
-      ok: false,
-      errorKey: "error.geocode_invalid_response",
-    });
-  }
-
-  const candidates = parseNominatimCandidateResponse(data, countryCode);
+  const candidates = parseNominatimCandidateResponse(fetched.data, countryCode);
   return NextResponse.json({ ok: true, candidates });
 }

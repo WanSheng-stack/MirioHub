@@ -35,24 +35,13 @@ export function AddressSearchField({
   const [countryCode, setCountryCode] = useState<string | null>(
     confirmed?.searchCountryCode ?? null,
   );
-  const [query, setQuery] = useState(confirmed?.label ?? "");
+  const [query, setQuery] = useState(confirmed?.displayName ?? "");
   const [candidates, setCandidates] = useState<AddressSearchCandidate[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [attemptedSearch, setAttemptedSearch] = useState(false);
   const [cityContext, setCityContext] = useState<ConfirmedAddressGeo | null>(
-    confirmed?.precision === "city"
-      ? confirmed
-      : confirmed?.localityContext
-        ? {
-            label: confirmed.localityContext,
-            lat: confirmed.lat,
-            lon: confirmed.lon,
-            precision: "city",
-            searchCountryCode: confirmed.searchCountryCode,
-            localityContext: confirmed.localityContext,
-          }
-        : null,
+    confirmed?.resultLevel === "city" ? confirmed : null,
   );
   const [refining, setRefining] = useState(false);
 
@@ -99,10 +88,9 @@ export function AddressSearchField({
     setSearching(true);
     setSearchError(null);
     try {
-      // Refine mode: search streets/landmarks inside the confirmed city.
       const localityContext =
         refining && cityContext != null
-          ? cityContext.localityContext ?? cityContext.label
+          ? cityContext.localityContext ?? cityContext.primaryLabel
           : null;
       const res = await fetch("/api/geocode/search", {
         method: "POST",
@@ -135,17 +123,18 @@ export function AddressSearchField({
     if (!countryCode) return;
     const next = candidateToConfirmed(candidate, countryCode);
     onConfirmedChange(next);
-    setQuery(next.label);
+    setQuery(next.displayName);
     setCandidates([]);
     setSearchError(null);
     setRefining(false);
-    if (next.precision === "city") {
+    if (next.resultLevel === "city") {
       setCityContext(next);
     } else if (cityContext == null && next.localityContext) {
       setCityContext({
         ...next,
-        label: next.localityContext,
-        precision: "city",
+        displayName: next.localityContext,
+        primaryLabel: next.localityContext,
+        resultLevel: "city",
       });
     }
   }
@@ -188,8 +177,8 @@ export function AddressSearchField({
       {confirmed != null ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-900 ring-1 ring-emerald-200/80">
           <span className="font-semibold">{t("confirmed")}</span>
-          <span className="min-w-0 flex-1 truncate">{confirmed.label}</span>
-          {confirmed.precision === "city" ? (
+          <span className="min-w-0 flex-1 truncate">{confirmed.displayName}</span>
+          {confirmed.resultLevel === "city" ? (
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-900">
               {t("city_level")}
             </span>
@@ -197,7 +186,7 @@ export function AddressSearchField({
         </div>
       ) : null}
 
-      {confirmed?.precision === "city" ? (
+      {confirmed?.resultLevel === "city" ? (
         <div className="space-y-1 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/80 px-3 py-2">
           <p className="text-xs text-zinc-600">{t("refine_hint")}</p>
           <button
@@ -233,17 +222,24 @@ export function AddressSearchField({
       {candidates.length > 0 ? (
         <ul className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
           {candidates.map((c) => (
-            <li key={c.id} className="border-b border-zinc-100 last:border-b-0">
+            <li
+              key={`${c.osmType}:${c.osmId}`}
+              className="border-b border-zinc-100 last:border-b-0"
+            >
               <button
                 type="button"
                 className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left hover:bg-emerald-50/70"
                 onClick={() => selectCandidate(c)}
               >
                 <span className="text-sm font-medium text-zinc-900">
-                  {c.primaryName}
+                  {c.primaryLabel}
                 </span>
                 <span className="text-xs text-zinc-500">
-                  {[c.locality, c.countryName ?? c.countryCode, c.typeLabel]
+                  {[
+                    c.localityLabel,
+                    c.countryName ?? c.countryCode,
+                    c.typeLabel,
+                  ]
                     .filter(Boolean)
                     .join(" · ")}
                 </span>

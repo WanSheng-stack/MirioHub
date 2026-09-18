@@ -484,12 +484,16 @@ export async function fetchOrderedRouteKmsFromCoords(
   return osrmRouteKmsFromCoords(coords, deps);
 }
 
-/** Client-side: call internal API to resolve route distance. */
+/** Client-side: resolve route distance via server place-ref lookup (no client coords). */
 export async function fetchRouteDistanceClient(
   locations: string[],
   sliceOrigin?: string,
   sliceDestination?: string,
-  points?: LatLon[],
+  places?: Array<{
+    provider: "nominatim";
+    osmType: "node" | "way" | "relation";
+    osmId: string;
+  }>,
 ): Promise<RouteDistanceResult> {
   const res = await fetch("/api/route-distance", {
     method: "POST",
@@ -498,7 +502,7 @@ export async function fetchRouteDistanceClient(
       locations,
       sliceOrigin,
       sliceDestination,
-      points,
+      places,
     }),
   });
   const json = (await res.json()) as {
@@ -594,6 +598,9 @@ export type Stage1RouteWithOriginHitResult =
  * One Nominatim pass for Stage-1: ordered route hits + OSRM kms, returning the
  * origin hit for trusted authority reuse (no second geocode).
  * onsite/errand with fewer than two locations → serverKms=0, origin resolved once.
+ *
+ * Free-text path (legacy / missing place refs). Prefer OSM place-ref resolution
+ * in server builders when confirmed refs are available.
  */
 export async function resolveStage1RouteWithOriginHit(
   args: {

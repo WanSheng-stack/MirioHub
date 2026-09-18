@@ -111,6 +111,7 @@
     "name_required": "Enter a name.",
     "invalid_plate": "Invalid license plate.",
     "address_required": "Origin and destination are required.",
+    "address_confirmation_required": "Please confirm an address from the candidate list before publishing.",
     "service_address_required": "Service address is required.",
     "fixed_reward_required": "Please enter a valid reward amount.",
     "item_price_required": "Item price is required.",
@@ -565,7 +566,7 @@
       "refine_hint": "City confirmed. You can keep going, or search a street / neighbourhood / landmark inside this city for a more precise pickup point.",
       "refine_action": "Search a more specific place in this city",
       "fee_city_estimate": "Fee is an estimate — one or both ends are city-level, not an exact street pickup.",
-      "small_item_handoff_hint": "Small-item along-the-way handoff: the fee is a route estimate for a convenient meetup, not a door-to-door precise pickup."
+      "small_item_handoff_hint": "This estimate assumes handoff near the driver's existing route. Door-to-door pickup, extra detours, or waiting may require a higher amount. A safe meeting point near the route is more likely to be accepted."
     },
     "gps_prompt": "Enable location to sort nearby live posts by distance",
     "gps_denied": "Location unavailable — showing by time",

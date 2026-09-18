@@ -486,23 +486,22 @@ export async function fetchOrderedRouteKmsFromCoords(
 
 /** Client-side: resolve route distance via server place-ref lookup (no client coords). */
 export async function fetchRouteDistanceClient(
-  locations: string[],
-  sliceOrigin?: string,
-  sliceDestination?: string,
-  places?: Array<{
+  places: Array<{
     provider: "nominatim";
     osmType: "node" | "way" | "relation";
     osmId: string;
+    countryCode: string;
   }>,
+  sliceOriginIndex?: number,
+  sliceDestinationIndex?: number,
 ): Promise<RouteDistanceResult> {
   const res = await fetch("/api/route-distance", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      locations,
-      sliceOrigin,
-      sliceDestination,
       places,
+      sliceOriginIndex,
+      sliceDestinationIndex,
     }),
   });
   const json = (await res.json()) as {

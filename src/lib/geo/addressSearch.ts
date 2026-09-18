@@ -23,13 +23,13 @@ export type AddressPlaceRef = {
   provider: "nominatim";
   osmType: NominatimOsmType;
   osmId: string;
+  countryCode: string;
 };
 
 export type AddressSearchCandidate = AddressPlaceRef & {
   displayName: string;
   primaryLabel: string;
   localityLabel: string | null;
-  countryCode: string;
   countryName: string | null;
   typeLabel: string | null;
   resultLevel: AddressResultLevel;
@@ -38,14 +38,13 @@ export type AddressSearchCandidate = AddressPlaceRef & {
 };
 
 /**
- * Client-confirmed place. Server must re-resolve via osmType+osmId —
- * preview lat/lon are display-only and never authoritative.
+ * Client-confirmed place. Server must re-resolve via osmType+osmId+countryCode —
+ * preview lat/lon and client displayName are display-only and never authoritative.
  */
 export type ConfirmedAddressGeo = AddressPlaceRef & {
   displayName: string;
   primaryLabel: string;
   localityLabel: string | null;
-  countryCode: string;
   resultLevel: AddressResultLevel;
   searchCountryCode: string;
   localityContext: string | null;
@@ -67,6 +66,7 @@ export function countryCodeForNominatimParam(exactUpper: string): string {
   return exactUpper.toLowerCase();
 }
 
+/** Lenient parser for Nominatim API response osm_type (node/N/way/…). */
 export function parseNominatimOsmType(raw: unknown): NominatimOsmType | null {
   if (typeof raw !== "string") return null;
   const v = raw.trim().toLowerCase();
@@ -76,6 +76,13 @@ export function parseNominatimOsmType(raw: unknown): NominatimOsmType | null {
   return null;
 }
 
+/** Exact client/ref osmType — no trim, no N/W/R aliases. */
+export function parseStrictOsmType(raw: unknown): NominatimOsmType | null {
+  if (raw === "node" || raw === "way" || raw === "relation") return raw;
+  return null;
+}
+
+/** Lenient parser for Nominatim API response osm_id. */
 export function parseNominatimOsmId(raw: unknown): string | null {
   if (typeof raw === "number" && Number.isInteger(raw) && raw > 0) {
     return String(raw);
@@ -86,20 +93,32 @@ export function parseNominatimOsmId(raw: unknown): string | null {
   return null;
 }
 
+/** Exact positive-integer digit string — no trim. */
+export function parseStrictOsmId(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  if (!/^[1-9][0-9]*$/.test(raw)) return null;
+  return raw;
+}
+
 export function osmLookupId(osmType: NominatimOsmType, osmId: string): string {
   const prefix =
     osmType === "node" ? "N" : osmType === "way" ? "W" : "R";
   return `${prefix}${osmId}`;
 }
 
+export function placeRefKey(ref: AddressPlaceRef): string {
+  return `${ref.osmType}:${ref.osmId}:${ref.countryCode}`;
+}
+
 export function parseAddressPlaceRef(raw: unknown): AddressPlaceRef | null {
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const row = raw as Record<string, unknown>;
   if (row.provider !== "nominatim") return null;
-  const osmType = parseNominatimOsmType(row.osmType);
-  const osmId = parseNominatimOsmId(row.osmId);
-  if (osmType == null || osmId == null) return null;
-  return { provider: "nominatim", osmType, osmId };
+  const osmType = parseStrictOsmType(row.osmType);
+  const osmId = parseStrictOsmId(row.osmId);
+  const countryCode = requireExactCountryCode(row.countryCode);
+  if (osmType == null || osmId == null || countryCode == null) return null;
+  return { provider: "nominatim", osmType, osmId, countryCode };
 }
 
 export function boundAddressQuery(raw: unknown): string | null {
@@ -238,8 +257,9 @@ export function buildNominatimLookupUrl(
   const ids: string[] = [];
   for (const ref of refs) {
     if (ref.provider !== "nominatim") return null;
-    if (parseNominatimOsmType(ref.osmType) == null) return null;
-    if (parseNominatimOsmId(ref.osmId) == null) return null;
+    if (parseStrictOsmType(ref.osmType) == null) return null;
+    if (parseStrictOsmId(ref.osmId) == null) return null;
+    if (requireExactCountryCode(ref.countryCode) == null) return null;
     ids.push(osmLookupId(ref.osmType, ref.osmId));
   }
   const params = new URLSearchParams({
@@ -357,35 +377,55 @@ export function parseNominatimCandidateResponse(
 }
 
 /**
- * Parse Nominatim lookup JSON into one candidate (country optional filter).
+ * Parse Nominatim lookup JSON into one candidate bound to expectedRef.countryCode.
  */
 export function parseNominatimLookupResponse(
   data: unknown,
   expectedRef: AddressPlaceRef,
-  expectedCountryCode?: string | null,
 ): AddressSearchCandidate | null {
-  if (!Array.isArray(data) || data.length < 1) return null;
-  const expectedCc =
-    expectedCountryCode != null
-      ? requireExactCountryCode(expectedCountryCode)
-      : null;
-  if (expectedCountryCode != null && expectedCc == null) return null;
+  const batch = parseNominatimLookupBatchResponse(data, [expectedRef]);
+  return batch?.[0] ?? null;
+}
 
+/**
+ * Parse Nominatim /lookup JSON for a deduped expected-ref list.
+ * Fail closed on missing, duplicate response rows, bad coords, missing/mismatched country.
+ * Returns candidates in the same order as expectedUniqueRefs.
+ */
+export function parseNominatimLookupBatchResponse(
+  data: unknown,
+  expectedUniqueRefs: AddressPlaceRef[],
+): AddressSearchCandidate[] | null {
+  if (!Array.isArray(data)) return null;
+  if (expectedUniqueRefs.length < 1) return null;
+
+  const byOsm = new Map<string, AddressSearchCandidate>();
   for (const item of data) {
-    if (item == null || typeof item !== "object" || Array.isArray(item)) continue;
+    if (item == null || typeof item !== "object" || Array.isArray(item)) {
+      return null;
+    }
     const parsed = parseOneNominatimRow(
       item as Record<string, unknown>,
-      expectedCc,
+      null,
     );
-    if (parsed == null) continue;
-    if (
-      parsed.osmType === expectedRef.osmType &&
-      parsed.osmId === expectedRef.osmId
-    ) {
-      return parsed;
-    }
+    if (parsed == null) return null;
+    const osmKey = `${parsed.osmType}:${parsed.osmId}`;
+    if (byOsm.has(osmKey)) return null; // duplicate response row
+    byOsm.set(osmKey, parsed);
   }
-  return null;
+
+  const out: AddressSearchCandidate[] = [];
+  for (const ref of expectedUniqueRefs) {
+    const osmKey = `${ref.osmType}:${ref.osmId}`;
+    const hit = byOsm.get(osmKey);
+    if (hit == null) return null;
+    if (hit.countryCode !== ref.countryCode) return null;
+    out.push(hit);
+  }
+
+  // Every response row must map to an expected ref (no extras).
+  if (byOsm.size !== expectedUniqueRefs.length) return null;
+  return out;
 }
 
 export function candidateToConfirmed(

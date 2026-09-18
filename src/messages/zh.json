@@ -111,6 +111,7 @@
     "name_required": "请输入姓名。",
     "invalid_plate": "车牌号格式无效。",
     "address_required": "请填写起点与终点地址。",
+    "address_confirmation_required": "请从候选列表中确认地址后再发布。",
     "service_address_required": "请填写具体服务地址。",
     "fixed_reward_required": "请填写有效的固定酬劳金额。",
     "item_price_required": "请填写商品价格。",
@@ -565,7 +566,7 @@
       "refine_hint": "已确认城市。可直接继续，或在该城市内继续搜索街道/社区/地标以获得更精确的上下车点。",
       "refine_action": "在该城市内搜索更具体地点",
       "fee_city_estimate": "费用为估算 — 起点或终点仍是城市级，不是精确街道上下车点。",
-      "small_item_handoff_hint": "小件顺路交接：费用按顺路会合点做路线估价，不是精确到门的上下车点。"
+      "small_item_handoff_hint": "此金额按顺路交接估算。若需要明显绕行、上门取送或等待，实际感谢金可能更高。选择司机路线附近的安全地点，更容易被接单。"
     },
     "gps_prompt": "开启定位以按距离排序附近活帖",
     "gps_denied": "定位不可用，暂按时间展示",

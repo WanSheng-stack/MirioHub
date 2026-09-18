@@ -111,6 +111,7 @@
     "name_required": "Unesite ime.",
     "invalid_plate": "Neispravne tablice.",
     "address_required": "Polazak i destinacija su obavezni.",
+    "address_confirmation_required": "Potvrdite adresu iz liste kandidata pre objavljivanja.",
     "service_address_required": "Adresa usluge je obavezna.",
     "fixed_reward_required": "Unesite validnu naknadu.",
     "item_price_required": "Cena artikla je obavezna.",
@@ -565,7 +566,7 @@
       "refine_hint": "Grad je potvrđen. Možete nastaviti, ili pretražiti ulicu/naselje/orijentir unutar grada za precizniju tačku.",
       "refine_action": "Pretraži preciznije mesto u ovom gradu",
       "fee_city_estimate": "Cena je procena — jedna ili obe tačke su na nivou grada, ne tačna ulica.",
-      "small_item_handoff_hint": "Predaja sitnog paketa usput: cena je procena rute za pogodan susret, ne tačna tačka od vrata do vrata."
+      "small_item_handoff_hint": "Ova procena važi za primopredaju blizu postojeće rute vozača. Preuzimanje na adresi, dodatno skretanje ili čekanje mogu zahtevati veći iznos. Bezbedno mesto blizu rute povećava šansu da neko prihvati zahtev."
     },
     "gps_prompt": "Ukljuci lokaciju za sortiranje objava po udaljenosti",
     "gps_denied": "Lokacija nedostupna — prikaz po vremenu",

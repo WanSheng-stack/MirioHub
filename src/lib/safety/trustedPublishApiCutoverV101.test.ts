@@ -24,7 +24,10 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 const TRUSTED = "src/app/api/posts/trusted-publish/route.ts";
 const SHADOW = "src/app/api/posts/shadow-draft/route.ts";
 const PASSKEY = "src/app/api/auth/passkey/verify/route.ts";
-const CANON_BUILDER = "src/lib/auth/buildCanonicalStage1PublishContext.ts";
+const CANON_BUILDER =
+  "src/lib/auth/buildCanonicalStage1PublishContextCore.ts";
+const CANON_BUILDER_SERVER =
+  "src/lib/auth/buildCanonicalStage1PublishContext.ts";
 const AUTH_FROM_HIT = "src/lib/safety/buildAuthorityForPublishFromOriginHit.ts";
 const SELECTOR_LIVE = "src/lib/safety/selectNightServicePolicyV100Live.ts";
 const ROUTE_KMS = "src/lib/route-kms.ts";
@@ -178,10 +181,15 @@ async function main() {
     }
   }
 
-  // Origin Nominatim reuse in builder + route-kms helper
+  // Origin Nominatim reuse via country-bound place refs (no free-text fallback)
   {
-    assert.ok(builder.includes("resolveStage1RouteWithOriginHit"));
+    const builderServer = read(CANON_BUILDER_SERVER);
+    assert.ok(builderServer.includes("server-only"));
+    assert.ok(builderServer.includes("buildCanonicalStage1PublishContextCore"));
+    assert.ok(builder.includes("resolveStage1RouteFromPlaceRefs"));
     assert.ok(builder.includes("originNominatimHit"));
+    assert.ok(builder.includes("error.address_confirmation_required"));
+    assert.equal(builder.includes("resolveStage1RouteWithOriginHit"), false);
     assert.equal(builder.includes("computeRouteDistance("), false);
     assert.equal(builder.includes("resolveTrustedOrigin"), false);
     const routeKms = read(ROUTE_KMS);

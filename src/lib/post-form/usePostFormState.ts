@@ -504,9 +504,17 @@ export function usePostFormState() {
 
   const showSmallItemHandoffHint = useMemo(() => {
     return (
-      state.category === "travel" && state.service_subtype === "small_item_only"
+      visibility.showFeeDemand &&
+      state.post_type === "demand" &&
+      state.category === "travel" &&
+      state.service_subtype === "small_item_only"
     );
-  }, [state.category, state.service_subtype]);
+  }, [
+    visibility.showFeeDemand,
+    state.post_type,
+    state.category,
+    state.service_subtype,
+  ]);
 
   const luggageUnits = useMemo(() => totalLuggageUnits(state), [state]);
 

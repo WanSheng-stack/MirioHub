@@ -1,16 +1,15 @@
 /**
  * Stage-1 route resolution from confirmed Nominatim OSM place refs.
- * Server-only — keeps client-safe route-kms free of process cache/throttle.
+ * Pure of Next.js server-only so unit tests can exercise the contract.
  */
 
-import "server-only";
 import {
   parseAddressPlaceRef,
   type AddressPlaceRef,
+  type AddressSearchCandidate,
 } from "@/lib/geo/addressSearch";
 import {
-  lookupNominatimPlaceRef,
-  lookupNominatimPlaceRefsSequential,
+  lookupNominatimPlaceRefsBatch,
   type NominatimHttpDeps,
 } from "@/lib/geo/nominatimClient";
 import {
@@ -22,36 +21,65 @@ import {
 
 export type ResolveStage1FromPlacesDeps = NominatimHttpDeps & OsrmFetchDeps;
 
+export type ResolveStage1FromPlacesOk = {
+  ok: true;
+  serverKms: number;
+  originNominatimHit: NominatimCoordinateHit;
+  /** Server lookup display names in input order (origin[, destination]). */
+  resolved: AddressSearchCandidate[];
+};
+
+export type ResolveStage1FromPlacesResult =
+  | ResolveStage1FromPlacesOk
+  | { ok: false; errorKey: string };
+
+function toOriginHit(c: AddressSearchCandidate): NominatimCoordinateHit {
+  return {
+    lat: c.latitude,
+    lon: c.longitude,
+    countryCode: c.countryCode,
+  };
+}
+
+/**
+ * Resolve route authority from country-bound place refs.
+ * Always one batch lookup for the place set (O+D share one HTTP even when equal).
+ */
 export async function resolveStage1RouteFromPlaceRefs(
   args: {
     category: string;
-    originAddress: string;
-    destinationAddress: string;
     originPlace: AddressPlaceRef;
     destinationPlace?: AddressPlaceRef | null;
   },
   deps: ResolveStage1FromPlacesDeps = {},
-): Promise<Stage1RouteWithOriginHitResult> {
-  const computeFromCoords = computeRouteDistanceFromCoords;
+): Promise<ResolveStage1FromPlacesResult> {
+  const singlePlace =
+    args.category === "onsite" ||
+    args.category === "errand" ||
+    args.category === "buy";
 
-  if (args.category === "onsite" || args.category === "errand") {
-    const origin = await lookupNominatimPlaceRef(args.originPlace, deps);
-    if (!origin.ok) {
-      return { ok: false, errorKey: origin.errorKey };
+  if (singlePlace) {
+    const batch = await lookupNominatimPlaceRefsBatch([args.originPlace], deps);
+    if (!batch.ok) {
+      return { ok: false, errorKey: batch.errorKey };
     }
-    const hit: NominatimCoordinateHit = {
-      lat: origin.value.latitude,
-      lon: origin.value.longitude,
-      countryCode: origin.value.countryCode,
+    const origin = batch.values[0];
+    if (origin == null) {
+      return { ok: false, errorKey: "error.geocode_failed" };
+    }
+    return {
+      ok: true,
+      serverKms: 0,
+      originNominatimHit: toOriginHit(origin),
+      resolved: [origin],
     };
-    return { ok: true, serverKms: 0, originNominatimHit: hit };
   }
 
   if (args.destinationPlace == null) {
-    return { ok: false, errorKey: "error.address_required" };
+    return { ok: false, errorKey: "error.address_confirmation_required" };
   }
 
-  const batch = await lookupNominatimPlaceRefsSequential(
+  const batch = await lookupNominatimPlaceRefsBatch(
     [args.originPlace, args.destinationPlace],
     deps,
   );
@@ -64,26 +92,26 @@ export async function resolveStage1RouteFromPlaceRefs(
     return { ok: false, errorKey: "error.geocode_failed" };
   }
 
-  const labels = [
-    args.originAddress || originHit.displayName,
-    args.destinationAddress || destHit.displayName,
-  ];
+  const labels = [originHit.displayName, destHit.displayName];
   const coords = [
     { lat: originHit.latitude, lon: originHit.longitude },
     { lat: destHit.latitude, lon: destHit.longitude },
   ];
-  const dist = await computeFromCoords(coords, labels, undefined, undefined, deps);
+  const dist = await computeRouteDistanceFromCoords(
+    coords,
+    labels,
+    undefined,
+    undefined,
+    deps,
+  );
   if (!dist.ok) {
     return { ok: false, errorKey: dist.errorKey };
   }
   return {
     ok: true,
     serverKms: dist.totalKms,
-    originNominatimHit: {
-      lat: originHit.latitude,
-      lon: originHit.longitude,
-      countryCode: originHit.countryCode,
-    },
+    originNominatimHit: toOriginHit(originHit),
+    resolved: [originHit, destHit],
   };
 }
 
@@ -92,4 +120,16 @@ export function readPlaceRefFromRaw(
   key: "origin_geo" | "destination_geo" | "service_geo",
 ): AddressPlaceRef | null {
   return parseAddressPlaceRef(rawPostInput[key]);
+}
+
+/** Narrow Stage1RouteWithOriginHitResult-compatible projection. */
+export function toStage1RouteResult(
+  result: ResolveStage1FromPlacesResult,
+): Stage1RouteWithOriginHitResult {
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    serverKms: result.serverKms,
+    originNominatimHit: result.originNominatimHit,
+  };
 }

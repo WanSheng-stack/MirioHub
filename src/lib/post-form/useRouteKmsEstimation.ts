@@ -3,10 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { PostFormState } from "@/lib/post-form/usePostFormState";
 import { isDeliverOrTravel } from "@/lib/post-payload";
-import {
-  fetchRouteDistanceClient,
-  locationsFingerprint,
-} from "@/lib/route-kms";
+import { fetchRouteDistanceClient } from "@/lib/route-kms";
 
 type KmsController = {
   state: PostFormState;
@@ -17,7 +14,8 @@ type KmsController = {
 
 /**
  * Fee/distance only after both origin and destination candidates are confirmed.
- * Sends OSM place refs; server re-looks up — never trusts client lat/lon.
+ * Sends country-bound OSM place refs; server re-looks up — never trusts client
+ * lat/lon or display labels for authority.
  */
 export function useRouteKmsEstimation({
   state,
@@ -40,22 +38,21 @@ export function useRouteKmsEstimation({
       return;
     }
 
-    const labels = [originGeo.displayName, destGeo.displayName];
     const places = [
       {
         provider: "nominatim" as const,
         osmType: originGeo.osmType,
         osmId: originGeo.osmId,
+        countryCode: originGeo.countryCode,
       },
       {
         provider: "nominatim" as const,
         osmType: destGeo.osmType,
         osmId: destGeo.osmId,
+        countryCode: destGeo.countryCode,
       },
     ];
-    const fp = `${locationsFingerprint(labels)}|${places
-      .map((p) => `${p.osmType}:${p.osmId}`)
-      .join(";")}`;
+    const fp = places.map((p) => `${p.osmType}:${p.osmId}:${p.countryCode}`).join(";");
     if (fp === lastFingerprint.current) return;
 
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -65,12 +62,7 @@ export function useRouteKmsEstimation({
       setKmsLoading(true);
       setKmsError(null);
 
-      void fetchRouteDistanceClient(
-        labels,
-        state.post_type === "demand" ? originGeo.displayName : undefined,
-        state.post_type === "demand" ? destGeo.displayName : undefined,
-        places,
-      ).then((result) => {
+      void fetchRouteDistanceClient(places, 0, 1).then((result) => {
         setKmsLoading(false);
         if (!result.ok) {
           setKmsError(result.errorKey);

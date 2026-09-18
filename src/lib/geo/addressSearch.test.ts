@@ -1,5 +1,5 @@
 /**
- * PHASE 6.7C.2C.3J-A.1 — trusted OSM place refs + strict search contract.
+ * PHASE 6.7C.2C.3J-A.1 / 1A — trusted OSM place refs + strict search contract.
  * Run: npx tsx --tsconfig tsconfig.json src/lib/geo/addressSearch.test.ts
  */
 
@@ -22,6 +22,8 @@ import {
   parseNominatimLookupResponse,
   parseNominatimOsmId,
   parseNominatimOsmType,
+  parseStrictOsmId,
+  parseStrictOsmType,
   requireExactCountryCode,
 } from "@/lib/geo/addressSearch";
 
@@ -52,8 +54,14 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.equal(parseNominatimOsmType("way"), "way");
   assert.equal(parseNominatimOsmType("relation"), "relation");
   assert.equal(parseNominatimOsmType("foo"), null);
+  assert.equal(parseStrictOsmType("node"), "node");
+  assert.equal(parseStrictOsmType("N"), null);
+  assert.equal(parseStrictOsmType(" node"), null);
   assert.equal(parseNominatimOsmId(12345), "12345");
   assert.equal(parseNominatimOsmId("0"), null);
+  assert.equal(parseStrictOsmId("99"), "99");
+  assert.equal(parseStrictOsmId(" 99"), null);
+  assert.equal(parseStrictOsmId(99), null);
   assert.equal(osmLookupId("node", "99"), "N99");
   assert.equal(osmLookupId("way", "1"), "W1");
   assert.equal(osmLookupId("relation", "2"), "R2");
@@ -84,11 +92,27 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
 {
   const lookup = buildNominatimLookupUrl([
-    { provider: "nominatim", osmType: "node", osmId: "42" },
+    {
+      provider: "nominatim",
+      osmType: "node",
+      osmId: "42",
+      countryCode: "RS",
+    },
   ]);
   assert.ok(lookup);
   assert.ok(lookup!.includes("osm_ids=N42"));
   assert.ok(lookup!.includes("/lookup?"));
+  assert.equal(
+    buildNominatimLookupUrl([
+      {
+        provider: "nominatim",
+        osmType: "node",
+        osmId: "42",
+        countryCode: "rs",
+      },
+    ]),
+    null,
+  );
 }
 
 {
@@ -118,7 +142,6 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
       address: { city: "Niš", country: "Serbia" },
     },
   ];
-  // Missing country_code must fail closed (no expected-country fill).
   assert.deepEqual(parseNominatimCandidateResponse(missingCc, "RS"), []);
 
   const rsNis = [
@@ -150,6 +173,7 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   const confirmed = candidateToConfirmed(parsed[0], "RS");
   assert.equal(confirmed.osmType, "relation");
   assert.equal(confirmed.osmId, "1741449");
+  assert.equal(confirmed.countryCode, "RS");
   assert.equal(confirmed.displayName, "Niš, Serbia");
   assert.ok(confirmed.previewLatitude);
 
@@ -157,9 +181,19 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
     provider: "nominatim",
     osmType: "relation",
     osmId: "1741449",
+    countryCode: "RS",
   });
   assert.ok(looked);
   assert.equal(looked!.osmId, "1741449");
+  assert.equal(
+    parseNominatimLookupResponse(rsNis, {
+      provider: "nominatim",
+      osmType: "relation",
+      osmId: "1741449",
+      countryCode: "HU",
+    }),
+    null,
+  );
 }
 
 {
@@ -185,10 +219,24 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
       provider: "nominatim",
       osmType: "way",
       osmId: "99",
+      countryCode: "RS",
     }),
-    { provider: "nominatim", osmType: "way", osmId: "99" },
+    {
+      provider: "nominatim",
+      osmType: "way",
+      osmId: "99",
+      countryCode: "RS",
+    },
   );
   assert.equal(parseAddressPlaceRef({ provider: "google" }), null);
+  assert.equal(
+    parseAddressPlaceRef({
+      provider: "nominatim",
+      osmType: "way",
+      osmId: "99",
+    }),
+    null,
+  );
 }
 
 {
@@ -199,16 +247,20 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
   const dist = read("src/app/api/route-distance/route.ts");
   assert.ok(dist.includes("places"));
-  assert.ok(dist.includes("lookupNominatimPlaceRefsSequential"));
+  assert.ok(dist.includes("lookupNominatimPlaceRefsBatch"));
   assert.ok(dist.includes("body.points"));
   assert.equal(dist.includes("parsePoints"), false);
 
-  const builder = read("src/lib/auth/buildCanonicalStage1PublishContext.ts");
+  const builder = read(
+    "src/lib/auth/buildCanonicalStage1PublishContextCore.ts",
+  );
   assert.ok(builder.includes("resolveStage1RouteFromPlaceRefs"));
   assert.ok(builder.includes("origin_geo"));
+  assert.equal(builder.includes("resolveStage1RouteWithOriginHit"), false);
 
   const kms = read("src/lib/post-form/useRouteKmsEstimation.ts");
   assert.ok(kms.includes("places"));
+  assert.ok(kms.includes("countryCode"));
   assert.equal(kms.includes("previewLatitude"), false);
   assert.equal(kms.includes("points:"), false);
 
@@ -217,6 +269,8 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
   const client = read("src/lib/geo/nominatimClient.ts");
   assert.ok(client.includes("CACHE_TTL_MS"));
+  assert.ok(client.includes("inFlight"));
+  assert.ok(client.includes("lookupNominatimPlaceRefsBatch"));
   assert.ok(client.includes("throttledNominatimGetJson"));
 }
 

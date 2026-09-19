@@ -72,6 +72,11 @@ export function ServiceSubtypeFields({ form }: Props) {
                 >
                   {t(`home.sheet.subtype.${role}.${subtype}` as never)}
                 </span>
+                {state.category === "travel" ? (
+                  <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                    {t(`home.sheet.subtype_desc.${role}.${subtype}` as never)}
+                  </span>
+                ) : null}
               </span>
             </label>
           );

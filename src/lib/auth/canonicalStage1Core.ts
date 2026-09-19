@@ -10,6 +10,7 @@
 
 import crypto from "crypto";
 import { calculateFinalFee } from "@/lib/post-fee";
+import { travelItemUnitsMissingErrorKey } from "@/lib/post-payload";
 import { mergeDepartureWindow } from "@/lib/post-time-windows";
 import {
   parsePublishTransportMode,
@@ -253,6 +254,18 @@ export function normalizeCanonicalStage1(
     max_companions = null;
   }
 
+  const luggageMissing = travelItemUnitsMissingErrorKey({
+    category: category as CanonicalStage1Payload["category"],
+    service_subtype,
+    count_small,
+    count_medium,
+    count_large,
+    count_xlarge,
+  });
+  if (luggageMissing) {
+    throw new CanonicalStage1Error(luggageMissing);
+  }
+
   try {
     assertPublishSubtypeTransportLegal({
       category,
@@ -302,6 +315,7 @@ export function computeServerFeeMinor(
   const feeMajor = calculateFinalFee(serverKms, {
     post_type: payload.post_type,
     category: payload.category,
+    service_subtype: payload.service_subtype,
     count_small: payload.count_small,
     count_medium: payload.count_medium,
     count_large: payload.count_large,

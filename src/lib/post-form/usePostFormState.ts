@@ -523,6 +523,7 @@ export function usePostFormState() {
       isPassengerScene({
         category: state.category,
         escort_seats: state.escort_seats,
+        service_subtype: state.service_subtype,
       }) || travelShowsPassengerControls(state.service_subtype),
     [state.category, state.escort_seats, state.service_subtype],
   );

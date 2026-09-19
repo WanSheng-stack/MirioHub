@@ -113,6 +113,7 @@
     "address_required": "Origin and destination are required.",
     "address_confirmation_required": "Please confirm an address from the candidate list before publishing.",
     "service_address_required": "Service address is required.",
+    "luggage_items_required": "Please enter luggage or item counts (at least 1 unit).",
     "fixed_reward_required": "Please enter a valid reward amount.",
     "item_price_required": "Item price is required.",
     "reference_photo_required": "Reference photo is required for negotiable pricing.",
@@ -604,20 +605,34 @@
       "close": "Close",
       "service_subtype_legend": "Service type for this trip",
       "service_subtype_hint": "Choose explicitly. The system will not infer this from vehicle or luggage.",
+      "passenger_included_luggage_note": "Each passenger already includes 4 free units of ordinary carry-on luggage — no item-by-item entry needed.",
+      "passenger_extra_luggage_note": "Each passenger gets 4 free units; only the excess is charged. Enter extra luggage or items.",
       "subtype": {
         "demand": {
           "passenger": "I need a ride",
-          "small_item_only": "I only need a small item brought along",
-          "passenger_with_small_item": "I need a ride and will bring a small item",
+          "small_item_only": "Small item only (passenger does not travel along)",
+          "passenger_with_small_item": "Ride with extra luggage or items",
           "cargo_only": "Cargo only — no escort rider",
           "cargo_with_escort": "Cargo with one escort rider"
         },
         "provider": {
           "passenger": "Passengers only",
-          "small_item_only": "Small items only",
-          "passenger_with_small_item": "Passengers and small items",
+          "small_item_only": "Small items only (no passenger along)",
+          "passenger_with_small_item": "Passengers with extra luggage or items",
           "cargo_only": "Cargo only — no escort seat",
           "cargo_with_escort": "Cargo with one escort seat available"
+        }
+      },
+      "subtype_desc": {
+        "demand": {
+          "passenger": "Ordinary ride. Each passenger includes 4 units of ordinary carry-on luggage.",
+          "small_item_only": "Item handoff only — the passenger does not travel along. Priced with cargo coefficients.",
+          "passenger_with_small_item": "Ride plus extra luggage or items; only units above 4 per passenger are charged."
+        },
+        "provider": {
+          "passenger": "Passenger rides. Each passenger includes 4 free ordinary carry-on units.",
+          "small_item_only": "Carry items only — no passenger seats. Priced with cargo coefficients.",
+          "passenger_with_small_item": "Passengers plus extra luggage or items; excess over the free allowance is charged."
         }
       }
     }

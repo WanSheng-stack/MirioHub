@@ -113,6 +113,7 @@
     "address_required": "请填写起点与终点地址。",
     "address_confirmation_required": "请从候选列表中确认地址后再发布。",
     "service_address_required": "请填写具体服务地址。",
+    "luggage_items_required": "请填写行李或物品数量（至少 1 单位）。",
     "fixed_reward_required": "请填写有效的固定酬劳金额。",
     "item_price_required": "请填写商品价格。",
     "reference_photo_required": "价格面议时必须上传商品参考照片。",
@@ -604,20 +605,34 @@
       "close": "关闭",
       "service_subtype_legend": "本次服务类型",
       "service_subtype_hint": "请明确选择；系统不会根据载具或行李自动推断。",
+      "passenger_included_luggage_note": "每名乘客已包含 4 单位普通随身行李，无需逐件填写。",
+      "passenger_extra_luggage_note": "每名乘客免费 4 单位；仅对超出部分按件计费。请填写额外行李或物品数量。",
       "subtype": {
         "demand": {
           "passenger": "我要搭车",
-          "small_item_only": "只需顺路捎带小件",
-          "passenger_with_small_item": "我要搭车并携带小件",
+          "small_item_only": "只需顺路捎带小件（乘客不同行）",
+          "passenger_with_small_item": "搭车并携带额外行李或物品",
           "cargo_only": "只运货物，无需押货人员",
           "cargo_with_escort": "运货并需要 1 名押货人员同行"
         },
         "provider": {
           "passenger": "只搭载乘客",
-          "small_item_only": "只顺路捎带小件",
-          "passenger_with_small_item": "可搭载乘客并捎带小件",
+          "small_item_only": "只顺路捎带小件（乘客不同行）",
+          "passenger_with_small_item": "可搭载乘客并携带额外行李或物品",
           "cargo_only": "只承运货物，不安排押货人员",
           "cargo_with_escort": "可承运货物并安排 1 名押货人员"
+        }
+      },
+      "subtype_desc": {
+        "demand": {
+          "passenger": "普通搭车。每名乘客隐含包含 4 单位普通随身行李。",
+          "small_item_only": "仅托运/捎带物品，乘客本人不同行；按货物系数计价。",
+          "passenger_with_small_item": "搭车并携带额外行李或物品；超出每名乘客 4 单位的部分另行计费。"
+        },
+        "provider": {
+          "passenger": "普通载客。每名乘客已含 4 单位普通随身行李额度。",
+          "small_item_only": "只捎带物品，不载乘客同行；按货物系数计价。",
+          "passenger_with_small_item": "可载客并接收额外行李或物品；超出免费额度部分计费。"
         }
       }
     }

@@ -153,7 +153,14 @@ const hashPassenger = hashCanonicalStage1(
   500,
 );
 const hashSmall = hashCanonicalStage1(
-  normalizeCanonicalStage1({ ...baseRaw, service_subtype: "small_item_only" }),
+  normalizeCanonicalStage1({
+    ...baseRaw,
+    service_subtype: "small_item_only",
+    count_small: 1,
+    escort_seats: 0,
+    max_companions: 0,
+    share_mode: null,
+  }),
   40,
   500,
 );

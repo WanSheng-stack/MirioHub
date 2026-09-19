@@ -113,6 +113,7 @@
     "address_required": "Polazak i destinacija su obavezni.",
     "address_confirmation_required": "Potvrdite adresu iz liste kandidata pre objavljivanja.",
     "service_address_required": "Adresa usluge je obavezna.",
+    "luggage_items_required": "Unesite broj prtljaga ili stvari (najmanje 1 jedinica).",
     "fixed_reward_required": "Unesite validnu naknadu.",
     "item_price_required": "Cena artikla je obavezna.",
     "reference_photo_required": "Referentna fotografija je obavezna za dogovor.",
@@ -604,20 +605,34 @@
       "close": "Zatvori",
       "service_subtype_legend": "Tip usluge za ovu vožnju",
       "service_subtype_hint": "Izaberite eksplicitno. Sistem neće nagađati na osnovu vozila ili prtljaga.",
+      "passenger_included_luggage_note": "Svaki putnik već uključuje 4 besplatne jedinice običnog ručnog prtljaga — nije potrebno unositi komad po komad.",
+      "passenger_extra_luggage_note": "Svaki putnik ima 4 besplatne jedinice; naplaćuje se samo višak. Unesite dodatni prtljag ili stvari.",
       "subtype": {
         "demand": {
           "passenger": "Treba mi prevoz",
-          "small_item_only": "Samo da mi se ponese mali paket",
-          "passenger_with_small_item": "Treba mi prevoz i nosim mali paket",
+          "small_item_only": "Samo mali paket (putnik ne putuje)",
+          "passenger_with_small_item": "Prevoz sa dodatnim prtljagom ili stvarima",
           "cargo_only": "Samo teret — bez pratnje",
           "cargo_with_escort": "Teret sa jednom osobom za pratnju"
         },
         "provider": {
           "passenger": "Samo putnici",
-          "small_item_only": "Samo mali paketi",
-          "passenger_with_small_item": "Putnici i mali paketi",
+          "small_item_only": "Samo mali paketi (bez putnika)",
+          "passenger_with_small_item": "Putnici sa dodatnim prtljagom ili stvarima",
           "cargo_only": "Samo teret — bez mesta za pratnju",
           "cargo_with_escort": "Teret sa jednim mestom za pratnju"
+        }
+      },
+      "subtype_desc": {
+        "demand": {
+          "passenger": "Obična vožnja. Svaki putnik uključuje 4 jedinice običnog ručnog prtljaga.",
+          "small_item_only": "Samo predaja stvari — putnik ne putuje. Cena po teretnim koeficijentima.",
+          "passenger_with_small_item": "Vožnja plus dodatni prtljag ili stvari; naplaćuju se samo jedinice iznad 4 po putniku."
+        },
+        "provider": {
+          "passenger": "Prevoz putnika. Svaki putnik ima 4 besplatne jedinice običnog ručnog prtljaga.",
+          "small_item_only": "Samo prenos stvari — bez sedišta za putnike. Cena po teretnim koeficijentima.",
+          "passenger_with_small_item": "Putnici plus dodatni prtljag ili stvari; višak iznad besplatnog limita se naplaćuje."
         }
       }
     }

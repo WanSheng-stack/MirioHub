@@ -22,6 +22,7 @@ import {
 } from "@/lib/profile/phoneSaveClient";
 import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
 import { getTransportPolicy } from "@/lib/transport/transportPolicy";
+import { travelItemUnitsMissingErrorKey } from "@/lib/post-payload";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -336,6 +337,21 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     if (isPublishing) return;
     setIsPublishing(true);
     setErrorKey(null);
+
+    // Fail closed before auth/Passkey: travel item subtypes need counts > 0.
+    const luggageErr = travelItemUnitsMissingErrorKey({
+      category: state.category,
+      service_subtype: state.service_subtype,
+      count_small: state.count_small,
+      count_medium: state.count_medium,
+      count_large: state.count_large,
+      count_xlarge: state.count_xlarge,
+    });
+    if (luggageErr) {
+      setErrorKey(luggageErr.replace(/^error\./, ""));
+      setIsPublishing(false);
+      return;
+    }
 
     // A completed ACTIVE intent must not reuse its client_request_id for the
     // next genuine Stage 1 publish. Draft cancel/retry/reopen keep the old id.
@@ -1065,6 +1081,17 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                         </fieldset>
                       </div>
                     </div>
+
+                    {state.service_subtype === "passenger" ? (
+                      <p className="text-xs leading-5 text-zinc-500">
+                        {t("home.sheet.passenger_included_luggage_note")}
+                      </p>
+                    ) : null}
+                    {state.service_subtype === "passenger_with_small_item" ? (
+                      <p className="text-xs leading-5 text-zinc-500">
+                        {t("home.sheet.passenger_extra_luggage_note")}
+                      </p>
+                    ) : null}
 
                     {state.show_private_buyout_notice ? (
                       <p className="text-xs leading-5 text-amber-800">

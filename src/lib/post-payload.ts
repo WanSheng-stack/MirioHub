@@ -119,18 +119,56 @@ export function isOnsiteOrErrand(category: PostCategory): boolean {
   return category === "onsite" || category === "errand";
 }
 
-export function isPassengerScene(payload: Pick<PostPayload, "category" | "escort_seats">): boolean {
+export function isPassengerScene(
+  payload: Pick<PostPayload, "category" | "escort_seats" | "service_subtype">,
+): boolean {
+  if (payload.category === "travel") {
+    return (
+      payload.service_subtype === "passenger" ||
+      payload.service_subtype === "passenger_with_small_item"
+    );
+  }
   return (
-    payload.category === "travel" ||
-    (payload.category === "deliver" && (payload.escort_seats ?? 0) >= 1)
+    payload.category === "deliver" && (payload.escort_seats ?? 0) >= 1
   );
 }
 
+/** Frozen unit weights — keep in sync with post-fee. */
 export function totalLuggageUnits(payload: Pick<PostPayload, "count_small" | "count_medium" | "count_large" | "count_xlarge">): number {
   return (
-    payload.count_small * 1 +
-    payload.count_medium * 3 +
-    payload.count_large * 6 +
-    payload.count_xlarge * 12
+    (payload.count_small ?? 0) * 1 +
+    (payload.count_medium ?? 0) * 3 +
+    (payload.count_large ?? 0) * 6 +
+    (payload.count_xlarge ?? 0) * 12
   );
+}
+
+/**
+ * Travel subtypes that require explicit item counts (> 0) before publish.
+ * passenger implies ordinary carry-on and does not use counters.
+ */
+export function travelSubtypeRequiresItemUnits(
+  serviceSubtype: ServiceSubtype | null | undefined,
+): boolean {
+  return (
+    serviceSubtype === "small_item_only" ||
+    serviceSubtype === "passenger_with_small_item"
+  );
+}
+
+export function travelItemUnitsMissingErrorKey(
+  payload: Pick<
+    PostPayload,
+    | "category"
+    | "service_subtype"
+    | "count_small"
+    | "count_medium"
+    | "count_large"
+    | "count_xlarge"
+  >,
+): string | null {
+  if (payload.category !== "travel") return null;
+  if (!travelSubtypeRequiresItemUnits(payload.service_subtype)) return null;
+  if (totalLuggageUnits(payload) > 0) return null;
+  return "error.luggage_items_required";
 }

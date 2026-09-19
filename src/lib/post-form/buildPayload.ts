@@ -1,6 +1,10 @@
 import type { PostFormState } from "@/lib/post-form/usePostFormState";
 import type { PostPayload } from "@/lib/post-payload";
-import { isDeliverOrTravel, isOnsiteOrErrand } from "@/lib/post-payload";
+import {
+  isDeliverOrTravel,
+  isOnsiteOrErrand,
+  travelItemUnitsMissingErrorKey,
+} from "@/lib/post-payload";
 import { buildRawPhone, normalizeLicensePlate, normalizePhone } from "@/lib/post-validation";
 import { calculateFinalFee } from "@/lib/post-fee";
 import { mergeDepartureWindow } from "@/lib/post-time-windows";
@@ -159,6 +163,17 @@ export function buildPayloadFromForm(
         cleaned.count_large +
         cleaned.count_xlarge >
         0;
+    const luggageErr = travelItemUnitsMissingErrorKey({
+      category: state.category,
+      service_subtype: state.service_subtype,
+      count_small: luggageActive ? cleaned.count_small : 0,
+      count_medium: luggageActive ? cleaned.count_medium : 0,
+      count_large: luggageActive ? cleaned.count_large : 0,
+      count_xlarge: luggageActive ? cleaned.count_xlarge : 0,
+    });
+    if (luggageErr) {
+      return { ok: false, errorKey: luggageErr };
+    }
     if (state.post_type === "demand") {
       payload.fee_amount = calculateFinalFee(state.estimated_kms, payload);
     }

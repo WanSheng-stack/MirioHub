@@ -291,6 +291,7 @@
     "save": "Sačuvaj",
     "saved": "Sačuvano",
     "phoneSaved": "Broj telefona je sačuvan",
+    "phoneStatusUnverified": "Nije verifikovan",
     "quota": "Preostali besplatni pregledi",
     "premium": "Premium",
     "premiumBadge": "Premium",
@@ -685,6 +686,7 @@
     "savePhone": "Sačuvaj broj",
     "savingPhone": "Čuvanje…",
     "phoneSaved": "Broj telefona je sačuvan",
+    "phoneStatusUnverified": "Nije verifikovan",
     "skip": "Preskoči za sada · Pogledaj poklapanja"
   },
   "matchRequest": {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/googleProfileName";
 import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
 import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
+import { PhonePersistedStatus } from "@/components/phone/PhonePersistedStatus";
 import {
   DEFAULT_PHONE_COUNTRY,
   parseStoredPhone,
@@ -264,11 +265,15 @@ export default function ProfilePage() {
   });
   const [nameSaving, setNameSaving] = useState(false);
   const [phoneSaving, setPhoneSaving] = useState(false);
-  const [phoneSaved, setPhoneSaved] = useState(false);
+  /** Transient success toast only — not a long-lived badge. */
+  const [phoneSavedFlash, setPhoneSavedFlash] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
   const nameFillAttemptedRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const endPhoneSavedFlash = useCallback(() => {
+    setPhoneSavedFlash(false);
+  }, []);
 
   const bankRef = useMemo(
     () => profile?.bank_reference_code ?? (user ? bankRefFromUuid(user.id) : "------"),
@@ -564,7 +569,7 @@ export default function ProfilePage() {
 
   function onPhoneFieldsChange(next: { country: string; local: string }) {
     const cleared = resetPhoneFeedback();
-    setPhoneSaved(cleared.phoneSaved);
+    setPhoneSavedFlash(cleared.phoneSaved);
     setPhoneError(cleared.phoneError);
     setPhoneOverride({
       stored: storedPhone,
@@ -575,7 +580,7 @@ export default function ProfilePage() {
 
   async function savePhone() {
     if (phoneSaving) return;
-    setPhoneSaved(false);
+    setPhoneSavedFlash(false);
     setPhoneError(null);
     if (phoneLocal.trim()) {
       const parsed = parseUserPhone({ countryCode: phoneCountry, nationalInput: phoneLocal });
@@ -605,7 +610,8 @@ export default function ProfilePage() {
         country: phoneCountry,
         local: interpreted.nationalDisplay || "",
       });
-      setPhoneSaved(true);
+      // Flash only when a non-empty number was persisted.
+      setPhoneSavedFlash(Boolean(interpreted.normalizedPhone?.trim()));
     } catch {
       setPhoneError("error.phone_save_failed");
     } finally {
@@ -915,9 +921,13 @@ export default function ProfilePage() {
           {fieldErrorText(phoneError)}
         </p>
       ) : null}
-      {phoneSaved ? (
-        <p className="mt-2 text-sm font-medium text-emerald-700">{t("phoneSaved")}</p>
-      ) : null}
+      <PhonePersistedStatus
+        persistedNormalizedPhone={storedPhone}
+        savedFlashActive={phoneSavedFlash}
+        onSavedFlashEnd={endPhoneSavedFlash}
+        savedLabel={t("phoneSaved")}
+        unverifiedLabel={t("phoneStatusUnverified")}
+      />
     </section>
 
     <div className="mt-4 space-y-2">

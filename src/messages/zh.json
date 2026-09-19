@@ -291,6 +291,7 @@
     "save": "保存",
     "saved": "已保存",
     "phoneSaved": "手机号已保存",
+    "phoneStatusUnverified": "未验证",
     "quota": "剩余免费查看次数",
     "premium": "会员",
     "premiumBadge": "Premium",
@@ -685,6 +686,7 @@
     "savePhone": "保存手机号",
     "savingPhone": "保存中…",
     "phoneSaved": "手机号已保存",
+    "phoneStatusUnverified": "未验证",
     "skip": "暂时跳过，查看匹配"
   },
   "matchRequest": {

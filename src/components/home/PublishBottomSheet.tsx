@@ -101,7 +101,8 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
   const [backupIsInfo, setBackupIsInfo] = useState(false);
   const [phoneSaving, setPhoneSaving] = useState(false);
-  const [phoneSaved, setPhoneSaved] = useState(false);
+  /** Transient success toast only — not a long-lived badge. */
+  const [phoneSavedFlash, setPhoneSavedFlash] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [profilePhone, setProfilePhone] = useState<string | null>(null);
 
@@ -134,7 +135,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
     setBackupMsg(null);
     setBackupIsInfo(false);
     setBackupActivating(false);
-    setPhoneSaved(false);
+    setPhoneSavedFlash(false);
     setPhoneSaving(false);
     setProfilePhone(null);
     setAccountUser(null);
@@ -787,12 +788,12 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       nationalInput: state.raw_phone_local,
     });
     if (!clientCheck.valid) {
-      setPhoneSaved(false);
+      setPhoneSavedFlash(false);
       setPhoneError(clientCheck.errorKey);
       return;
     }
     setPhoneSaving(true);
-    setPhoneSaved(false);
+    setPhoneSavedFlash(false);
     setPhoneError(null);
     try {
       const res = await fetch("/api/posts/complete-contact", {
@@ -811,8 +812,16 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
         setPhoneError(interpreted.errorKey);
         return;
       }
-      setPhoneSaved(true);
-      if (interpreted.normalizedPhone) setProfilePhone(interpreted.normalizedPhone);
+      if (interpreted.normalizedPhone) {
+        setProfilePhone(interpreted.normalizedPhone);
+        setPhoneSavedFlash(true);
+        if (interpreted.nationalDisplay) {
+          setField("raw_phone_local", interpreted.nationalDisplay);
+        }
+      } else {
+        setProfilePhone("");
+        setPhoneSavedFlash(false);
+      }
     } catch {
       setPhoneError("error.phone_save_failed");
     } finally {
@@ -1176,21 +1185,22 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     phoneLocal={state.raw_phone_local}
                     onPhoneCountryChange={(value) => {
                       const cleared = resetPhoneFeedback();
-                      setPhoneSaved(cleared.phoneSaved);
+                      setPhoneSavedFlash(cleared.phoneSaved);
                       setPhoneError(cleared.phoneError);
                       setField("phone_country", value);
                     }}
                     onPhoneLocalChange={(value) => {
                       const cleared = resetPhoneFeedback();
-                      setPhoneSaved(cleared.phoneSaved);
+                      setPhoneSavedFlash(cleared.phoneSaved);
                       setPhoneError(cleared.phoneError);
                       setField("raw_phone_local", value);
                     }}
                     onSavePhone={() => void saveActivePhone()}
                     phoneSaving={phoneSaving}
-                    phoneSaved={phoneSaved}
+                    phoneSavedFlash={phoneSavedFlash}
+                    onPhoneSavedFlashEnd={() => setPhoneSavedFlash(false)}
                     phoneError={phoneError}
-                    hasContactPhone={publishReadiness.hasContactPhone}
+                    persistedPhone={profilePhone}
                     onViewMatches={handleViewMatches}
                     onSkip={handleViewMatches}
                     onViewPost={handleViewPublishedPost}

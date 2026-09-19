@@ -8,8 +8,10 @@
  * reveal_contact remains the old premium/free-view model until a later phase.
  */
 
+import { useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
+import { PhonePersistedStatus } from "@/components/phone/PhonePersistedStatus";
 import type { PhoneCountryCode } from "@/lib/phone/phoneNumber";
 
 interface PublishedPostSuccessProps {
@@ -31,9 +33,12 @@ interface PublishedPostSuccessProps {
   onPhoneLocalChange: (value: string) => void;
   onSavePhone: () => void;
   phoneSaving: boolean;
-  phoneSaved: boolean;
+  /** Transient success toast; parent clears via onPhoneSavedFlashEnd. */
+  phoneSavedFlash: boolean;
+  onPhoneSavedFlashEnd: () => void;
   phoneError: string | null;
-  hasContactPhone: boolean;
+  /** Server-persisted profile phone (normalized). Empty = not saved. */
+  persistedPhone: string | null;
   onViewMatches: () => void;
   onSkip: () => void;
   onViewPost: () => void;
@@ -81,9 +86,10 @@ export function PublishedPostSuccess({
   onPhoneLocalChange,
   onSavePhone,
   phoneSaving,
-  phoneSaved,
+  phoneSavedFlash,
+  onPhoneSavedFlashEnd,
   phoneError,
-  hasContactPhone,
+  persistedPhone,
   onViewMatches,
   onSkip,
   onViewPost,
@@ -95,6 +101,10 @@ export function PublishedPostSuccess({
     Boolean(googleIdentityEmail) &&
     Boolean(verifiedAccountEmail) &&
     googleIdentityEmail!.toLowerCase() === verifiedAccountEmail!.toLowerCase();
+  const hasPersistedPhone = Boolean(persistedPhone?.trim());
+  const endFlash = useCallback(() => {
+    onPhoneSavedFlashEnd();
+  }, [onPhoneSavedFlashEnd]);
 
   return (
     <div className="space-y-5">
@@ -197,44 +207,53 @@ export function PublishedPostSuccess({
         ) : null}
       </section>
 
-      {!hasContactPhone ? (
       <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold text-zinc-900">{t("phoneTitle")}</h3>
           <p className="text-xs leading-relaxed text-zinc-600">{t("phoneHint")}</p>
         </div>
-        <div className="flex min-w-0 flex-wrap gap-2">
-          <PhoneCountryPicker
-            value={phoneCountry}
-            onChange={onPhoneCountryChange}
+
+        {hasPersistedPhone ? (
+          <PhonePersistedStatus
+            persistedNormalizedPhone={persistedPhone}
+            savedFlashActive={phoneSavedFlash}
+            onSavedFlashEnd={endFlash}
+            savedLabel={t("phoneSaved")}
+            unverifiedLabel={t("phoneStatusUnverified")}
+            className="mt-0"
           />
-          <input
-            className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
-            value={phoneLocal}
-            onChange={(e) => onPhoneLocalChange(e.target.value)}
-            inputMode="tel"
-            aria-label={t("phoneTitle")}
-            aria-invalid={Boolean(phoneError)}
-          />
-        </div>
-        <button
-          type="button"
-          disabled={phoneSaving || !phoneLocal.trim()}
-          onClick={onSavePhone}
-          className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:opacity-50"
-        >
-          {phoneSaving ? t("savingPhone") : t("savePhone")}
-        </button>
-        {phoneError ? (
-          <p className="text-sm text-red-600" role="alert">
-            {tErr(phoneError.replace(/^error\./, "") as "invalid_phone")}
-          </p>
-        ) : null}
-        {phoneSaved ? (
-          <p className="text-xs font-medium text-emerald-700">{t("phoneSaved")}</p>
-        ) : null}
+        ) : (
+          <>
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <PhoneCountryPicker
+                value={phoneCountry}
+                onChange={onPhoneCountryChange}
+              />
+              <input
+                className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+                value={phoneLocal}
+                onChange={(e) => onPhoneLocalChange(e.target.value)}
+                inputMode="tel"
+                aria-label={t("phoneTitle")}
+                aria-invalid={Boolean(phoneError)}
+              />
+            </div>
+            <button
+              type="button"
+              disabled={phoneSaving || !phoneLocal.trim()}
+              onClick={onSavePhone}
+              className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:opacity-50"
+            >
+              {phoneSaving ? t("savingPhone") : t("savePhone")}
+            </button>
+            {phoneError ? (
+              <p className="text-sm text-red-600" role="alert">
+                {tErr(phoneError.replace(/^error\./, "") as "invalid_phone")}
+              </p>
+            ) : null}
+          </>
+        )}
       </section>
-      ) : null}
 
       <button
         type="button"

@@ -10,10 +10,16 @@ import {
   parseOptionalCountryCode,
 } from "@/lib/route-kms";
 
-export const ADDRESS_SEARCH_LIMIT = 5;
+export const ADDRESS_SEARCH_LIMIT = 15;
+export const ADDRESS_SEARCH_PAGE_SIZE = 5;
 export const ADDRESS_QUERY_MIN_LEN = 1;
 export const ADDRESS_QUERY_MAX_LEN = 200;
 export const ADDRESS_LOCALITY_MAX_LEN = 200;
+
+/**
+ * Deferred cleanup (not in this phase): Google Maps deep-link for candidates.
+ * Do not implement Maps links until a dedicated phase unlocks them.
+ */
 
 export type NominatimOsmType = "node" | "way" | "relation";
 
@@ -207,7 +213,9 @@ function readAddressPart(
 }
 
 /**
- * Build Nominatim search URL: country-scoped, max 5 candidates.
+ * Build Nominatim search URL: country-scoped, up to ADDRESS_SEARCH_LIMIT hits.
+ * Without localityContext: wide search (city/district/street/place/POI) —
+ * do NOT force featureType=settlement.
  * countryCode must already be exact uppercase ISO2.
  */
 export function buildNominatimCandidateSearchUrl(input: {
@@ -244,9 +252,6 @@ export function buildNominatimCandidateSearchUrl(input: {
     addressdetails: "1",
     countrycodes: countryCodeForNominatimParam(cc),
   });
-  if (locality == null) {
-    params.set("featureType", "settlement");
-  }
   return `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 }
 

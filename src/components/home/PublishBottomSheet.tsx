@@ -22,7 +22,10 @@ import {
 } from "@/lib/profile/phoneSaveClient";
 import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
 import { getTransportPolicy } from "@/lib/transport/transportPolicy";
-import { travelItemUnitsMissingErrorKey } from "@/lib/post-payload";
+import {
+  transportModeMissingErrorKey,
+  travelItemUnitsMissingErrorKey,
+} from "@/lib/post-payload";
 import type { TransportMode } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 
@@ -76,6 +79,7 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [transportError, setTransportError] = useState(false);
   // postId from Channel A (verify) or Channel B (shadow-draft).
   // When set, Stage 2 updates this existing post instead of inserting a new one.
   const [pendingPostId, setPendingPostId] = useState<string | null>(null);
@@ -352,6 +356,19 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
       setIsPublishing(false);
       return;
     }
+
+    // Fail closed before signup / challenge-init / Passkey / shadow-draft.
+    const transportErr = transportModeMissingErrorKey({
+      category: state.category,
+      transport_mode: state.transport_mode || null,
+    });
+    if (transportErr) {
+      setTransportError(true);
+      setErrorKey(transportErr.replace(/^error\./, ""));
+      setIsPublishing(false);
+      return;
+    }
+    setTransportError(false);
 
     // A completed ACTIVE intent must not reuse its client_request_id for the
     // next genuine Stage 1 publish. Draft cancel/retry/reopen keep the old id.
@@ -965,14 +982,17 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                   <label className="block text-sm font-medium">
                     {t("home.sheet.vehicle_type")}
                     <select
-                      className={inputClass}
+                      className={`${inputClass} ${
+                        transportError ? "border-rose-400" : ""
+                      }`}
                       value={state.transport_mode}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setTransportError(false);
                         setField(
                           "transport_mode",
                           e.target.value as TransportMode | "",
-                        )
-                      }
+                        );
+                      }}
                       required
                     >
                       <option value="">—</option>
@@ -982,6 +1002,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                         </option>
                       ))}
                     </select>
+                    {transportError ? (
+                      <p className="mt-1 text-xs font-normal text-rose-600">
+                        {t("error.transport_mode_required")}
+                      </p>
+                    ) : null}
                   </label>
                 ) : null}
 
@@ -1242,14 +1267,17 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                     <label className="block text-sm font-medium">
                       {t("home.sheet.vehicle_type")}
                       <select
-                        className={inputClass}
+                        className={`${inputClass} ${
+                          transportError ? "border-rose-400" : ""
+                        }`}
                         value={state.transport_mode}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          setTransportError(false);
                           setField(
                             "transport_mode",
                             e.target.value as TransportMode | "",
-                          )
-                        }
+                          );
+                        }}
                       >
                         <option value="">—</option>
                         {VEHICLE_OPTIONS_FOR_CATEGORY.map((mode) => (
@@ -1258,6 +1286,11 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                           </option>
                         ))}
                       </select>
+                      {transportError ? (
+                        <p className="mt-1 text-xs font-normal text-rose-600">
+                          {t("error.transport_mode_required")}
+                        </p>
+                      ) : null}
                     </label>
                     {needsPlate ? (
                       <div className="space-y-3 rounded-xl bg-violet-50/80 p-3 ring-1 ring-violet-200/70">

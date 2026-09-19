@@ -558,6 +558,7 @@
       "query_required": "Enter a place name to search",
       "search": "Search",
       "searching": "Searching…",
+      "show_more": "Show more",
       "search_failed": "Search failed. Try again.",
       "search_timeout": "Search timed out. Try again.",
       "no_candidates": "No places found in this country. Try a different query.",

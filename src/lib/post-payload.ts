@@ -172,3 +172,18 @@ export function travelItemUnitsMissingErrorKey(
   if (totalLuggageUnits(payload) > 0) return null;
   return "error.luggage_items_required";
 }
+
+/**
+ * Route categories require a transport_mode before signup / challenge /
+ * Passkey / shadow-draft. Server parsePublishTransportMode stays fail-closed.
+ */
+export function transportModeMissingErrorKey(
+  payload: Pick<PostPayload, "category" | "transport_mode">,
+): string | null {
+  if (payload.category !== "travel" && payload.category !== "deliver") {
+    return null;
+  }
+  const mode = payload.transport_mode;
+  if (mode == null || mode === "") return "error.transport_mode_required";
+  return null;
+}

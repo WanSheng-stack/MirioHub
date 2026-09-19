@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ADDRESS_SEARCH_LIMIT,
+  ADDRESS_SEARCH_PAGE_SIZE,
   boundAddressQuery,
   boundLocalityContext,
   buildNominatimCandidateSearchUrl,
@@ -82,12 +83,21 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   });
   assert.ok(url);
   assert.ok(url!.includes("countrycodes=rs"));
-  assert.ok(url!.includes("limit=5"));
-  assert.ok(url!.includes("featureType=settlement"));
+  assert.ok(url!.includes("limit=15"));
+  // Wide search: no settlement-only filter on first / no-locality query.
+  assert.equal(url!.includes("featureType=settlement"), false);
   assert.equal(
     buildNominatimCandidateSearchUrl({ query: "nis", countryCode: "rs" }),
     null,
   );
+  const refined = buildNominatimCandidateSearchUrl({
+    query: "medijana",
+    countryCode: "RS",
+    localityContext: "Niš",
+  });
+  assert.ok(refined);
+  assert.equal(refined!.includes("featureType=settlement"), false);
+  assert.ok(refined!.includes("medijana"));
 }
 
 {
@@ -197,7 +207,7 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 }
 
 {
-  const many = Array.from({ length: 8 }, (_, i) => ({
+  const many = Array.from({ length: 20 }, (_, i) => ({
     osm_type: "node",
     osm_id: i + 10,
     lat: String(44 + i * 0.01),
@@ -211,6 +221,8 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
     parseNominatimCandidateResponse(many, "RS").length,
     ADDRESS_SEARCH_LIMIT,
   );
+  assert.equal(ADDRESS_SEARCH_LIMIT, 15);
+  assert.equal(ADDRESS_SEARCH_PAGE_SIZE, 5);
 }
 
 {
@@ -266,6 +278,19 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 
   const sheet = read("src/components/home/PublishBottomSheet.tsx");
   assert.ok(sheet.includes("small_item_handoff_hint"));
+
+  const field = read("src/components/home/AddressSearchField.tsx");
+  assert.ok(field.includes("ADDRESS_SEARCH_PAGE_SIZE"));
+  assert.ok(field.includes("showMoreCandidates"));
+  assert.ok(field.includes("max-h-56 overflow-y-auto"));
+  assert.ok(field.includes("flex-nowrap"));
+  assert.ok(field.includes("max-[360px]:flex-wrap"));
+  assert.ok(field.includes("compact"));
+  assert.equal(field.includes("featureType"), false);
+
+  const country = read("src/components/home/AddressCountrySelect.tsx");
+  assert.ok(country.includes("compact"));
+  assert.ok(country.includes("▾"));
 
   const client = read("src/lib/geo/nominatimClient.ts");
   assert.ok(client.includes("CACHE_TTL_MS"));

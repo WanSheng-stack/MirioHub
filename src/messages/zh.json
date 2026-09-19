@@ -558,6 +558,7 @@
       "query_required": "请输入地点后再搜索",
       "search": "搜索",
       "searching": "搜索中…",
+      "show_more": "显示更多",
       "search_failed": "搜索失败，请重试",
       "search_timeout": "搜索超时，请重试",
       "no_candidates": "该国家内未找到地点，请换一个关键词",

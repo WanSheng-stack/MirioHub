@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { AddressCountrySelect } from "@/components/home/AddressCountrySelect";
 import {
+  ADDRESS_SEARCH_PAGE_SIZE,
   candidateToConfirmed,
   type AddressSearchCandidate,
   type ConfirmedAddressGeo,
@@ -11,7 +12,7 @@ import {
 import type { PhoneCountryCode } from "@/lib/phone/phoneNumber";
 
 const inputClass =
-  "mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-3 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15";
+  "h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15";
 
 type Props = {
   label: string;
@@ -37,6 +38,7 @@ export function AddressSearchField({
   );
   const [query, setQuery] = useState(confirmed?.displayName ?? "");
   const [candidates, setCandidates] = useState<AddressSearchCandidate[]>([]);
+  const [visibleCount, setVisibleCount] = useState(ADDRESS_SEARCH_PAGE_SIZE);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [attemptedSearch, setAttemptedSearch] = useState(false);
@@ -49,6 +51,8 @@ export function AddressSearchField({
     (attemptedSearch || forceValidation) && !countryCode;
   const showConfirmError =
     forceValidation && countryCode != null && confirmed == null;
+  const visibleCandidates = candidates.slice(0, visibleCount);
+  const canShowMore = visibleCount < candidates.length;
 
   function clearConfirmation() {
     if (confirmed != null) onConfirmedChange(null);
@@ -58,6 +62,7 @@ export function AddressSearchField({
     setCountryCode(next);
     setQuery("");
     setCandidates([]);
+    setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
     setSearchError(null);
     setCityContext(null);
     setRefining(false);
@@ -68,6 +73,7 @@ export function AddressSearchField({
   function onQueryChange(value: string) {
     setQuery(value);
     setCandidates([]);
+    setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
     setSearchError(null);
     clearConfirmation();
   }
@@ -76,12 +82,14 @@ export function AddressSearchField({
     setAttemptedSearch(true);
     if (!countryCode) {
       setCandidates([]);
+      setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
       return;
     }
     const q = query.trim();
     if (!q) {
       setSearchError("error.address_query_required");
       setCandidates([]);
+      setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
       return;
     }
 
@@ -104,19 +112,29 @@ export function AddressSearchField({
       const json = (await res.json()) as SearchResponse;
       if (!json.ok) {
         setCandidates([]);
+        setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
         setSearchError(json.errorKey ?? "error.geocode_failed");
         return;
       }
       setCandidates(json.candidates ?? []);
+      setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
       if ((json.candidates ?? []).length === 0) {
         setSearchError("error.address_no_candidates");
       }
     } catch {
       setCandidates([]);
+      setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
       setSearchError("error.geocode_failed");
     } finally {
       setSearching(false);
     }
+  }
+
+  /** Expand locally cached results only — never re-fetch Nominatim. */
+  function showMoreCandidates() {
+    setVisibleCount((n) =>
+      Math.min(n + ADDRESS_SEARCH_PAGE_SIZE, candidates.length),
+    );
   }
 
   function selectCandidate(candidate: AddressSearchCandidate) {
@@ -125,6 +143,7 @@ export function AddressSearchField({
     onConfirmedChange(next);
     setQuery(next.displayName);
     setCandidates([]);
+    setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
     setSearchError(null);
     setRefining(false);
     if (next.resultLevel === "city") {
@@ -142,15 +161,19 @@ export function AddressSearchField({
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium text-zinc-700">{label}</p>
-      <AddressCountrySelect
-        value={countryCode}
-        onChange={onCountryChange}
-        showRequiredError={showCountryError}
-      />
 
-      <div className="flex gap-2">
+      {/* Country + query + Search: one row except extremely narrow viewports */}
+      <div className="flex flex-nowrap items-stretch gap-2 max-[360px]:flex-wrap">
+        <div className="w-[5.25rem] shrink-0 max-[360px]:w-full">
+          <AddressCountrySelect
+            compact
+            value={countryCode}
+            onChange={onCountryChange}
+            showRequiredError={showCountryError}
+          />
+        </div>
         <input
-          className={`${inputClass} mt-0`}
+          className={`${inputClass} min-w-0 flex-1`}
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={(e) => {
@@ -166,7 +189,7 @@ export function AddressSearchField({
           type="button"
           disabled={searching}
           onClick={() => void runSearch()}
-          className="shrink-0 rounded-xl bg-zinc-900 px-4 text-sm font-semibold text-white enabled:hover:bg-zinc-800 disabled:opacity-60"
+          className="h-11 shrink-0 rounded-xl bg-zinc-900 px-4 text-sm font-semibold text-white enabled:hover:bg-zinc-800 disabled:opacity-60 max-[360px]:w-full"
         >
           {searching ? t("searching") : t("search")}
         </button>
@@ -197,6 +220,7 @@ export function AddressSearchField({
               setRefining(true);
               clearConfirmation();
               setCandidates([]);
+              setVisibleCount(ADDRESS_SEARCH_PAGE_SIZE);
             }}
           >
             {t("refine_action")}
@@ -220,33 +244,44 @@ export function AddressSearchField({
       ) : null}
 
       {candidates.length > 0 ? (
-        <ul className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-          {candidates.map((c) => (
-            <li
-              key={`${c.osmType}:${c.osmId}`}
-              className="border-b border-zinc-100 last:border-b-0"
-            >
-              <button
-                type="button"
-                className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left hover:bg-emerald-50/70"
-                onClick={() => selectCandidate(c)}
+        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <ul className="max-h-56 overflow-y-auto">
+            {visibleCandidates.map((c) => (
+              <li
+                key={`${c.osmType}:${c.osmId}`}
+                className="border-b border-zinc-100 last:border-b-0"
               >
-                <span className="text-sm font-medium text-zinc-900">
-                  {c.primaryLabel}
-                </span>
-                <span className="text-xs text-zinc-500">
-                  {[
-                    c.localityLabel,
-                    c.countryName ?? c.countryCode,
-                    c.typeLabel,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+                <button
+                  type="button"
+                  className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left hover:bg-emerald-50/70"
+                  onClick={() => selectCandidate(c)}
+                >
+                  <span className="text-sm font-medium text-zinc-900">
+                    {c.primaryLabel}
+                  </span>
+                  <span className="text-xs text-zinc-500">
+                    {[
+                      c.localityLabel,
+                      c.countryName ?? c.countryCode,
+                      c.typeLabel,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {canShowMore ? (
+            <button
+              type="button"
+              className="w-full border-t border-zinc-100 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50/50"
+              onClick={showMoreCandidates}
+            >
+              {t("show_more")}
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

@@ -558,6 +558,7 @@
       "query_required": "Unesite naziv mesta za pretragu",
       "search": "Pretraži",
       "searching": "Pretraga…",
+      "show_more": "Prikaži više",
       "search_failed": "Pretraga nije uspela. Pokušajte ponovo.",
       "search_timeout": "Pretraga je istekla. Pokušajte ponovo.",
       "no_candidates": "Nema mesta u ovoj državi. Probajte drugi upit.",

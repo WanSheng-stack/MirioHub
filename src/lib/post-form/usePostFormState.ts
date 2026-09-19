@@ -131,6 +131,23 @@ function applySubtypeCleanup(
   const allowedModes = new Set(
     publishTransportModesForSubtype(category, service_subtype) as readonly string[],
   );
+  let transport_mode: PostFormState["transport_mode"] = "";
+  if (
+    category === "travel" &&
+    (service_subtype === "passenger" ||
+      service_subtype === "passenger_with_small_item")
+  ) {
+    // People travel subtypes: always car (only legal land mode for humans).
+    transport_mode = "car";
+  } else if (
+    state.transport_mode &&
+    allowedModes.has(state.transport_mode)
+  ) {
+    transport_mode = state.transport_mode;
+  } else {
+    // small_item_only / deliver: clear illegal leftover; user must choose.
+    transport_mode = "";
+  }
   return {
     ...state,
     category,
@@ -143,10 +160,7 @@ function applySubtypeCleanup(
     count_large: cleaned.count_large,
     count_xlarge: cleaned.count_xlarge,
     carry_luggage: cleaned.carry_luggage,
-    transport_mode:
-      state.transport_mode && allowedModes.has(state.transport_mode)
-        ? state.transport_mode
-        : "",
+    transport_mode,
   };
 }
 
@@ -167,7 +181,8 @@ export const initialFormState: PostFormState = {
   provider_name: "",
   vehicle_brand: "",
   vehicle_color: "",
-  transport_mode: "",
+  // Default travel subtype is passenger → auto-car preflight.
+  transport_mode: "car",
   departure_date: today,
   departure_time: "14:00",
   time_buffer: 30,

@@ -61,8 +61,22 @@ export async function buildAuthorityForPublishFromOriginHit(
   const auth = await buildTrustedPublishAuthorityCore({
     canonical,
     evaluationTime,
-    resolveTrustedOrigin: async () =>
-      trustedPointFromNominatimHit(originHit, findTimezones),
+    resolveTrustedOrigin: async () => {
+      const point = trustedPointFromNominatimHit(originHit, findTimezones);
+      if (
+        !point.ok &&
+        point.errorKey === "error.geocode_timezone_unavailable"
+      ) {
+        // Classified reason only — never log addresses or full payloads.
+        console.error("[authority.timezone]", {
+          reason: point.timezoneFailReason ?? "timezone_lookup_empty",
+          latFinite: Number.isFinite(originHit.lat),
+          lonFinite: Number.isFinite(originHit.lon),
+          countryOk: originHit.countryCode != null,
+        });
+      }
+      return point;
+    },
     selectNightPolicy,
   });
 

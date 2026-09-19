@@ -16,11 +16,6 @@ export const ADDRESS_QUERY_MIN_LEN = 1;
 export const ADDRESS_QUERY_MAX_LEN = 200;
 export const ADDRESS_LOCALITY_MAX_LEN = 200;
 
-/**
- * Deferred cleanup (not in this phase): Google Maps deep-link for candidates.
- * Do not implement Maps links until a dedicated phase unlocks them.
- */
-
 export type NominatimOsmType = "node" | "way" | "relation";
 
 export type AddressResultLevel = "city" | "district" | "street" | "place";
@@ -273,6 +268,40 @@ export function buildNominatimLookupUrl(
     addressdetails: "1",
   });
   return `https://nominatim.openstreetmap.org/lookup?${params.toString()}`;
+}
+
+/**
+ * Nominatim reverse geocode URL (server-only callers).
+ */
+export function buildNominatimReverseUrl(
+  lat: number,
+  lon: number,
+): string | null {
+  if (!isValidLatLon(lat, lon)) return null;
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    format: "jsonv2",
+    addressdetails: "1",
+  });
+  return `https://nominatim.openstreetmap.org/reverse?${params.toString()}`;
+}
+
+/**
+ * Parse Nominatim reverse JSON (single object) into a candidate bound to expected country.
+ */
+export function parseNominatimReverseResponse(
+  data: unknown,
+  expectedCountryCode: string,
+): AddressSearchCandidate | null {
+  const expected = requireExactCountryCode(expectedCountryCode);
+  if (expected == null) return null;
+  if (data == null || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const row = data as Record<string, unknown>;
+  if (row.error != null) return null;
+  return parseOneNominatimRow(row, expected);
 }
 
 function parseOneNominatimRow(

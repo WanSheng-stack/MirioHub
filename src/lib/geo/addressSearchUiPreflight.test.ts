@@ -51,6 +51,10 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.ok(field.includes("showMoreCandidates"));
   assert.ok(field.includes("max-h-56 overflow-y-auto"));
   assert.ok(field.includes("show_more"));
+  assert.ok(field.includes("results_showing"));
+  assert.ok(field.includes("results_all_shown"));
+  assert.ok(field.includes("refine_title"));
+  assert.ok(field.includes("ENTER_REFINE"));
   // Show more must only bump visibleCount — never call runSearch / fetch again.
   const showMoreBody = field.slice(
     field.indexOf("function showMoreCandidates"),
@@ -66,15 +70,14 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.ok(country.includes("▾"));
 }
 
-// ── Human travel subtypes auto-car; small_item clears illegal mode ──────────
+// ── Human travel subtypes auto-car; people→small_item always clears ─────────
 {
   const formSrc = read("src/lib/post-form/usePostFormState.ts");
   assert.ok(formSrc.includes('transport_mode: "car"'));
-  assert.ok(formSrc.includes('transport_mode = "car"'));
-  assert.ok(formSrc.includes('service_subtype === "passenger"'));
-  assert.ok(
-    formSrc.includes('service_subtype === "passenger_with_small_item"'),
-  );
+  assert.ok(formSrc.includes("nextTransportModeForSubtypeSwitch"));
+  const modeSrc = read("src/lib/auth/publishTransportMode.ts");
+  assert.ok(modeSrc.includes('return "car"'));
+  assert.ok(modeSrc.includes('nextSubtype === "small_item_only"'));
   assert.ok(
     publishTransportModesForSubtype("travel", "passenger").includes("car"),
   );
@@ -87,6 +90,12 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.deepEqual(
     [...publishTransportModesForSubtype("travel", "passenger")],
     ["car"],
+  );
+  // car is technically legal for small_item_only — UI must still clear on leave.
+  assert.ok(
+    publishTransportModesForSubtype("travel", "small_item_only").includes(
+      "car",
+    ),
   );
 }
 
@@ -227,14 +236,14 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   }
 }
 
-// Deferred Maps note present; no Maps link implementation
+// Map-link import is implemented in this phase (server reverse → AddressPlaceRef).
 {
-  const src = read("src/lib/geo/addressSearch.ts");
-  assert.ok(src.includes("Deferred cleanup"));
-  assert.ok(src.toLowerCase().includes("google maps"));
   const field = read("src/components/home/AddressSearchField.tsx");
-  assert.equal(field.includes("google.com/maps"), false);
-  assert.equal(field.includes("maps.google"), false);
+  assert.ok(field.includes("/api/geocode/map-link"));
+  assert.ok(field.includes("refine_tab_map_link"));
+  // Client must not call Nominatim or parse Google URLs as authority.
+  assert.equal(field.includes("nominatim.openstreetmap.org"), false);
+  assert.equal(field.includes("extractCoordinatesFromGoogleMapsUrl"), false);
 }
 
 console.log("addressSearchUiPreflight.test.ts: PASS");

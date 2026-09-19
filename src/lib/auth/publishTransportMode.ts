@@ -54,6 +54,47 @@ export const PUBLISH_UI_TRAVEL_PEOPLE_TRANSPORT_MODES = [
   "car",
 ] as const satisfies readonly TargetTravelTransportMode[];
 
+function isPeopleTravelSubtype(
+  serviceSubtype: ServiceSubtype | null | undefined,
+): boolean {
+  return (
+    serviceSubtype === "passenger" ||
+    serviceSubtype === "passenger_with_small_item"
+  );
+}
+
+/**
+ * Pure transport switch for subtype/category changes (UI form state).
+ * people → car; people→small_item_only always clears (even if car is legal);
+ * small_item_only keeps an already-legal choice on non-subtype edits.
+ */
+export function nextTransportModeForSubtypeSwitch(input: {
+  category: string;
+  previousSubtype: ServiceSubtype | null | undefined;
+  nextSubtype: ServiceSubtype | null | undefined;
+  previousTransportMode: string;
+}): string {
+  const { category, previousSubtype, nextSubtype, previousTransportMode } =
+    input;
+  const allowedModes = new Set(
+    publishTransportModesForSubtype(category, nextSubtype) as readonly string[],
+  );
+  if (category === "travel" && isPeopleTravelSubtype(nextSubtype)) {
+    return "car";
+  }
+  if (
+    category === "travel" &&
+    isPeopleTravelSubtype(previousSubtype) &&
+    nextSubtype === "small_item_only"
+  ) {
+    return "";
+  }
+  if (previousTransportMode && allowedModes.has(previousTransportMode)) {
+    return previousTransportMode;
+  }
+  return "";
+}
+
 /** @deprecated Prefer publishTransportModesForSubtype — category-only list. */
 export function publishTransportModesForCategory(
   category: string,

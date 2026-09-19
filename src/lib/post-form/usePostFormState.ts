@@ -34,7 +34,9 @@ import {
   travelShowsLuggageControls,
   travelShowsPassengerControls,
 } from "@/lib/safety/serviceSubtypePublish";
-import { publishTransportModesForSubtype } from "@/lib/auth/publishTransportMode";
+import {
+  nextTransportModeForSubtypeSwitch,
+} from "@/lib/auth/publishTransportMode";
 import type { ConfirmedAddressGeo } from "@/lib/geo/addressSearch";
 
 export type PostFormState = {
@@ -128,26 +130,12 @@ function applySubtypeCleanup(
     count_xlarge: state.count_xlarge,
     carry_luggage: state.carry_luggage,
   });
-  const allowedModes = new Set(
-    publishTransportModesForSubtype(category, service_subtype) as readonly string[],
-  );
-  let transport_mode: PostFormState["transport_mode"] = "";
-  if (
-    category === "travel" &&
-    (service_subtype === "passenger" ||
-      service_subtype === "passenger_with_small_item")
-  ) {
-    // People travel subtypes: always car (only legal land mode for humans).
-    transport_mode = "car";
-  } else if (
-    state.transport_mode &&
-    allowedModes.has(state.transport_mode)
-  ) {
-    transport_mode = state.transport_mode;
-  } else {
-    // small_item_only / deliver: clear illegal leftover; user must choose.
-    transport_mode = "";
-  }
+  const transport_mode = nextTransportModeForSubtypeSwitch({
+    category,
+    previousSubtype: state.service_subtype,
+    nextSubtype: service_subtype,
+    previousTransportMode: state.transport_mode,
+  }) as PostFormState["transport_mode"];
   return {
     ...state,
     category,

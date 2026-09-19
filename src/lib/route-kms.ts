@@ -311,9 +311,22 @@ export type TrustedOriginErrorKey =
 
 export type TrustedOriginResolution =
   | { ok: true; value: TrustedGeocodePoint }
-  | { ok: false; errorKey: TrustedOriginErrorKey };
+  | {
+      ok: false;
+      errorKey: TrustedOriginErrorKey;
+      /** Server log only — never returned to the browser. */
+      timezoneFailReason?: TimezoneLookupFailReason;
+    };
 
 export type TimezoneLookup = (lat: number, lon: number) => string[];
+
+/** Server-only classification — never expose raw internals to the browser. */
+export type TimezoneLookupFailReason =
+  | "timezone_lookup_threw"
+  | "timezone_lookup_empty"
+  | "timezone_lookup_ambiguous"
+  | "timezone_lookup_invalid_iana"
+  | "timezone_lookup_invalid_coords";
 
 /** Validate IANA name via Intl; fail closed on RangeError / empty. */
 export function assertValidIanaTimezone(timezone: string): boolean {
@@ -329,26 +342,41 @@ export function assertValidIanaTimezone(timezone: string): boolean {
 
 /**
  * Offline timezone lookup on already-validated coordinates.
- * Empty / multi distinct / invalid IANA → unavailable.
+ * Identical duplicate zones are deduped and accepted; distinct zones fail closed.
+ * Never invents country→timezone fallbacks.
  */
 export function resolveTimezoneFromCoords(
   lat: number,
   lon: number,
   findTimezones: TimezoneLookup,
-): { ok: true; timezone: string } | { ok: false } {
-  if (!isValidLatLon(lat, lon)) return { ok: false };
+):
+  | { ok: true; timezone: string }
+  | { ok: false; reason: TimezoneLookupFailReason } {
+  if (!isValidLatLon(lat, lon)) {
+    return { ok: false, reason: "timezone_lookup_invalid_coords" };
+  }
   let raw: string[];
   try {
     raw = findTimezones(lat, lon);
   } catch {
-    return { ok: false };
+    return { ok: false, reason: "timezone_lookup_threw" };
   }
-  if (!Array.isArray(raw) || raw.length === 0) return { ok: false };
-  const unique = [...new Set(raw.map((z) => String(z).trim()).filter(Boolean))];
-  if (unique.length === 0) return { ok: false };
-  if (unique.length > 1) return { ok: false };
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { ok: false, reason: "timezone_lookup_empty" };
+  }
+  const unique = [
+    ...new Set(raw.map((z) => String(z).trim()).filter(Boolean)),
+  ];
+  if (unique.length === 0) {
+    return { ok: false, reason: "timezone_lookup_empty" };
+  }
+  if (unique.length > 1) {
+    return { ok: false, reason: "timezone_lookup_ambiguous" };
+  }
   const timezone = unique[0]!;
-  if (!assertValidIanaTimezone(timezone)) return { ok: false };
+  if (!assertValidIanaTimezone(timezone)) {
+    return { ok: false, reason: "timezone_lookup_invalid_iana" };
+  }
   return { ok: true, timezone };
 }
 
@@ -383,7 +411,11 @@ export function assembleTrustedGeocodePoint(
   }
   const tz = resolveTimezoneFromCoords(hit.lat, hit.lon, findTimezones);
   if (!tz.ok) {
-    return { ok: false, errorKey: "error.geocode_timezone_unavailable" };
+    return {
+      ok: false,
+      errorKey: "error.geocode_timezone_unavailable",
+      timezoneFailReason: tz.reason,
+    };
   }
   return {
     ok: true,

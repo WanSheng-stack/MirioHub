@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import {
   PHONE_SAVED_FLASH_MS,
   derivePhoneStatusUi,
@@ -12,9 +12,21 @@ type Props = {
   /** True only right after a successful server save; auto-clears. */
   savedFlashActive: boolean;
   onSavedFlashEnd: () => void;
-  savedLabel: string;
   unverifiedLabel: string;
-  unverifiedDescription: string;
+  usageDescription: string;
+  title: string;
+  editing: boolean;
+  editor: ReactNode;
+  saving: boolean;
+  canSave: boolean;
+  onEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  addLabel: string;
+  editLabel: string;
+  saveLabel: string;
+  cancelLabel: string;
+  error?: ReactNode;
   className?: string;
 };
 
@@ -27,9 +39,21 @@ export function PhonePersistedStatus({
   persistedNormalizedPhone,
   savedFlashActive,
   onSavedFlashEnd,
-  savedLabel,
   unverifiedLabel,
-  unverifiedDescription,
+  usageDescription,
+  title,
+  editing,
+  editor,
+  saving,
+  canSave,
+  onEdit,
+  onSave,
+  onCancel,
+  addLabel,
+  editLabel,
+  saveLabel,
+  cancelLabel,
+  error,
   className = "",
 }: Props) {
   const ui = derivePhoneStatusUi({
@@ -45,28 +69,72 @@ export function PhonePersistedStatus({
     return () => window.clearTimeout(id);
   }, [savedFlashActive, onSavedFlashEnd]);
 
-  if (!ui.showSavedFlash && !ui.showUnverifiedBadge) return null;
-
   return (
-    <div className={`mt-2 space-y-1.5 ${className}`.trim()}>
-      {ui.showSavedFlash ? (
-        <p className="text-sm font-medium text-emerald-700" role="status">
-          {savedLabel}
-        </p>
-      ) : null}
-      {ui.showUnverifiedBadge && ui.formattedDisplay ? (
-        <div className="space-y-1">
-          <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-800">
-            <span className="font-medium tabular-nums">{ui.formattedDisplay}</span>
-            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-200/80">
+    <div className={`space-y-2 ${className}`.trim()}>
+      <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
+      {editing ? (
+        <fieldset className="min-h-14 rounded-xl border border-zinc-300 px-3 pb-3 pt-1.5">
+          {ui.showUnverifiedBadge ? (
+            <legend className="rounded-md bg-amber-50 px-2 text-xs font-semibold text-amber-900">
               {unverifiedLabel}
+            </legend>
+          ) : null}
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap gap-2">{editor}</div>
+            <button
+              type="button"
+              aria-label={saveLabel}
+              title={saveLabel}
+              disabled={saving || !canSave}
+              onClick={onSave}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-700 text-base font-bold text-white disabled:opacity-40"
+            >
+              ✓
+            </button>
+            <button
+              type="button"
+              aria-label={cancelLabel}
+              title={cancelLabel}
+              disabled={saving}
+              onClick={onCancel}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xl text-zinc-500 hover:bg-zinc-100 disabled:opacity-40"
+            >
+              ×
+            </button>
+          </div>
+        </fieldset>
+      ) : ui.showUnverifiedBadge && ui.formattedDisplay ? (
+        <fieldset className="min-h-14 rounded-xl border border-zinc-300 px-3 pb-3 pt-1.5">
+          <legend className="rounded-md bg-amber-50 px-2 text-xs font-semibold text-amber-900">
+            {unverifiedLabel}
+          </legend>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium tabular-nums text-zinc-900">
+              {ui.formattedDisplay}
             </span>
-          </p>
-          <p className="text-xs leading-relaxed text-zinc-600">
-            {unverifiedDescription}
-          </p>
-        </div>
-      ) : null}
+            <button
+              type="button"
+              aria-label={editLabel}
+              title={editLabel}
+              onClick={onEdit}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xl text-zinc-600 hover:bg-zinc-100"
+            >
+              ✎
+            </button>
+          </div>
+        </fieldset>
+      ) : (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="flex min-h-14 w-full items-center justify-between rounded-xl border border-zinc-300 px-3 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+        >
+          <span>{addLabel}</span>
+          <span aria-hidden="true" className="text-xl">＋</span>
+        </button>
+      )}
+      {error}
+      <p className="text-xs leading-relaxed text-zinc-600">{usageDescription}</p>
     </div>
   );
 }

@@ -34,9 +34,7 @@ const order = [
   '{t("confirmName")}',
   '{t("editName")}',
   "IdentitySection",
-  '{t("phoneCardTitle")}',
-  '{t("phoneCardBody")}',
-  "PhoneCountryPicker",
+  "PhonePersistedStatus",
   "savePhone",
   '{t("vehicleSection")}',
   '{t("plate")}',
@@ -55,8 +53,8 @@ for (const token of order) {
   prev = i;
 }
 
-assert.ok(loggedIn.indexOf("IdentitySection") < loggedIn.indexOf('{t("phoneCardTitle")}'));
-assert.ok(loggedIn.indexOf('{t("phoneCardTitle")}') < loggedIn.indexOf('{t("vehicleSection")}'));
+assert.ok(loggedIn.indexOf("IdentitySection") < loggedIn.indexOf("PhonePersistedStatus"));
+assert.ok(loggedIn.indexOf("PhonePersistedStatus") < loggedIn.indexOf('{t("vehicleSection")}'));
 assert.ok(loggedIn.indexOf('{t("vehicleSection")}') < loggedIn.indexOf('{t("otherContactsSection")}'));
 assert.ok(loggedIn.indexOf('{t("otherContactsSection")}') < loggedIn.indexOf('{t("bankVerification")}'));
 assert.ok(loggedIn.indexOf('{t("signOut")}') > loggedIn.indexOf('{t("bankVerification")}'));
@@ -66,7 +64,8 @@ assert.equal(page.includes('t("quota")'), false);
 assert.equal(page.includes("free_views_left"), false);
 assert.equal(page.includes('t("identityVerificationSection")'), false);
 assert.equal(page.includes('t("signInSection")'), false);
-assert.equal(page.includes('t("phoneHelper")'), false);
+assert.equal(page.includes('t("phoneCardTitle")'), false);
+assert.equal(page.includes('t("phoneCardBody")'), false);
 assert.equal(page.includes("Premium: —"), false);
 assert.equal(page.includes('t("premium")}:'), false);
 assert.equal(page.includes('label={t("personalSection")}'), false);
@@ -78,8 +77,8 @@ assert.ok(page.includes('label={t("bankVerification")}'));
 assert.ok(page.includes("settingRowClass"));
 assert.ok(page.includes("settingSummaryClass"));
 
-assert.ok(page.includes('text-sm leading-relaxed text-zinc-600">{t("phoneCardBody")}'));
-assert.ok(page.includes("flex flex-wrap gap-2"));
+assert.ok(page.includes('usageDescription={t("phoneUsageDescription")}'));
+assert.ok(page.includes("PhonePersistedStatus"));
 assert.ok(page.includes("PhoneCountryPicker"));
 assert.ok(page.includes("parseStoredPhone"));
 assert.ok(page.includes("parseUserPhone"));
@@ -121,8 +120,8 @@ assert.ok(intercept.includes("allowed_posts_limit = metrics.is_premium_member ? 
 assert.equal(zh.account.recoveryTitle, "保存你的账户");
 assert.equal(zh.account.recoveryBody, "添加 Google 或邮箱，以便之后可以继续使用这个账户。");
 assert.equal(zh.account.personalSection, "个人资料");
-assert.equal(zh.account.phoneCardTitle, "让对方更方便联系你");
-assert.equal(zh.account.phoneCardBody, "填写手机号码，方便订单确认后联系。");
+assert.equal(zh.account.phone, "手机号");
+assert.equal(zh.account.phoneUsageDescription, "仅用于订单联系。");
 assert.equal(zh.account.fullName, "姓名");
 assert.equal(zh.account.save, "保存");
 assert.equal(zh.account.vehicleSection, "机动车信息");
@@ -141,18 +140,16 @@ assert.equal(
   en.account.recoveryBody,
   "Add Google or email so you can continue using this account later.",
 );
-assert.equal(en.account.phoneCardTitle, "Make it easier for others to reach you");
-assert.equal(
-  en.account.phoneCardBody,
-  "Add a phone number for contact after an order is confirmed.",
-);
+assert.equal(en.account.phone, "Phone number");
+assert.equal(en.account.phoneUsageDescription, "Used only for order contact.");
 assert.equal(en.account.vehicleSection, "Vehicle");
 assert.equal(en.account.bankStatusUnverified, "Not verified");
 assert.equal(en.account.premiumBadge, "Premium");
 
 assert.equal(sr.account.recoveryTitle, "Sačuvajte svoj nalog");
 assert.equal(sr.account.personalSection, "Lični podaci");
-assert.equal(sr.account.phoneCardTitle, "Olakšajte drugima da vas kontaktiraju");
+assert.equal(sr.account.phone, "Broj telefona");
+assert.equal(sr.account.phoneUsageDescription, "Koristi se samo za kontakt u vezi sa narudžbinom.");
 assert.equal(sr.account.vehicleSection, "Motorno vozilo");
 assert.equal(sr.account.bankVerification, "Bankovna verifikacija");
 assert.equal(sr.account.bankStatusUnverified, "Nije verifikovano");

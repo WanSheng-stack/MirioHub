@@ -8,7 +8,7 @@
  * reveal_contact remains the old premium/free-view model until a later phase.
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
 import { PhoneCountryPicker } from "@/components/phone/PhoneCountryPicker";
 import { PhonePersistedStatus } from "@/components/phone/PhonePersistedStatus";
@@ -102,7 +102,9 @@ export function PublishedPostSuccess({
     Boolean(verifiedAccountEmail) &&
     googleIdentityEmail!.toLowerCase() === verifiedAccountEmail!.toLowerCase();
   const hasPersistedPhone = Boolean(persistedPhone?.trim());
+  const [phoneEditing, setPhoneEditing] = useState(!hasPersistedPhone);
   const endFlash = useCallback(() => {
+    setPhoneEditing(false);
     onPhoneSavedFlashEnd();
   }, [onPhoneSavedFlashEnd]);
 
@@ -208,22 +210,29 @@ export function PublishedPostSuccess({
       </section>
 
       <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
-        <div className="space-y-1">
-          <h3 className="text-sm font-semibold text-zinc-900">{t("phoneTitle")}</h3>
-          <p className="text-xs leading-relaxed text-zinc-600">{t("phoneHint")}</p>
-        </div>
-
-        {hasPersistedPhone ? (
-          <PhonePersistedStatus
-            persistedNormalizedPhone={persistedPhone}
-            savedFlashActive={phoneSavedFlash}
-            onSavedFlashEnd={endFlash}
-            savedLabel={t("phoneSaved")}
-            unverifiedLabel={t("phoneStatusUnverified")}
-            unverifiedDescription={t("phoneStatusUnverifiedDescription")}
-            className="mt-0"
-          />
-        ) : (
+        <PhonePersistedStatus
+          persistedNormalizedPhone={persistedPhone}
+          savedFlashActive={phoneSavedFlash}
+          onSavedFlashEnd={endFlash}
+          unverifiedLabel={t("phoneStatusUnverified")}
+          usageDescription={t("phoneUsageDescription")}
+          title={t("phoneTitle")}
+          editing={phoneEditing && !phoneSavedFlash}
+          saving={phoneSaving}
+          canSave={Boolean(phoneLocal.trim())}
+          onEdit={() => setPhoneEditing(true)}
+          onSave={onSavePhone}
+          onCancel={() => setPhoneEditing(false)}
+          addLabel={t("addPhone")}
+          editLabel={t("editPhone")}
+          saveLabel={t("savePhone")}
+          cancelLabel={t("cancelPhone")}
+          error={phoneError ? (
+            <p className="text-sm text-red-600" role="alert">
+              {tErr(phoneError.replace(/^error\./, "") as "invalid_phone")}
+            </p>
+          ) : null}
+          editor={(
           <>
             <div className="flex min-w-0 flex-wrap gap-2">
               <PhoneCountryPicker
@@ -239,21 +248,10 @@ export function PublishedPostSuccess({
                 aria-invalid={Boolean(phoneError)}
               />
             </div>
-            <button
-              type="button"
-              disabled={phoneSaving || !phoneLocal.trim()}
-              onClick={onSavePhone}
-              className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:opacity-50"
-            >
-              {phoneSaving ? t("savingPhone") : t("savePhone")}
-            </button>
-            {phoneError ? (
-              <p className="text-sm text-red-600" role="alert">
-                {tErr(phoneError.replace(/^error\./, "") as "invalid_phone")}
-              </p>
-            ) : null}
           </>
-        )}
+          )}
+          className="mt-0"
+        />
       </section>
 
       <button

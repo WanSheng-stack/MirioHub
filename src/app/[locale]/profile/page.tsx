@@ -265,6 +265,7 @@ export default function ProfilePage() {
   });
   const [nameSaving, setNameSaving] = useState(false);
   const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneEditing, setPhoneEditing] = useState(false);
   /** Transient success toast only — not a long-lived badge. */
   const [phoneSavedFlash, setPhoneSavedFlash] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
@@ -612,6 +613,7 @@ export default function ProfilePage() {
       });
       // Flash only when a non-empty number was persisted.
       setPhoneSavedFlash(Boolean(interpreted.normalizedPhone?.trim()));
+      setPhoneEditing(false);
     } catch {
       setPhoneError("error.phone_save_failed");
     } finally {
@@ -886,48 +888,55 @@ export default function ProfilePage() {
     ) : null}
 
     <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-zinc-900">{t("phoneCardTitle")}</h2>
-      <p className="mt-1 text-sm leading-relaxed text-zinc-600">{t("phoneCardBody")}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <PhoneCountryPicker
-          value={phoneCountry}
-          ariaLabel={t("phone")}
-          onChange={(country: PhoneCountryCode) =>
-            onPhoneFieldsChange({ country, local: phoneLocal })
-          }
-        />
-        <input
-          className="h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
-          value={phoneLocal}
-          inputMode="tel"
-          autoComplete="tel"
-          aria-label={t("phone")}
-          aria-invalid={Boolean(phoneError)}
-          onChange={(e) =>
-            onPhoneFieldsChange({ country: phoneCountry, local: e.target.value })
-          }
-        />
-        <button
-          type="button"
-          disabled={phoneSaving}
-          className="h-11 w-full rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white sm:w-auto disabled:opacity-50"
-          onClick={() => void savePhone()}
-        >
-          {t("save")}
-        </button>
-      </div>
-      {phoneError ? (
-        <p className="mt-2 text-sm text-red-600" role="alert">
-          {fieldErrorText(phoneError)}
-        </p>
-      ) : null}
       <PhonePersistedStatus
         persistedNormalizedPhone={storedPhone}
         savedFlashActive={phoneSavedFlash}
         onSavedFlashEnd={endPhoneSavedFlash}
-        savedLabel={t("phoneSaved")}
         unverifiedLabel={t("phoneStatusUnverified")}
-        unverifiedDescription={t("phoneStatusUnverifiedDescription")}
+        usageDescription={t("phoneUsageDescription")}
+        title={t("phone")}
+        editing={phoneEditing}
+        saving={phoneSaving}
+        canSave={Boolean(phoneLocal.trim())}
+        onEdit={() => setPhoneEditing(true)}
+        onSave={() => void savePhone()}
+        onCancel={() => {
+          setPhoneEditing(false);
+          setPhoneOverride(null);
+          setPhoneError(null);
+          setPhoneSavedFlash(false);
+        }}
+        addLabel={t("addPhone")}
+        editLabel={t("editPhone")}
+        saveLabel={t("savePhone")}
+        cancelLabel={t("cancelPhone")}
+        error={phoneError ? (
+          <p className="text-sm text-red-600" role="alert">
+            {fieldErrorText(phoneError)}
+          </p>
+        ) : null}
+        editor={(
+          <>
+            <PhoneCountryPicker
+              value={phoneCountry}
+              ariaLabel={t("phone")}
+              onChange={(country: PhoneCountryCode) =>
+                onPhoneFieldsChange({ country, local: phoneLocal })
+              }
+            />
+            <input
+              className="h-11 min-w-32 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-base focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+              value={phoneLocal}
+              inputMode="tel"
+              autoComplete="tel"
+              aria-label={t("phone")}
+              aria-invalid={Boolean(phoneError)}
+              onChange={(e) =>
+                onPhoneFieldsChange({ country: phoneCountry, local: e.target.value })
+              }
+            />
+          </>
+        )}
       />
     </section>
 

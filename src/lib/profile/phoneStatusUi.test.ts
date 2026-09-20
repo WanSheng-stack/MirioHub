@@ -41,6 +41,7 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.ok(flash.includes("PHONE_SAVED_FLASH_MS"));
   assert.ok(flash.includes("setTimeout"));
   assert.ok(flash.includes("onSavedFlashEnd"));
+  assert.equal(flash.includes("savedLabel"), false);
   // No dead Verify CTA (comment may mention verification).
   assert.equal(flash.includes("Verify button"), true); // docs only
   assert.equal(/<button[^>]*>\s*Verify/i.test(flash), false);
@@ -126,10 +127,10 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.ok(profile.includes("PhonePersistedStatus"));
   assert.ok(profile.includes("phoneSavedFlash"));
   assert.ok(profile.includes('t("phoneStatusUnverified")'));
-  assert.ok(profile.includes('t("phoneStatusUnverifiedDescription")'));
+  assert.ok(profile.includes('t("phoneUsageDescription")'));
   // Phone card must not add a dead Verify CTA.
   const phoneCard = profile.slice(
-    profile.indexOf('t("phoneCardTitle")'),
+    profile.indexOf("<PhonePersistedStatus"),
     profile.indexOf('t("vehicleSection")'),
   );
   assert.ok(phoneCard.includes("PhonePersistedStatus"));
@@ -139,7 +140,7 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
   assert.ok(success.includes("PhonePersistedStatus"));
   assert.ok(success.includes("phoneSavedFlash"));
   assert.ok(success.includes("phoneStatusUnverified"));
-  assert.ok(success.includes("phoneStatusUnverifiedDescription"));
+  assert.ok(success.includes("phoneUsageDescription"));
   assert.equal(success.includes("hasContactPhone"), false);
   assert.equal(/<button[^>]*>\s*Verify/i.test(success), false);
 
@@ -152,32 +153,54 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 {
   for (const locale of ["en", "zh", "sr"] as const) {
     const msg = JSON.parse(read(`src/messages/${locale}.json`)) as {
-      account: { phoneSaved: string; phoneStatusUnverified: string; phoneStatusUnverifiedDescription: string };
-      publishSuccess: { phoneSaved: string; phoneStatusUnverified: string; phoneStatusUnverifiedDescription: string };
+      account: { phoneStatusUnverified: string; phoneUsageDescription: string };
+      publishSuccess: { phoneStatusUnverified: string; phoneUsageDescription: string };
     };
-    assert.ok(msg.account.phoneSaved.length > 0, locale);
     assert.ok(msg.account.phoneStatusUnverified.length > 0, locale);
-    assert.ok(msg.account.phoneStatusUnverifiedDescription.length > 0, locale);
-    assert.ok(msg.publishSuccess.phoneSaved.length > 0, locale);
+    assert.ok(msg.account.phoneUsageDescription.length > 0, locale);
     assert.ok(msg.publishSuccess.phoneStatusUnverified.length > 0, locale);
-    assert.ok(msg.publishSuccess.phoneStatusUnverifiedDescription.length > 0, locale);
+    assert.ok(msg.publishSuccess.phoneUsageDescription.length > 0, locale);
   }
   const zh = JSON.parse(read("src/messages/zh.json")) as {
-    account: { phoneStatusUnverified: string; phoneStatusUnverifiedDescription: string; phoneSaved: string };
+    account: { phoneStatusUnverified: string; phoneUsageDescription: string };
   };
   const en = JSON.parse(read("src/messages/en.json")) as {
-    account: { phoneStatusUnverified: string; phoneStatusUnverifiedDescription: string };
+    account: { phoneStatusUnverified: string; phoneUsageDescription: string };
   };
   const sr = JSON.parse(read("src/messages/sr.json")) as {
-    account: { phoneStatusUnverified: string; phoneStatusUnverifiedDescription: string };
+    account: { phoneStatusUnverified: string; phoneUsageDescription: string };
   };
   assert.equal(zh.account.phoneStatusUnverified, "未验证");
-  assert.equal(zh.account.phoneSaved, "手机号已保存");
-  assert.equal(zh.account.phoneStatusUnverifiedDescription, "此号码尚未验证，目前仅用于订单联系。");
+  assert.equal(zh.account.phoneUsageDescription, "仅用于订单联系。");
   assert.equal(en.account.phoneStatusUnverified, "Not verified");
-  assert.equal(en.account.phoneStatusUnverifiedDescription, "This number is not verified and is currently used only for order contact.");
+  assert.equal(en.account.phoneUsageDescription, "Used only for order contact.");
   assert.equal(sr.account.phoneStatusUnverified, "Nije verifikovan");
-  assert.equal(sr.account.phoneStatusUnverifiedDescription, "Ovaj broj nije verifikovan i trenutno se koristi samo za kontakt u vezi sa narudžbinom.");
+  assert.equal(sr.account.phoneUsageDescription, "Koristi se samo za kontakt u vezi sa narudžbinom.");
+}
+
+// Shared layout owns the single title/status/purpose rendering contract.
+{
+  const shared = read("src/components/phone/PhonePersistedStatus.tsx");
+  assert.ok(shared.includes("<fieldset"));
+  assert.ok(shared.includes("<legend"));
+  assert.ok(shared.includes("✎"));
+  assert.ok(shared.includes("✓"));
+  assert.ok(shared.includes("×"));
+  assert.equal((shared.match(/\{usageDescription\}/g) ?? []).length, 1);
+
+  const profile = read("src/app/[locale]/profile/page.tsx");
+  const success = read("src/components/home/PublishedPostSuccess.tsx");
+  assert.equal((profile.match(/phoneUsageDescription/g) ?? []).length, 1);
+  assert.equal((success.match(/phoneUsageDescription/g) ?? []).length, 1);
+  for (const removed of [
+    "phoneCardTitle",
+    "phoneCardBody",
+    "phoneHint",
+    "phoneStatusUnverifiedDescription",
+  ]) {
+    assert.equal(profile.includes(removed), false);
+    assert.equal(success.includes(removed), false);
+  }
 }
 
 console.log("phoneStatusUi.test.ts: ok");

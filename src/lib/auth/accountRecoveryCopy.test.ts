@@ -66,13 +66,13 @@ assert.equal(enSuccess.recoveryBody, enAccount.recoveryBody);
 assert.equal(srSuccess.recoveryTitle, srAccount.recoveryTitle);
 assert.equal(srSuccess.recoveryBody, srAccount.recoveryBody);
 
-assert.equal(zhSuccess.phoneTitle, "手机号码");
-assert.equal(zhSuccess.phoneHint, "方便订单确认后联系。");
+assert.equal(zhSuccess.phoneTitle, "手机号");
+assert.equal(zhSuccess.phoneUsageDescription, "仅用于订单联系。");
 assert.equal(enSuccess.phoneTitle, "Phone number");
-assert.equal(enSuccess.phoneHint, "For contact after an order is confirmed.");
+assert.equal(enSuccess.phoneUsageDescription, "Used only for order contact.");
 assert.equal(srSuccess.phoneTitle, "Broj telefona");
-assert.equal(srSuccess.phoneHint, "Za kontakt nakon potvrde dogovora.");
-for (const phone of [zhSuccess.phoneTitle, zhSuccess.phoneHint, enSuccess.phoneHint, srSuccess.phoneHint]) {
+assert.equal(srSuccess.phoneUsageDescription, "Koristi se samo za kontakt u vezi sa narudžbinom.");
+for (const phone of [zhSuccess.phoneTitle, zhSuccess.phoneUsageDescription, enSuccess.phoneUsageDescription, srSuccess.phoneUsageDescription]) {
   assert.equal(/登录|找回账户|保存账户|recover|recovery|oporavak/i.test(phone), false);
 }
 

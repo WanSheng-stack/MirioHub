@@ -282,7 +282,11 @@ assert.ok(
 );
 
 // TEST D — publish fraud decision still works; browser does not receive metrics
-assert.ok(completeContact.includes("evaluatePublishIntercept"));
+// complete-contact only enhances an existing active/draft post. It must not
+// reuse fresh-publish window counting (which can count that same post).
+assert.equal(completeContact.includes("evaluatePublishIntercept"), false);
+assert.ok(passkeyVerify.includes("evaluateStage1ActivePublicationRisk"));
+assert.ok(trustedPublish.includes("evaluateStage1ActivePublicationRisk"));
 assert.ok(evaluateHelper.includes("evaluatePublishIntercept") || evaluatePublishRoute.includes("evaluatePublishIntercept"));
 assert.ok(fraudFlow.includes("processDemandPostIntercept"));
 assert.ok(fraudFlow.includes("processSupplyPostIntercept"));

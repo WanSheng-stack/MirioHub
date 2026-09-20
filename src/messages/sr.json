@@ -292,6 +292,7 @@
     "saved": "Sačuvano",
     "phoneSaved": "Broj telefona je sačuvan",
     "phoneStatusUnverified": "Nije verifikovan",
+    "phoneStatusUnverifiedDescription": "Ovaj broj nije verifikovan i trenutno se koristi samo za kontakt u vezi sa narudžbinom.",
     "quota": "Preostali besplatni pregledi",
     "premium": "Premium",
     "premiumBadge": "Premium",
@@ -687,6 +688,7 @@
     "savingPhone": "Čuvanje…",
     "phoneSaved": "Broj telefona je sačuvan",
     "phoneStatusUnverified": "Nije verifikovan",
+    "phoneStatusUnverifiedDescription": "Ovaj broj nije verifikovan i trenutno se koristi samo za kontakt u vezi sa narudžbinom.",
     "skip": "Preskoči za sada · Pogledaj poklapanja"
   },
   "matchRequest": {

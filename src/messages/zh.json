@@ -292,6 +292,7 @@
     "saved": "已保存",
     "phoneSaved": "手机号已保存",
     "phoneStatusUnverified": "未验证",
+    "phoneStatusUnverifiedDescription": "此号码尚未验证，目前仅用于订单联系。",
     "quota": "剩余免费查看次数",
     "premium": "会员",
     "premiumBadge": "Premium",
@@ -687,6 +688,7 @@
     "savingPhone": "保存中…",
     "phoneSaved": "手机号已保存",
     "phoneStatusUnverified": "未验证",
+    "phoneStatusUnverifiedDescription": "此号码尚未验证，目前仅用于订单联系。",
     "skip": "暂时跳过，查看匹配"
   },
   "matchRequest": {

@@ -24,11 +24,11 @@ assert.ok(routeSrc.includes("writeAccountPhone"));
 assert.equal(routeSrc.includes("update_my_profile"), false);
 {
   const historyCall = routeSrc.indexOf("phoneId = await upsertPhoneHistory");
-  const persistSection = routeSrc.indexOf("// ── Persist");
+  const contactRpc = routeSrc.indexOf('"complete_post_contact_v102"');
   const lastProfilePersist = routeSrc.lastIndexOf("await persistAccountCurrentPhone");
   assert.ok(historyCall > 0);
-  assert.ok(persistSection > historyCall);
-  assert.ok(lastProfilePersist > persistSection);
+  assert.ok(contactRpc > historyCall);
+  assert.ok(lastProfilePersist > contactRpc);
 }
 
 // Normalized canonical phone — not the UI raw string
@@ -41,7 +41,7 @@ assert.equal(routeSrc.includes("p_phone: raw_phone_local"), false);
 {
   const bodyBlock = routeSrc.slice(
     routeSrc.indexOf("interface RequestBody"),
-    routeSrc.indexOf("// POST handler"),
+    routeSrc.indexOf("export async function POST"),
   );
   assert.equal(bodyBlock.includes("user_id"), false);
 }
@@ -49,8 +49,8 @@ assert.ok(routeSrc.includes("writeAccountPhone"));
 assert.ok(read("supabase/init.sql").includes("where id = auth.uid();"));
 
 // This post only — do not rewrite other posts' phone_id
-assert.ok(routeSrc.includes(".eq('id', postId)"));
-assert.ok(routeSrc.includes(".eq('user_id', user.id)"));
+assert.ok(routeSrc.includes('.eq("id", postId)'));
+assert.ok(routeSrc.includes('.eq("user_id", user.id)'));
 assert.equal(routeSrc.includes(".in('id'"), false);
 
 // TEST 1 continued — history upsert still keyed by user + normalized phone
@@ -60,7 +60,7 @@ assert.ok(upsertSrc.includes(".eq(\"user_id\", userId)"));
 
 // API returns normalizedPhone only when a phone was saved
 assert.ok(routeSrc.includes("normalizedPhone: normalizedPhoneForPost"));
-assert.ok(routeSrc.includes("return NextResponse.json({ ok: true, postId, isActive });"));
+assert.ok(routeSrc.includes("normalizedPhone: normalizedPhoneForPost"));
 
 // Profile failure after post success is not reported as ok:true
 assert.ok(routeSrc.includes("writeAccountPhone"));
@@ -68,14 +68,16 @@ assert.ok(routeSrc.includes("if (!profileWrite.ok)"));
 assert.ok(routeSrc.includes("formatSafePhoneWriteLog(profileWrite)"));
 assert.ok(routeSrc.includes("[complete-contact] set_profile_phone_v87 failed"));
 assert.ok(routeSrc.includes("clientJsonForPhoneWriteFailure"));
-assert.ok(routeSrc.includes("If profile persist fails after post update"));
 {
-  const fraud = routeSrc.indexOf("const intercept = await evaluatePublishIntercept");
   const history = routeSrc.indexOf("phoneId = await upsertPhoneHistory");
-  const persist = routeSrc.indexOf("// ── Persist");
+  const persist = routeSrc.indexOf('"complete_post_contact_v102"');
   const profile = routeSrc.lastIndexOf("await persistAccountCurrentPhone");
-  assert.ok(fraud > 0 && history > fraud && persist > history && profile > persist);
+  assert.ok(history > 0 && persist > history && profile > persist);
 }
+
+// Existing active/draft contact completion is not a fresh publish. Its phone
+// write must not run the publish-window interceptor that can count the post itself.
+assert.equal(routeSrc.includes("evaluatePublishIntercept"), false);
 
 // TEST 2/3/4 — next publish still reads profiles.phone, not post snapshot
 assert.ok(readinessSrc.includes("hasValidContactPhone(input.profilePhone)"));

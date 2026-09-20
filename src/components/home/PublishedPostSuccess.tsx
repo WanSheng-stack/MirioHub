@@ -220,6 +220,7 @@ export function PublishedPostSuccess({
             onSavedFlashEnd={endFlash}
             savedLabel={t("phoneSaved")}
             unverifiedLabel={t("phoneStatusUnverified")}
+            unverifiedDescription={t("phoneStatusUnverifiedDescription")}
             className="mt-0"
           />
         ) : (

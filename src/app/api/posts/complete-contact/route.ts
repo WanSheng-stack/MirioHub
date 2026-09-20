@@ -30,7 +30,6 @@ import {
   decideCompleteContactTransportV102,
 } from "@/lib/posts/completeContactTransportV102";
 import { parseV102PostsWriteRpcResult } from "@/lib/posts/parseV102PostsWriteRpcResult";
-import { evaluatePublishIntercept } from "@/lib/security/evaluateFraudIntercept";
 import { geocodeAddress, toGeographyPointWkt } from "@/lib/route-kms";
 
 async function createClient() {
@@ -200,29 +199,6 @@ export async function POST(request: Request) {
     }
     normalizedPhoneForPost = phoneResult.normalizedDigits;
     rawPhoneForPost = phoneResult.nationalDisplay;
-
-    const { data: profileRow } = await supabase
-      .from("profiles")
-      .select("is_premium")
-      .eq("id", user.id)
-      .maybeSingle();
-    const intercept = await evaluatePublishIntercept({
-      userId: user.id,
-      postType: post.post_type === "demand" ? "demand" : "provider",
-      normalizedPhone: phoneResult.normalizedDigits,
-      normalizedPlate: null,
-      departureDate: post.departure_date ?? "",
-      departureWindow: post.departure_time_window ?? "",
-      isPremium: Boolean(
-        (profileRow as { is_premium?: boolean } | null)?.is_premium,
-      ),
-    });
-    if (!intercept.allowed) {
-      return NextResponse.json(
-        { ok: false, errorKey: intercept.errorKey },
-        { status: 400 },
-      );
-    }
 
     phoneId = await upsertPhoneHistory(
       supabase,

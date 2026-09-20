@@ -14,6 +14,7 @@ type Props = {
   onSavedFlashEnd: () => void;
   savedLabel: string;
   unverifiedLabel: string;
+  unverifiedDescription: string;
   className?: string;
 };
 
@@ -28,6 +29,7 @@ export function PhonePersistedStatus({
   onSavedFlashEnd,
   savedLabel,
   unverifiedLabel,
+  unverifiedDescription,
   className = "",
 }: Props) {
   const ui = derivePhoneStatusUi({
@@ -53,12 +55,17 @@ export function PhonePersistedStatus({
         </p>
       ) : null}
       {ui.showUnverifiedBadge && ui.formattedDisplay ? (
-        <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-800">
-          <span className="font-medium tabular-nums">{ui.formattedDisplay}</span>
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-200/80">
-            {unverifiedLabel}
-          </span>
-        </p>
+        <div className="space-y-1">
+          <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-800">
+            <span className="font-medium tabular-nums">{ui.formattedDisplay}</span>
+            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-200/80">
+              {unverifiedLabel}
+            </span>
+          </p>
+          <p className="text-xs leading-relaxed text-zinc-600">
+            {unverifiedDescription}
+          </p>
+        </div>
       ) : null}
     </div>
   );

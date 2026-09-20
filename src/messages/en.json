@@ -292,6 +292,7 @@
     "saved": "Saved",
     "phoneSaved": "Phone number saved",
     "phoneStatusUnverified": "Not verified",
+    "phoneStatusUnverifiedDescription": "This number is not verified and is currently used only for order contact.",
     "quota": "Free views left",
     "premium": "Premium",
     "premiumBadge": "Premium",
@@ -687,6 +688,7 @@
     "savingPhone": "Saving…",
     "phoneSaved": "Phone number saved",
     "phoneStatusUnverified": "Not verified",
+    "phoneStatusUnverifiedDescription": "This number is not verified and is currently used only for order contact.",
     "skip": "Skip for now · View matches"
   },
   "matchRequest": {

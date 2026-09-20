@@ -927,6 +927,7 @@ export default function ProfilePage() {
         onSavedFlashEnd={endPhoneSavedFlash}
         savedLabel={t("phoneSaved")}
         unverifiedLabel={t("phoneStatusUnverified")}
+        unverifiedDescription={t("phoneStatusUnverifiedDescription")}
       />
     </section>
 

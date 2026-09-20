@@ -77,7 +77,8 @@ assert.ok(routeSrc.includes("clientJsonForPhoneWriteFailure"));
 
 // Existing active/draft contact completion is not a fresh publish. Its phone
 // write must not run the publish-window interceptor that can count the post itself.
-assert.equal(routeSrc.includes("evaluatePublishIntercept"), false);
+assert.equal(routeSrc.includes("evaluatePublishIntercept("), false);
+assert.ok(routeSrc.includes("evaluateCompleteContactDemandPhoneIntercept"));
 
 // TEST 2/3/4 — next publish still reads profiles.phone, not post snapshot
 assert.ok(readinessSrc.includes("hasValidContactPhone(input.profilePhone)"));

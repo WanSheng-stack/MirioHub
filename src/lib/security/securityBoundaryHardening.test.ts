@@ -72,6 +72,10 @@ const fraudFlow = readFileSync(
   join(repoRoot, "src/lib/security/runFraudIntercept.ts"),
   "utf8",
 );
+const completeContactPhoneFlow = fraudFlow.slice(
+  fraudFlow.indexOf("export async function runCompleteContactDemandPhoneIntercept"),
+  fraudFlow.indexOf("export async function runPublishIntercept"),
+);
 const completeContact = readFileSync(
   join(repoRoot, "src/app/api/posts/complete-contact/route.ts"),
   "utf8",
@@ -282,9 +286,22 @@ assert.ok(
 );
 
 // TEST D — publish fraud decision still works; browser does not receive metrics
-// complete-contact only enhances an existing active/draft post. It must not
-// reuse fresh-publish window counting (which can count that same post).
-assert.equal(completeContact.includes("evaluatePublishIntercept"), false);
+// complete-contact preserves server-side Demand foreign-phone protection but
+// does not consume own-window or provider supply-count rules.
+assert.ok(
+  completeContact.includes("evaluateCompleteContactDemandPhoneIntercept"),
+);
+assert.equal(completeContact.includes("evaluatePublishIntercept("), false);
+assert.ok(
+  evaluateHelper.includes("runCompleteContactDemandPhoneIntercept"),
+);
+assert.ok(evaluateHelper.includes("rpcGatherWindowInterceptMetrics"));
+assert.ok(evaluateHelper.includes("writeAudit: writeFraudLog"));
+assert.ok(completeContactPhoneFlow.includes("window.has_other_phone"));
+assert.equal(completeContactPhoneFlow.includes("own_in_window_count"), false);
+assert.equal(completeContactPhoneFlow.includes("countActiveSupplyPosts"), false);
+assert.ok(completeContactPhoneFlow.includes("multi_account_demand_spam"));
+assert.ok(completeContactPhoneFlow.includes('reporter_side: "demand"'));
 assert.ok(passkeyVerify.includes("evaluateStage1ActivePublicationRisk"));
 assert.ok(trustedPublish.includes("evaluateStage1ActivePublicationRisk"));
 assert.ok(evaluateHelper.includes("evaluatePublishIntercept") || evaluatePublishRoute.includes("evaluatePublishIntercept"));

@@ -8,6 +8,8 @@ import {
   loadStackedMatchedPosts,
   runProviderMatchIntercept,
   runPublishIntercept,
+  runCompleteContactDemandPhoneIntercept,
+  type CompleteContactDemandPhoneInterceptInput,
   type FraudDecision,
   type ProviderMatchInterceptInput,
   type PublishInterceptInput,
@@ -22,6 +24,16 @@ export async function evaluatePublishIntercept(
   return runPublishIntercept(admin, input, {
     gatherWindow: rpcGatherWindowInterceptMetrics,
     countActiveSupplyPosts,
+    writeAudit: writeFraudLog,
+  });
+}
+
+export async function evaluateCompleteContactDemandPhoneIntercept(
+  input: CompleteContactDemandPhoneInterceptInput,
+): Promise<FraudDecision> {
+  const admin = createAdminClient();
+  return runCompleteContactDemandPhoneIntercept(admin, input, {
+    gatherWindow: rpcGatherWindowInterceptMetrics,
     writeAudit: writeFraudLog,
   });
 }

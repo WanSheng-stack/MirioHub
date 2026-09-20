@@ -30,6 +30,7 @@ import {
   decideCompleteContactTransportV102,
 } from "@/lib/posts/completeContactTransportV102";
 import { parseV102PostsWriteRpcResult } from "@/lib/posts/parseV102PostsWriteRpcResult";
+import { evaluateCompleteContactDemandPhoneIntercept } from "@/lib/security/evaluateFraudIntercept";
 import { geocodeAddress, toGeographyPointWkt } from "@/lib/route-kms";
 
 async function createClient() {
@@ -199,6 +200,22 @@ export async function POST(request: Request) {
     }
     normalizedPhoneForPost = phoneResult.normalizedDigits;
     rawPhoneForPost = phoneResult.nationalDisplay;
+
+    if (post.post_type === "demand") {
+      const phoneIntercept =
+        await evaluateCompleteContactDemandPhoneIntercept({
+          userId: user.id,
+          normalizedPhone: phoneResult.normalizedDigits,
+          departureDate: post.departure_date ?? "",
+          departureWindow: post.departure_time_window ?? "",
+        });
+      if (!phoneIntercept.allowed) {
+        return NextResponse.json(
+          { ok: false, errorKey: phoneIntercept.errorKey },
+          { status: 400 },
+        );
+      }
+    }
 
     phoneId = await upsertPhoneHistory(
       supabase,

@@ -49,6 +49,13 @@ export type ProviderMatchInterceptInput = {
   isBankVerified: boolean;
 };
 
+export type CompleteContactDemandPhoneInterceptInput = {
+  userId: string;
+  normalizedPhone: string;
+  departureDate: string;
+  departureWindow: string;
+};
+
 export function isPureCargoDemand(demand: {
   category: string;
   escort_seats?: number | null;
@@ -98,6 +105,11 @@ export type ProviderMatchInterceptDeps = {
   writeAudit: PublishInterceptDeps["writeAudit"];
 };
 
+export type CompleteContactDemandPhoneInterceptDeps = Pick<
+  PublishInterceptDeps,
+  "gatherWindow" | "writeAudit"
+>;
+
 async function applyHardDenyAudit(
   admin: SupabaseClient,
   writeAudit: PublishInterceptDeps["writeAudit"],
@@ -106,6 +118,44 @@ async function applyHardDenyAudit(
 ): Promise<FraudDecision> {
   const auditOk = await writeAudit(admin, row);
   return retainFraudDecision(decision, auditOk);
+}
+
+/**
+ * Existing-demand contact completion keeps the cross-account phone collision
+ * boundary, but intentionally ignores own-window counts. The current active
+ * post is already in that window and must not conflict with itself.
+ */
+export async function runCompleteContactDemandPhoneIntercept(
+  admin: SupabaseClient,
+  input: CompleteContactDemandPhoneInterceptInput,
+  deps: CompleteContactDemandPhoneInterceptDeps,
+): Promise<FraudDecision> {
+  const window = await deps.gatherWindow(
+    admin,
+    input.userId,
+    input.normalizedPhone,
+    null,
+    input.departureDate,
+    input.departureWindow,
+  );
+  if (window == null) {
+    return { allowed: false, errorKey: "error.submit_failed" };
+  }
+  if (!window.has_other_phone) {
+    return { allowed: true, errorKey: "success.posted" };
+  }
+  return applyHardDenyAudit(
+    admin,
+    deps.writeAudit,
+    {
+      user_id: input.userId,
+      scene: "multi_account_demand_spam",
+      normalized_phone: input.normalizedPhone,
+      normalized_license_plate: null,
+      reporter_side: "demand",
+    },
+    { allowed: false, errorKey: "error.post_denied_blurred" },
+  );
 }
 
 export async function runPublishIntercept(

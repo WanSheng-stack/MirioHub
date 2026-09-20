@@ -14,6 +14,11 @@ const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
 const route = read("src/app/api/posts/complete-contact/route.ts");
 
 const phoneParse = route.indexOf("parseUserPhone({");
+const demandPhoneGuard = route.indexOf('if (post.post_type === "demand")');
+const demandPhoneCheck = route.indexOf(
+  "await evaluateCompleteContactDemandPhoneIntercept",
+);
+const demandPhoneDeny = route.indexOf("if (!phoneIntercept.allowed)");
 const historyWrite = route.indexOf("phoneId = await upsertPhoneHistory");
 const draftGuard = route.indexOf('if (post.status === "draft")');
 const activationRisk = route.indexOf("await evaluateStage1ActivePublicationRisk");
@@ -23,13 +28,20 @@ const riskResponse = route.indexOf("if (riskErrorKey)", rpc);
 const firstProfileWrite = route.indexOf("await persistAccountCurrentPhone", riskResponse);
 const successResponse = route.indexOf("normalizedPhone: normalizedPhoneForPost", rpc);
 
-// Active contact-only: parses and persists with wantActivate's false default;
-// the draft-only activation block is skipped at runtime and no fresh-publish
-// interceptor exists in this route.
-assert.ok(phoneParse > 0 && historyWrite > phoneParse);
+// Active Demand contact-only: parse, run only the dedicated foreign-phone
+// check, then persist with wantActivate's false default.
+assert.ok(phoneParse > 0 && demandPhoneGuard > phoneParse);
+assert.ok(demandPhoneCheck > demandPhoneGuard && demandPhoneCheck < historyWrite);
+assert.ok(demandPhoneDeny > demandPhoneCheck && demandPhoneDeny < historyWrite);
+assert.ok(route.indexOf("return NextResponse.json(", demandPhoneDeny) < historyWrite);
 assert.ok(route.indexOf("let wantActivate = false") > historyWrite);
-assert.equal(route.includes("evaluatePublishIntercept"), false);
+assert.equal(route.includes("evaluatePublishIntercept("), false);
 assert.ok(rpc > draftGuard && activateArg > rpc);
+
+// Provider contact skips the Demand-only guard and therefore cannot execute
+// fresh-publish supply-count limits.
+assert.equal(route.includes("countActiveSupplyPosts"), false);
+assert.equal(route.includes("active_supply_posts_count"), false);
 
 // Draft risk is evaluated before RPC solely to choose p_activate. A denial is
 // recorded, not returned early; RPC and profile persistence precede the error.

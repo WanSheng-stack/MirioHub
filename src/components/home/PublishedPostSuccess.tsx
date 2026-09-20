@@ -32,6 +32,7 @@ interface PublishedPostSuccessProps {
   onPhoneCountryChange: (value: PhoneCountryCode) => void;
   onPhoneLocalChange: (value: string) => void;
   onSavePhone: () => void;
+  onCancelPhone: () => void;
   phoneSaving: boolean;
   /** Transient success toast; parent clears via onPhoneSavedFlashEnd. */
   phoneSavedFlash: boolean;
@@ -85,6 +86,7 @@ export function PublishedPostSuccess({
   onPhoneCountryChange,
   onPhoneLocalChange,
   onSavePhone,
+  onCancelPhone,
   phoneSaving,
   phoneSavedFlash,
   onPhoneSavedFlashEnd,
@@ -222,7 +224,10 @@ export function PublishedPostSuccess({
           canSave={Boolean(phoneLocal.trim())}
           onEdit={() => setPhoneEditing(true)}
           onSave={onSavePhone}
-          onCancel={() => setPhoneEditing(false)}
+          onCancel={() => {
+            onCancelPhone();
+            setPhoneEditing(false);
+          }}
           addLabel={t("addPhone")}
           editLabel={t("editPhone")}
           saveLabel={t("savePhone")}

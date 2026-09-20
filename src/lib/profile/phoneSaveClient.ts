@@ -1,4 +1,10 @@
-import { parseUserPhone, PHONE_ERROR_KEY } from "@/lib/phone/phoneNumber";
+import {
+  DEFAULT_PHONE_COUNTRY,
+  parseStoredPhone,
+  parseUserPhone,
+  PHONE_ERROR_KEY,
+  type PhoneCountryCode,
+} from "@/lib/phone/phoneNumber";
 import { PHONE_SAVE_FAILED_KEY } from "@/lib/profile/accountPhoneWrite";
 
 export { PHONE_SAVE_FAILED_KEY };
@@ -6,6 +12,32 @@ export const SUBMIT_FAILED_KEY = "error.submit_failed" as const;
 
 export function resetPhoneFeedback(): { phoneSaved: false; phoneError: null } {
   return { phoneSaved: false, phoneError: null };
+}
+
+export function cancelPhoneEdit(
+  persistedNormalizedPhone: string | null | undefined,
+): {
+  country: PhoneCountryCode;
+  local: string;
+  phoneSaved: false;
+  phoneError: null;
+  editing: false;
+} {
+  const parsed = parseStoredPhone(persistedNormalizedPhone);
+  return {
+    country: parsed.valid ? parsed.countryCode : DEFAULT_PHONE_COUNTRY,
+    local: parsed.valid ? parsed.nationalDisplay : "",
+    phoneSaved: false,
+    phoneError: null,
+    editing: false,
+  };
+}
+
+export function shouldShowPhoneError(
+  editing: boolean,
+  hasPhoneError: boolean,
+): boolean {
+  return editing && hasPhoneError;
 }
 
 export function clientValidatePhoneInput(

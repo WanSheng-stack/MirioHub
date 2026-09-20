@@ -17,6 +17,7 @@ import { resolveAccountIdentityState } from "@/lib/auth/accountIdentityState";
 import { resolvePostPublishReadiness } from "@/lib/auth/postPublishReadiness";
 import { parseUserPhone } from "@/lib/phone/phoneNumber";
 import {
+  cancelPhoneEdit,
   readPhoneSaveResponse,
   resetPhoneFeedback,
 } from "@/lib/profile/phoneSaveClient";
@@ -1196,6 +1197,13 @@ export function PublishBottomSheet({ open, onClose, form }: Props) {
                       setField("raw_phone_local", value);
                     }}
                     onSavePhone={() => void saveActivePhone()}
+                    onCancelPhone={() => {
+                      const reset = cancelPhoneEdit(profilePhone);
+                      setField("phone_country", reset.country);
+                      setField("raw_phone_local", reset.local);
+                      setPhoneError(reset.phoneError);
+                      setPhoneSavedFlash(reset.phoneSaved);
+                    }}
                     phoneSaving={phoneSaving}
                     phoneSavedFlash={phoneSavedFlash}
                     onPhoneSavedFlashEnd={() => setPhoneSavedFlash(false)}

@@ -5,6 +5,7 @@ import {
   PHONE_SAVED_FLASH_MS,
   derivePhoneStatusUi,
 } from "@/lib/profile/phoneStatusUi";
+import { shouldShowPhoneError } from "@/lib/profile/phoneSaveClient";
 
 type Props = {
   /** Server-persisted normalized phone (profile.phone / post-save). Empty = none. */
@@ -133,7 +134,7 @@ export function PhonePersistedStatus({
           <span aria-hidden="true" className="text-xl">＋</span>
         </button>
       )}
-      {error}
+      {shouldShowPhoneError(editing, Boolean(error)) ? error : null}
       <p className="text-xs leading-relaxed text-zinc-600">{usageDescription}</p>
     </div>
   );

@@ -29,6 +29,7 @@ import {
   type NameEditState,
 } from "@/lib/profile/displayName";
 import {
+  cancelPhoneEdit,
   readPhoneSaveResponse,
   resetPhoneFeedback,
 } from "@/lib/profile/phoneSaveClient";
@@ -901,10 +902,15 @@ export default function ProfilePage() {
         onEdit={() => setPhoneEditing(true)}
         onSave={() => void savePhone()}
         onCancel={() => {
-          setPhoneEditing(false);
-          setPhoneOverride(null);
-          setPhoneError(null);
-          setPhoneSavedFlash(false);
+          const reset = cancelPhoneEdit(storedPhone);
+          setPhoneEditing(reset.editing);
+          setPhoneOverride({
+            stored: storedPhone,
+            country: reset.country,
+            local: reset.local,
+          });
+          setPhoneError(reset.phoneError);
+          setPhoneSavedFlash(reset.phoneSaved);
         }}
         addLabel={t("addPhone")}
         editLabel={t("editPhone")}
